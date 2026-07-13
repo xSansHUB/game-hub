@@ -7,7 +7,7 @@
       - Menampilkan seluruh pemain yang sedang loan out.
       - Collect All untuk seluruh loan yang sudah selesai.
       - Loan Top berdasarkan whitelist rarity dan durasi yang dipilih.
-      - Toggle Auto Loan, Auto Collect, Auto Play, Auto Open Packs, Auto Evolve satu-per-satu, Auto Equip Best stabil (pause Auto Play sampai lineup tidak berubah), Auto Join International Cup, Auto Collect Cup Rewards, Auto Collect PackDrop, Auto Conveyor, Lock Position, dan Auto Prestige.
+      - Toggle Auto Loan, Auto Collect, Auto Play, Auto Open Packs, Auto Evolve satu-per-satu, Auto Equip Best stabil (pause Auto Play sampai lineup tidak berubah), Auto Join International Cup, Auto Collect Cup Rewards, Auto Collect PackDrop, Auto Conveyor, Anti AFK, Lock Position, dan Auto Prestige.
       - Visual Fill International Cup: membuka menu Cup dan mengisi slot React melalui simulasi tombol UI.
       - Movement: anti tabrak sesama player tanpa anchor, Back to Base melalui Workspace.World.Plots, dan recovery Auto Conveyor pada part Animed Convoyor.
       - Loan Duration dan Rarity Whitelist berada tepat di atas toggle Auto Loan.
@@ -48,6 +48,8 @@
       LoanOutGUI.ToggleAutoConveyor()
       LoanOutGUI.SetAutoConveyor(true/false)
       LoanOutGUI.TeleportToConveyor()
+      LoanOutGUI.ToggleAntiAfk()
+      LoanOutGUI.SetAntiAfk(true/false)
       LoanOutGUI.Rejoin()
       LoanOutGUI.PrestigeNow()
       LoanOutGUI.SaveConfig()
@@ -108,7 +110,7 @@ end
 local GAME_NAME = getCurrentGameName()
 local HUB_TITLE = GAME_NAME
 
-local CONFIG_VERSION = 9
+local CONFIG_VERSION = 10
 local CONFIG_ROOT = "xSansHUB"
 local CONFIG_FOLDER = CONFIG_ROOT .. "/LoanOutManager"
 local CONFIG_FILE = CONFIG_FOLDER .. "/" .. tostring(game.PlaceId) .. ".json"
@@ -399,6 +401,9 @@ end
 if PersistentConfig.autoConveyor == nil then
     PersistentConfig.autoConveyor = false
 end
+if PersistentConfig.antiAfk == nil then
+    PersistentConfig.antiAfk = true
+end
 
 -- Migrasi config lama: field autoMatch sebelumnya hanya mengatur tombol STOP.
 -- Field baru autoPlay menjalankan AttemptSendOut + SetAutoMatch + playback background.
@@ -449,6 +454,9 @@ local State = {
     autoPickupSpawnedPacks = PersistentConfig.autoPickupSpawnedPacks ~= false,
     lockPosition = PersistentConfig.lockPosition == true,
     autoConveyor = PersistentConfig.autoConveyor == true,
+    antiAfk = PersistentConfig.antiAfk ~= false,
+    antiAfkCount = 0,
+    lastAntiAfkAt = 0,
     worldCupSquadMode = normalizeWorldCupSquadMode(PersistentConfig.worldCupSquadMode),
     settingAutoMatch = false,
     openingPacks = false,
@@ -502,6 +510,8 @@ local State = {
     lastAntiCollisionSweepAt = 0,
     nextConveyorCheckAt = 0,
     lastConveyorRecoveryAt = 0,
+    conveyorOutsideSince = nil,
+    packPickupStartedAt = 0,
     lastBaseTeleportAt = 0,
     lastConveyorTeleportAt = 0,
     autoSave = PersistentConfig.autoSave ~= false,
@@ -564,6 +574,7 @@ local State = {
     autoPickupSpawnedPacksToggle = nil,
     lockPositionToggle = nil,
     autoConveyorToggle = nil,
+    antiAfkToggle = nil,
     autoPrestigeToggle = nil,
     durationDropdown = nil,
     worldCupSquadDropdown = nil,
@@ -650,6 +661,7 @@ local function syncPersistentConfig()
     PersistentConfig.autoPickupSpawnedPacks = State.autoPickupSpawnedPacks == true
     PersistentConfig.lockPosition = State.lockPosition == true
     PersistentConfig.autoConveyor = State.autoConveyor == true
+    PersistentConfig.antiAfk = State.antiAfk == true
     PersistentConfig.worldCupSquadMode = normalizeWorldCupSquadMode(State.worldCupSquadMode)
     PersistentConfig.autoSave = State.autoSave == true
     PersistentConfig.autoLoad = State.autoLoad == true
@@ -683,6 +695,7 @@ local function buildConfigSnapshot()
         autoPickupSpawnedPacks = State.autoPickupSpawnedPacks == true,
         lockPosition = State.lockPosition == true,
         autoConveyor = State.autoConveyor == true,
+        antiAfk = State.antiAfk == true,
         worldCupSquadMode = normalizeWorldCupSquadMode(State.worldCupSquadMode),
         duration = tonumber(State.selectedDuration) or 5,
         rarityWhitelist = copyWhitelistForConfig(),
@@ -859,6 +872,7 @@ end
 
 -- Register fix: helper functions are namespaced under Runtime to stay below Luau's 200-local limit.
 local Runtime = {}
+Runtime.virtualUser = game:GetService("VirtualUser")
 
 local function statusKindFromColor(color)
     if color == COLORS.success then
@@ -1246,6 +1260,23 @@ local function updateAutomationButtons()
                 or 'Workspace.World.Conveyor[" Animed Convoyor"] belum ditemukan.'
         end
         State.autoConveyorToggle:SetDesc(conveyorDesc)
+    end
+
+    if State.antiAfkToggle and type(State.antiAfkToggle.Set) == "function" then
+        if State.antiAfkToggle.Value ~= State.antiAfk then
+            State.antiAfkToggle:Set(State.antiAfk, false)
+        end
+
+        local antiAfkDesc
+        if State.antiAfk then
+            antiAfkDesc = "ACTIVE • mencegah idle kick Roblox dengan input virtual saat LocalPlayer.Idled terpicu."
+            if State.antiAfkCount > 0 then
+                antiAfkDesc = antiAfkDesc .. string.format(" • blocked %d idle event.", State.antiAfkCount)
+            end
+        else
+            antiAfkDesc = "Anti AFK mati • Roblox dapat mengeluarkan player setelah terlalu lama tidak ada input."
+        end
+        State.antiAfkToggle:SetDesc(antiAfkDesc)
     end
 
     if State.movementParagraph then
@@ -2663,6 +2694,9 @@ local function applyLoadedConfig(config)
     if config.autoConveyor ~= nil then
         State.autoConveyor = config.autoConveyor == true
     end
+    if config.antiAfk ~= nil then
+        State.antiAfk = config.antiAfk == true
+    end
     if config.worldCupSquadMode ~= nil then
         State.worldCupSquadMode = normalizeWorldCupSquadMode(config.worldCupSquadMode)
     end
@@ -3819,19 +3853,44 @@ Runtime.getConveyorTarget = function()
     return nearest
 end
 
-Runtime.isCharacterOnConveyor = function(position)
-    if typeof(position) ~= "Vector3" then
-        return false
+Runtime.isCharacterOnConveyor = function(rootOrPosition)
+    local root = nil
+    local position = nil
+
+    if typeof(rootOrPosition) == "Instance" and rootOrPosition:IsA("BasePart") then
+        root = rootOrPosition
+        position = rootOrPosition.Position
+    elseif typeof(rootOrPosition) == "Vector3" then
+        position = rootOrPosition
+        local character = LocalPlayer.Character
+        root = character and character:FindFirstChild("HumanoidRootPart") or nil
+    else
+        return false, nil
     end
 
-    for _, part in ipairs(Runtime.getConveyorParts()) do
-        local localPosition = part.CFrame:PointToObjectSpace(position)
-        local halfSize = part.Size * 0.5
+    local character = root and root.Parent or LocalPlayer.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    local rootHalfHeight = root and root.Size.Y * 0.5 or 1
+    local hipHeight = humanoid and humanoid.HipHeight or 2
 
-        if math.abs(localPosition.X) <= halfSize.X + 4
-            and math.abs(localPosition.Z) <= halfSize.Z + 4
-            and localPosition.Y >= -6
-            and localPosition.Y <= halfSize.Y + 12
+    -- Periksa posisi kaki, bukan pusat HumanoidRootPart. Versi sebelumnya
+    -- menambahkan toleransi X/Z sebesar 4 stud sehingga player yang sudah
+    -- berada di samping conveyor masih dianggap berada di atas conveyor.
+    local feetPosition = position - Vector3.new(0, hipHeight + rootHalfHeight - 0.25, 0)
+
+    for _, part in ipairs(Runtime.getConveyorParts()) do
+        local localFeet = part.CFrame:PointToObjectSpace(feetPosition)
+        local halfSize = part.Size * 0.5
+        local xInset = math.min(0.75, halfSize.X * 0.15)
+        local zInset = math.min(0.75, halfSize.Z * 0.15)
+        local xLimit = math.max(0.05, halfSize.X - xInset)
+        local zLimit = math.max(0.05, halfSize.Z - zInset)
+        local topSurface = halfSize.Y
+
+        if math.abs(localFeet.X) <= xLimit
+            and math.abs(localFeet.Z) <= zLimit
+            and localFeet.Y >= topSurface - 2
+            and localFeet.Y <= topSurface + 2.5
         then
             return true, part
         end
@@ -4094,6 +4153,7 @@ Runtime.setAutoConveyorEnabled = function(enabled, announce)
     State.movementOverrideUntil = 0
     State.movementOverrideCFrame = nil
     State.nextConveyorCheckAt = 0
+    State.conveyorOutsideSince = nil
     Runtime.releaseMovementRoot()
 
     if State.autoConveyor then
@@ -4115,6 +4175,53 @@ Runtime.setAutoConveyorEnabled = function(enabled, announce)
     return State.autoConveyor
 end
 
+Runtime.preventIdleKick = function()
+    if not State.running or not State.antiAfk then
+        return false, "Anti AFK disabled"
+    end
+
+    local camera = Workspace.CurrentCamera
+    local cameraCFrame = camera and camera.CFrame or CFrame.new()
+    local point = Vector2.new(0, 0)
+    local success, errorMessage = pcall(function()
+        Runtime.virtualUser:CaptureController()
+        Runtime.virtualUser:Button2Down(point, cameraCFrame)
+        task.wait(0.12)
+        Runtime.virtualUser:Button2Up(point, cameraCFrame)
+    end)
+
+    if success then
+        State.antiAfkCount += 1
+        State.lastAntiAfkAt = os.time()
+        State.uiRefreshRequested = true
+        return true
+    end
+
+    return false, tostring(errorMessage)
+end
+
+Runtime.setAntiAfkEnabled = function(enabled, announce)
+    State.antiAfk = enabled == true
+    PersistentConfig.antiAfk = State.antiAfk
+    requestConfigSave()
+    updateAutomationButtons()
+
+    if announce ~= false then
+        setStatus(
+            State.antiAfk
+                and "Anti AFK aktif. Idle kick Roblox akan dicegah tanpa melakukan reconnect."
+                or "Anti AFK dinonaktifkan.",
+            State.antiAfk and COLORS.success or COLORS.muted
+        )
+    end
+
+    return State.antiAfk
+end
+
+addConnection(LocalPlayer.Idled:Connect(function()
+    Runtime.preventIdleKick()
+end))
+
 addConnection(RunService.Heartbeat:Connect(function()
     if not State.running then
         return
@@ -4129,19 +4236,43 @@ addConnection(RunService.Heartbeat:Connect(function()
         Runtime.restorePlayerCollisions()
     end
 
+    -- Jangan biarkan kegagalan collector menahan recovery conveyor selamanya.
+    if State.pickingSpawnedPacks
+        and State.packPickupStartedAt > 0
+        and now - State.packPickupStartedAt > 10
+    then
+        State.pickingSpawnedPacks = false
+        State.packPickupStartedAt = 0
+        State.nextConveyorCheckAt = 0
+    end
+
     if State.autoConveyor
         and not State.pickingSpawnedPacks
         and now >= State.nextConveyorCheckAt
     then
-        State.nextConveyorCheckAt = now + 0.2
+        State.nextConveyorCheckAt = now + 0.15
 
         local root = getCharacterRoot()
         if root then
-            local onConveyor = Runtime.isCharacterOnConveyor(root.Position)
-            if not onConveyor and now - State.lastConveyorRecoveryAt >= 0.9 then
-                State.lastConveyorRecoveryAt = now
-                Runtime.teleportToConveyor(true)
+            local onConveyor = Runtime.isCharacterOnConveyor(root)
+
+            if onConveyor then
+                State.conveyorOutsideSince = nil
+            else
+                State.conveyorOutsideSince = State.conveyorOutsideSince or now
+
+                -- Grace singkat mencegah teleport palsu ketika melewati sambungan
+                -- empat part conveyor yang sedang bergerak.
+                if now - State.conveyorOutsideSince >= 0.45
+                    and now - State.lastConveyorRecoveryAt >= 0.9
+                then
+                    State.lastConveyorRecoveryAt = now
+                    State.conveyorOutsideSince = nil
+                    Runtime.teleportToConveyor(true)
+                end
             end
+        else
+            State.conveyorOutsideSince = nil
         end
     end
 
@@ -4156,6 +4287,7 @@ addConnection(LocalPlayer.CharacterAdded:Connect(function()
     Runtime.releaseMovementRoot()
     State.lockedCFrame = nil
     State.nextConveyorCheckAt = 0
+    State.conveyorOutsideSince = nil
 
     task.delay(0.75, function()
         if not State.running then
@@ -4399,6 +4531,7 @@ Runtime.pickupSpawnedPacks = function(isAutomatic)
     end
 
     State.pickingSpawnedPacks = true
+    State.packPickupStartedAt = os.clock()
     updateAutomationButtons()
 
     task.spawn(function()
@@ -4418,6 +4551,7 @@ Runtime.pickupSpawnedPacks = function(isAutomatic)
         end
 
         State.pickingSpawnedPacks = false
+        State.packPickupStartedAt = 0
         State.lastSpawnedPackPickupAt = os.time()
         State.lastSpawnedPackPickupCount = successCount
         State.nextSpawnedPackScanAt = os.clock() + SPAWNED_PACK_SCAN_INTERVAL
@@ -6870,6 +7004,18 @@ function Runtime.buildGui()
     })
     Runtime.compactElement(State.autoLoadToggle, 15, 13)
 
+    State.antiAfkToggle = SettingsTab:Toggle({
+        Title = "Anti AFK",
+        Desc = "Mencegah idle kick Roblox agar tidak perlu reconnect karena AFK.",
+        Icon = "keyboard",
+        IconSize = 18,
+        Value = State.antiAfk,
+        Callback = function(enabled)
+            Runtime.setAntiAfkEnabled(enabled)
+        end,
+    })
+    Runtime.compactElement(State.antiAfkToggle, 15, 13)
+
     local configActionGroup = SettingsTab:Group({})
     State.saveConfigButton = Runtime.compactButton(configActionGroup:Button({
         Title = "Save Config",
@@ -7326,6 +7472,22 @@ function API.GetMovementState()
     }
 end
 
+function API.ToggleAntiAfk()
+    return Runtime.setAntiAfkEnabled(not State.antiAfk)
+end
+
+function API.SetAntiAfk(enabled)
+    return Runtime.setAntiAfkEnabled(enabled)
+end
+
+function API.GetAntiAfkState()
+    return {
+        enabled = State.antiAfk,
+        count = State.antiAfkCount,
+        lastPreventedAt = State.lastAntiAfkAt,
+    }
+end
+
 function API.Rejoin()
     return Runtime.rejoinCurrentServer()
 end
@@ -7499,6 +7661,7 @@ function API.GetConfigState()
         autoPickupSpawnedPacks = State.autoPickupSpawnedPacks,
         lockPosition = State.lockPosition,
         autoConveyor = State.autoConveyor,
+        antiAfk = State.antiAfk,
         worldCupSquadMode = State.worldCupSquadMode,
     }
 end
@@ -7520,6 +7683,7 @@ function API.Stop()
     State.autoPickupSpawnedPacks = false
     State.lockPosition = false
     State.autoConveyor = false
+    State.antiAfk = false
     State.fillWorldCupVisualBeforeJoin = false
     State.openingPacks = false
     State.evolvingCards = false
