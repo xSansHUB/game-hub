@@ -2,7 +2,8 @@
     Standalone Loan Out Manager - WindUI
 
     Fitur:
-      - Menggunakan WindUI dengan keybind G untuk membuka/menutup window.
+      - Menggunakan WindUI dengan keybind G dan floating OpenButton.
+      - Judul otomatis: xSansHUB - nama game saat ini.
       - Menampilkan seluruh pemain yang sedang loan out.
       - Collect All untuk seluruh loan yang sudah selesai.
       - Loan Top berdasarkan whitelist rarity dan durasi yang dipilih.
@@ -34,10 +35,36 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
+local MarketplaceService = game:GetService("MarketplaceService")
 local CoreGui = game:GetService("CoreGui")
 
 local LocalPlayer = Players.LocalPlayer
 local Environment = if type(getgenv) == "function" then getgenv() else _G
+
+local function getCurrentGameName()
+    local fallbackName = tostring(game.Name or "Unknown Game")
+
+    local success, productInfo = pcall(function()
+        return MarketplaceService:GetProductInfo(game.PlaceId)
+    end)
+
+    if success
+        and type(productInfo) == "table"
+        and type(productInfo.Name) == "string"
+        and productInfo.Name ~= ""
+    then
+        return productInfo.Name
+    end
+
+    if fallbackName == "" then
+        return "Unknown Game"
+    end
+
+    return fallbackName
+end
+
+local GAME_NAME = getCurrentGameName()
+local HUB_TITLE = "xSansHUB - " .. GAME_NAME
 
 local GUI_NAME = "StandaloneLoanOutGUI"
 local POLL_INTERVAL = 1
@@ -1770,9 +1797,9 @@ local function buildGui()
     State.windUI = WindUI
 
     local Window = WindUI:CreateWindow({
-        Title = "Loan Out Manager",
+        Title = HUB_TITLE,
         Author = "Auto Loan • Auto Collect • Auto Prestige",
-        Folder = "LoanOutManager",
+        Folder = "xSansHUB_LoanOutManager",
         Icon = "handshake",
         Theme = "Indigo",
         ToggleKey = Enum.KeyCode.G,
@@ -1785,8 +1812,9 @@ local function buildGui()
         HideSearchBar = true,
         ScrollBarEnabled = false,
         OpenButton = {
-            Title = "Loan Manager",
-            Enabled = false,
+            Title = HUB_TITLE,
+            Icon = "handshake",
+            Enabled = true,
             Draggable = true,
             OnlyMobile = false,
         },
@@ -2142,8 +2170,8 @@ local function buildGui()
     setStatus(State.lastStatusText, COLORS.warning)
 
     WindUI:Notify({
-        Title = "Loan Out Manager",
-        Content = "WindUI loaded. Tekan G untuk membuka atau menutup window.",
+        Title = HUB_TITLE,
+        Content = "WindUI loaded. Tekan G atau klik floating icon untuk membuka/menutup window.",
         Icon = "handshake",
         Duration = 5,
     })
