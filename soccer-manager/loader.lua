@@ -1,8 +1,8 @@
 --[[
-    Standalone Loan Out GUI - Whitelist, Duration & Dashboard
+    Standalone Loan Out Manager - WindUI
 
     Fitur:
-      - Tekan G untuk membuka/menutup GUI.
+      - Menggunakan WindUI dengan keybind G untuk membuka/menutup window.
       - Menampilkan seluruh pemain yang sedang loan out.
       - Collect All untuk seluruh loan yang sudah selesai.
       - Loan Top berdasarkan whitelist rarity dan durasi yang dipilih.
@@ -155,38 +155,37 @@ local State = {
     loanConfig = nil,
     skillsConfig = nil,
 
-    screenGui = nil,
-    mainFrame = nil,
-    list = nil,
-    summaryLabel = nil,
-    statusLabel = nil,
+    windUI = nil,
+    window = nil,
+    dashboardTab = nil,
+    automationTab = nil,
+    configurationTab = nil,
+    settingsTab = nil,
+
+    summaryParagraph = nil,
+    dashboardParagraph = nil,
+    statusParagraph = nil,
+    loanListParagraph = nil,
+    prestigeParagraph = nil,
+    configurationParagraph = nil,
+
     collectButton = nil,
-    collectButtonLabel = nil,
     loanButton = nil,
-    loanButtonLabel = nil,
-    autoLoanButton = nil,
-    autoLoanLabel = nil,
-    autoLoanIndicator = nil,
-    autoCollectButton = nil,
-    autoCollectLabel = nil,
-    autoCollectIndicator = nil,
-    autoPrestigeButton = nil,
-    autoPrestigeLabel = nil,
-    autoPrestigeIndicator = nil,
-    durationContainer = nil,
-    rarityContainer = nil,
-    durationButtons = {},
-    rarityButtons = {},
-    rarityCountLabel = nil,
-    dashboardSent = nil,
-    dashboardActive = nil,
-    dashboardCollected = nil,
-    dashboardIncome = nil,
-    dashboardMeta = nil,
-    emptyLabel = nil,
+    prestigeButton = nil,
+    autoLoanToggle = nil,
+    autoCollectToggle = nil,
+    autoPrestigeToggle = nil,
+    durationDropdown = nil,
+    rarityDropdown = nil,
+
+    collectButtonEnabled = false,
+    loanButtonEnabled = false,
+    syncingConfiguration = false,
+    configurationFromUI = false,
+    lastStatusText = "Connecting...",
+    lastStatusKind = "WARNING",
 
     connections = {},
-    rowViews = {},
     lastStructureSignature = nil,
     cachedTopCard = nil,
     lastTopCardScan = 0,
@@ -211,23 +210,18 @@ local function stopPreviousInstances()
         pcall(oldGui.Stop)
     end
 
-    -- Hentikan logger versi lama agar daftar tidak lagi dicetak ke Output.
+    local oldWindow = Environment.LoanOutGUIWindWindow
+    if oldWindow and type(oldWindow.Destroy) == "function" then
+        pcall(function()
+            oldWindow:Destroy()
+        end)
+    end
+    Environment.LoanOutGUIWindWindow = nil
+
+    -- Hentikan logger versi lama agar tidak kembali mencetak daftar ke Output.
     local oldLogger = Environment.LoanOutLogger
     if type(oldLogger) == "table" and type(oldLogger.Stop) == "function" then
         pcall(oldLogger.Stop)
-    end
-
-    local parent = CoreGui
-    if type(gethui) == "function" then
-        local success, hiddenUi = pcall(gethui)
-        if success and hiddenUi then
-            parent = hiddenUi
-        end
-    end
-
-    local existing = parent:FindFirstChild(GUI_NAME)
-    if existing then
-        existing:Destroy()
     end
 end
 
@@ -240,117 +234,109 @@ local function addConnection(connection)
     return connection
 end
 
-local function create(className, properties)
-    local instance = Instance.new(className)
+local getDurationLabel
+local getEnabledRarityCount
 
-    for property, value in pairs(properties or {}) do
-        if property ~= "Parent" then
-            instance[property] = value
-        end
+local function statusKindFromColor(color)
+    if color == COLORS.success then
+        return "SUCCESS"
+    elseif color == COLORS.danger then
+        return "ERROR"
+    elseif color == COLORS.warning then
+        return "WARNING"
     end
-
-    instance.Parent = properties and properties.Parent or nil
-    return instance
-end
-
-local function addCorner(parent, radius)
-    return create("UICorner", {
-        CornerRadius = UDim.new(0, radius or 8),
-        Parent = parent,
-    })
-end
-
-local function addStroke(parent, color, thickness, transparency)
-    return create("UIStroke", {
-        Color = color or COLORS.border,
-        Thickness = thickness or 1,
-        Transparency = transparency or 0,
-        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-        Parent = parent,
-    })
+    return "INFO"
 end
 
 local function setStatus(text, color)
-    if State.statusLabel then
-        State.statusLabel.Text = tostring(text or "")
-        State.statusLabel.TextColor3 = color or COLORS.muted
+    State.lastStatusText = tostring(text or "")
+    State.lastStatusKind = statusKindFromColor(color)
+
+    if State.statusParagraph and type(State.statusParagraph.SetDesc) == "function" then
+        State.statusParagraph:SetDesc(string.format("[%s] %s", State.lastStatusKind, State.lastStatusText))
+    end
+end
+
+local function setElementLocked(element, locked)
+    if not element then
+        return
+    end
+
+    if locked and element.Locked ~= true and type(element.Lock) == "function" then
+        element:Lock()
+    elseif not locked and element.Locked == true and type(element.Unlock) == "function" then
+        element:Unlock()
     end
 end
 
 local function setCollectButton(text, enabled)
-    local button = State.collectButton
-    local label = State.collectButtonLabel
+    State.collectButtonEnabled = enabled == true
 
-    if not button or not label then
+    local button = State.collectButton
+    if not button then
         return
     end
 
-    label.Text = text
-    button.Active = enabled
-    button.AutoButtonColor = false
-    button.BackgroundColor3 = enabled and COLORS.primary or Color3.fromRGB(62, 66, 82)
-    label.TextColor3 = enabled and COLORS.text or COLORS.muted
+    if type(button.SetTitle) == "function" then
+        button:SetTitle(tostring(text or "Collect All"))
+    end
+    if type(button.SetDesc) == "function" then
+        button:SetDesc(enabled and "Ambil seluruh loan yang sudah selesai." or "Belum ada loan selesai atau automation sedang sibuk.")
+    end
+    setElementLocked(button, not enabled)
 end
 
 local function setLoanButton(text, enabled)
+    State.loanButtonEnabled = enabled == true
+
     local button = State.loanButton
-    local label = State.loanButtonLabel
-
-    if not button or not label then
+    if not button then
         return
     end
 
-    label.Text = text
-    button.Active = enabled
-    button.AutoButtonColor = false
-    button.BackgroundColor3 = enabled and COLORS.success or Color3.fromRGB(62, 66, 82)
-    label.TextColor3 = enabled and COLORS.background or COLORS.muted
-end
-
-local function updateToggleVisual(button, label, indicator, enabled, title)
-    if not button or not label or not indicator then
-        return
+    if type(button.SetTitle) == "function" then
+        button:SetTitle(tostring(text or "Loan Top"))
     end
-
-    label.Text = string.format("%s: %s", title, enabled and "ON" or "OFF")
-    label.TextColor3 = enabled and COLORS.text or COLORS.muted
-    indicator.BackgroundColor3 = enabled and COLORS.success or Color3.fromRGB(90, 95, 114)
-    button.BackgroundColor3 = enabled and Color3.fromRGB(42, 67, 57) or COLORS.panelAlt
+    if type(button.SetDesc) == "function" then
+        button:SetDesc(enabled
+            and "Kirim kandidat rarity/OVR tertinggi sesuai whitelist."
+            or "Tidak ada kandidat, slot penuh, atau automation sedang sibuk.")
+    end
+    setElementLocked(button, not enabled)
 end
 
 local function updateAutomationButtons()
-    updateToggleVisual(
-        State.autoLoanButton,
-        State.autoLoanLabel,
-        State.autoLoanIndicator,
-        State.autoLoan,
-        "Auto Loan"
-    )
-
-    updateToggleVisual(
-        State.autoCollectButton,
-        State.autoCollectLabel,
-        State.autoCollectIndicator,
-        State.autoCollect,
-        "Auto Collect"
-    )
-
-    updateToggleVisual(
-        State.autoPrestigeButton,
-        State.autoPrestigeLabel,
-        State.autoPrestigeIndicator,
-        State.autoPrestige,
-        "Auto Prestige"
-    )
-
-    if State.autoPrestigeLabel and State.autoPrestige then
-        if State.prestiging then
-            State.autoPrestigeLabel.Text = "Auto Prestige: RUNNING"
-            State.autoPrestigeIndicator.BackgroundColor3 = COLORS.warning
-        elseif State.prestigeInfo and State.prestigeInfo.eligible then
-            State.autoPrestigeLabel.Text = "Auto Prestige: READY"
-            State.autoPrestigeIndicator.BackgroundColor3 = COLORS.warning
+    if State.autoLoanToggle and type(State.autoLoanToggle.Set) == "function" then
+        if State.autoLoanToggle.Value ~= State.autoLoan then
+            State.autoLoanToggle:Set(State.autoLoan, false)
         end
+        State.autoLoanToggle:SetDesc(string.format(
+            "Isi slot kosong otomatis • %s • %d/%d rarity aktif",
+            getDurationLabel and getDurationLabel(State.selectedDuration) or tostring(State.selectedDuration),
+            getEnabledRarityCount and getEnabledRarityCount() or 0,
+            #State.rarityOptions
+        ))
+    end
+
+    if State.autoCollectToggle and type(State.autoCollectToggle.Set) == "function" then
+        if State.autoCollectToggle.Value ~= State.autoCollect then
+            State.autoCollectToggle:Set(State.autoCollect, false)
+        end
+        State.autoCollectToggle:SetDesc("Collect seluruh loan yang selesai sebelum Auto Loan mengisi slot kembali.")
+    end
+
+    if State.autoPrestigeToggle and type(State.autoPrestigeToggle.Set) == "function" then
+        if State.autoPrestigeToggle.Value ~= State.autoPrestige then
+            State.autoPrestigeToggle:Set(State.autoPrestige, false)
+        end
+
+        local prestigeDesc = "Prestige otomatis saat semua requirement terpenuhi. Division dan Coins akan di-reset."
+        if State.prestiging then
+            prestigeDesc = "RUNNING • request DoPrestige sedang diproses."
+        elseif State.prestigeInfo and State.prestigeInfo.eligible then
+            prestigeDesc = "READY • seluruh requirement terpenuhi dan prestige siap dijalankan."
+        end
+        State.autoPrestigeToggle:SetDesc(prestigeDesc)
     end
 end
 
@@ -448,7 +434,7 @@ local function formatCompactNumber(value)
     return formatNumber(value)
 end
 
-local function getDurationLabel(minutes)
+getDurationLabel = function(minutes)
     minutes = tonumber(minutes) or 0
 
     local loanConfig = State.loanConfig
@@ -468,7 +454,7 @@ local function isRarityWhitelisted(rarity)
     return State.rarityWhitelist[tostring(rarity)] ~= false
 end
 
-local function getEnabledRarityCount()
+getEnabledRarityCount = function()
     local count = 0
     for _, rarity in ipairs(State.rarityOptions) do
         if isRarityWhitelisted(rarity) then
@@ -1053,118 +1039,32 @@ local function buildStructureSignature(rows)
 end
 
 local function clearRows()
-    for _, view in pairs(State.rowViews) do
-        if view.frame then
-            view.frame:Destroy()
-        end
-    end
-
-    table.clear(State.rowViews)
+    State.lastStructureSignature = nil
 end
 
-local function makeText(parent, text, size, position, alignment)
-    return create("TextLabel", {
-        BackgroundTransparency = 1,
-        Size = size,
-        Position = position,
-        Font = Enum.Font.GothamMedium,
-        Text = text,
-        TextColor3 = COLORS.text,
-        TextSize = 13,
-        TextTruncate = Enum.TextTruncate.AtEnd,
-        TextXAlignment = alignment or Enum.TextXAlignment.Left,
-        Parent = parent,
-    })
-end
-
-local function createRow(row, layoutOrder)
-    local frame = create("Frame", {
-        Name = "Loan_" .. tostring(row.slot),
-        Size = UDim2.new(1, -6, 0, 58),
-        BackgroundColor3 = COLORS.panelAlt,
-        BorderSizePixel = 0,
-        LayoutOrder = layoutOrder,
-        Parent = State.list,
-    })
-    addCorner(frame, 8)
-    addStroke(frame, COLORS.border, 1, 0.35)
-
-    local accent = create("Frame", {
-        Size = UDim2.new(0, 4, 1, -14),
-        Position = UDim2.new(0, 7, 0, 7),
-        BackgroundColor3 = row.ready and COLORS.success or COLORS.primary,
-        BorderSizePixel = 0,
-        Parent = frame,
-    })
-    addCorner(accent, 4)
-
-    local playerLabel = makeText(
-        frame,
-        row.name,
-        UDim2.new(0.39, -18, 0, 22),
-        UDim2.new(0, 20, 0, 8),
-        Enum.TextXAlignment.Left
-    )
-    playerLabel.Font = Enum.Font.GothamBold
-    playerLabel.TextSize = 14
-
-    local detailLabel = makeText(
-        frame,
-        string.format("Slot %d • %s • %s", row.slot, row.position, row.rarity),
-        UDim2.new(0.39, -18, 0, 20),
-        UDim2.new(0, 20, 0, 30),
-        Enum.TextXAlignment.Left
-    )
-    detailLabel.TextColor3 = COLORS.muted
-    detailLabel.TextSize = 11
-
-    local ratingLabel = makeText(
-        frame,
-        tostring(row.rating),
-        UDim2.new(0.11, 0, 1, 0),
-        UDim2.new(0.39, 0, 0, 0),
-        Enum.TextXAlignment.Center
-    )
-    ratingLabel.Font = Enum.Font.GothamBold
-    ratingLabel.TextSize = 16
-
-    local statusLabel = makeText(
-        frame,
-        row.ready and "READY" or "ON LOAN",
-        UDim2.new(0.22, 0, 1, 0),
-        UDim2.new(0.50, 0, 0, 0),
-        Enum.TextXAlignment.Center
-    )
-    statusLabel.Font = Enum.Font.GothamBold
-    statusLabel.TextColor3 = row.ready and COLORS.success or COLORS.warning
-
-    local remainingLabel = makeText(
-        frame,
-        row.ready and "Collect now" or formatRemaining(row.remaining),
-        UDim2.new(0.28, -14, 1, 0),
-        UDim2.new(0.72, 0, 0, 0),
-        Enum.TextXAlignment.Right
-    )
-    remainingLabel.Font = Enum.Font.GothamBold
-    remainingLabel.TextColor3 = row.ready and COLORS.success or COLORS.text
-
-    State.rowViews[row.key] = {
-        frame = frame,
-        accent = accent,
-        statusLabel = statusLabel,
-        remainingLabel = remainingLabel,
-    }
-end
-
-local function updateCanvasSize()
-    if not State.list then
-        return
+local function formatLoanRows(rows)
+    if #rows == 0 then
+        return "Tidak ada pemain yang sedang loan out."
     end
 
-    local layout = State.list:FindFirstChildOfClass("UIListLayout")
-    if layout then
-        State.list.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 8)
+    local lines = {}
+    for _, row in ipairs(rows) do
+        local status = row.ready and "READY" or "ON LOAN"
+        local remaining = row.ready and "Collect now" or formatRemaining(row.remaining)
+        lines[#lines + 1] = string.format(
+            "[%s] Slot %d • %s • %d OVR • %s • %s • %s",
+            status,
+            row.slot,
+            row.name,
+            row.rating,
+            row.position,
+            tostring(row.rarity):gsub("WorldClass", "World Class"),
+            remaining
+        )
     end
+
+    return table.concat(lines, "
+")
 end
 
 local function reconcileTrackedAutoLoans(rows)
@@ -1182,60 +1082,120 @@ local function reconcileTrackedAutoLoans(rows)
     end
 end
 
+local function getSelectedRarityLabels()
+    local values = {}
+    for _, rarity in ipairs(State.rarityOptions) do
+        if isRarityWhitelisted(rarity) then
+            values[#values + 1] = tostring(rarity):gsub("WorldClass", "World Class")
+        end
+    end
+    return values
+end
+
+local function rarityFromDisplayLabel(label)
+    label = tostring(label)
+    if label == "World Class" then
+        return "WorldClass"
+    end
+    return label
+end
+
+local function syncConfigurationControls()
+    if State.syncingConfiguration then
+        return
+    end
+
+    State.syncingConfiguration = true
+
+    if State.durationDropdown and type(State.durationDropdown.Select) == "function" then
+        State.durationDropdown:Select(getDurationLabel(State.selectedDuration))
+    end
+
+    if State.rarityDropdown and type(State.rarityDropdown.Select) == "function" then
+        State.rarityDropdown:Select(getSelectedRarityLabels())
+    end
+
+    State.syncingConfiguration = false
+end
+
 local function updateDashboardUI()
-    if State.dashboardSent then
-        State.dashboardSent.Text = formatNumber(State.stats.autoSent)
-    end
-    if State.dashboardActive then
-        State.dashboardActive.Text = formatNumber(getTrackedAutoLoanCount())
-    end
-    if State.dashboardCollected then
-        State.dashboardCollected.Text = formatNumber(State.stats.autoCollected)
-    end
-    if State.dashboardIncome then
-        State.dashboardIncome.Text = "£" .. formatCompactNumber(State.stats.autoIncome)
-    end
-    if State.dashboardMeta then
-        State.dashboardMeta.Text = string.format(
-            "%s  •  Failed: %d  •  Last income: £%s",
+    if State.dashboardParagraph and type(State.dashboardParagraph.SetDesc) == "function" then
+        State.dashboardParagraph:SetDesc(string.format(
+            "Auto Sent: %s  •  In Rotation: %s  •  Auto Collected: %s  •  Auto Income: £%s
+%s  •  Failed: %d  •  Last income: £%s",
+            formatNumber(State.stats.autoSent),
+            formatNumber(getTrackedAutoLoanCount()),
+            formatNumber(State.stats.autoCollected),
+            formatCompactNumber(State.stats.autoIncome),
             tostring(State.stats.lastAction),
             tonumber(State.stats.failures) or 0,
             formatCompactNumber(State.stats.lastIncome)
-        )
+        ))
     end
 end
 
 local function updateConfigurationVisuals()
-    for minutes, buttonData in pairs(State.durationButtons) do
-        local selected = tonumber(minutes) == State.selectedDuration
-        buttonData.button.BackgroundColor3 = selected and COLORS.primary or COLORS.panelAlt
-        buttonData.label.TextColor3 = selected and COLORS.text or COLORS.muted
-    end
-
-    for rarity, buttonData in pairs(State.rarityButtons) do
-        local enabled = isRarityWhitelisted(rarity)
-        buttonData.button.BackgroundColor3 = enabled and Color3.fromRGB(42, 67, 57) or COLORS.panelAlt
-        buttonData.indicator.BackgroundColor3 = enabled and COLORS.success or Color3.fromRGB(90, 95, 114)
-        buttonData.label.TextColor3 = enabled and COLORS.text or COLORS.muted
-    end
-
-    if State.rarityCountLabel then
-        State.rarityCountLabel.Text = string.format(
-            "%d/%d enabled",
+    if State.configurationParagraph and type(State.configurationParagraph.SetDesc) == "function" then
+        State.configurationParagraph:SetDesc(string.format(
+            "Duration: %s  •  Whitelist: %d/%d rarity aktif",
+            getDurationLabel(State.selectedDuration),
             getEnabledRarityCount(),
             #State.rarityOptions
-        )
+        ))
     end
+
+    if not State.configurationFromUI then
+        syncConfigurationControls()
+    end
+    State.configurationFromUI = false
+end
+
+local function updatePrestigeParagraph()
+    local paragraph = State.prestigeParagraph
+    if not paragraph or type(paragraph.SetDesc) ~= "function" then
+        return
+    end
+
+    local info = State.prestigeInfo
+    if not info then
+        paragraph:SetDesc("Prestige info belum tersedia. Aktifkan Auto Prestige atau tekan Check Prestige.")
+        return
+    end
+
+    local count = tonumber(info.count) or 0
+    local nextNumber = tonumber(info.nextNumber) or (count + 1)
+    local status = info.eligible and "READY" or "NOT ELIGIBLE"
+    local lines = {
+        string.format("Current: Prestige %d  •  Next: Prestige %d  •  %s", count, nextNumber, status),
+    }
+
+    if type(info.gates) == "table" then
+        for _, gate in ipairs(info.gates) do
+            if type(gate) == "table" then
+                local gateStatus
+                if gate.met then
+                    gateStatus = "DONE"
+                elseif gate.kind == "text" then
+                    gateStatus = tostring(gate.cur or "Pending")
+                else
+                    gateStatus = string.format("%s/%s", tostring(gate.cur or 0), tostring(gate.need or 0))
+                end
+                lines[#lines + 1] = string.format("• %s: %s", tostring(gate.label or gate.kind or "Requirement"), gateStatus)
+            end
+        end
+    end
+
+    paragraph:SetDesc(table.concat(lines, "
+"))
 end
 
 local function refreshUI(forceRebuild)
-    if not State.running or not State.list then
+    if not State.running or not State.window then
         return
     end
 
     local rows = buildRows()
     reconcileTrackedAutoLoans(rows)
-    local signature = buildStructureSignature(rows)
     local topCard = getTopAvailableCard(forceRebuild)
     local hasFreeSlot, activeCount, slotCapacity = getLoanSlotState()
     local readyCount = 0
@@ -1246,33 +1206,7 @@ local function refreshUI(forceRebuild)
         end
     end
 
-    if forceRebuild or signature ~= State.lastStructureSignature then
-        State.lastStructureSignature = signature
-        clearRows()
-
-        for index, row in ipairs(rows) do
-            createRow(row, index)
-        end
-
-        updateCanvasSize()
-    else
-        for _, row in ipairs(rows) do
-            local view = State.rowViews[row.key]
-            if view then
-                view.statusLabel.Text = row.ready and "READY" or "ON LOAN"
-                view.statusLabel.TextColor3 = row.ready and COLORS.success or COLORS.warning
-                view.remainingLabel.Text = row.ready and "Collect now" or formatRemaining(row.remaining)
-                view.remainingLabel.TextColor3 = row.ready and COLORS.success or COLORS.text
-                view.accent.BackgroundColor3 = row.ready and COLORS.success or COLORS.primary
-            end
-        end
-    end
-
-    if State.emptyLabel then
-        State.emptyLabel.Visible = #rows == 0
-    end
-
-    if State.summaryLabel then
+    if State.summaryParagraph and type(State.summaryParagraph.SetDesc) == "function" then
         local activeText
         if slotCapacity ~= nil then
             activeText = string.format("%d/%d Active", activeCount, slotCapacity)
@@ -1280,12 +1214,23 @@ local function refreshUI(forceRebuild)
             activeText = string.format("%d Active Loan%s", #rows, #rows == 1 and "" or "s")
         end
 
-        State.summaryLabel.Text = string.format("%s  •  %d Ready", activeText, readyCount)
+        State.summaryParagraph:SetDesc(string.format(
+            "%s  •  %d Ready  •  Duration %s  •  Whitelist %d/%d",
+            activeText,
+            readyCount,
+            getDurationLabel(State.selectedDuration),
+            getEnabledRarityCount(),
+            #State.rarityOptions
+        ))
+    end
+
+    if State.loanListParagraph and type(State.loanListParagraph.SetDesc) == "function" then
+        State.loanListParagraph:SetDesc(formatLoanRows(rows))
     end
 
     updateAutomationButtons()
-    updateConfigurationVisuals()
     updateDashboardUI()
+    updatePrestigeParagraph()
 
     local networkReady = isNetworker(State.networker)
     local actionBusy = State.collecting or State.loaning or State.prestiging
@@ -1304,15 +1249,9 @@ local function refreshUI(forceRebuild)
         if not hasFreeSlot and slotCapacity ~= nil then
             setLoanButton("Loan Slots Full", false)
         elseif topCard and networkReady and not actionBusy then
-            setLoanButton(
-                string.format("Loan Top (%s)", getDurationLabel(State.selectedDuration)),
-                true
-            )
+            setLoanButton(string.format("Loan Top (%s)", getDurationLabel(State.selectedDuration)), true)
         else
-            setLoanButton(
-                string.format("Loan Top (%s)", getDurationLabel(State.selectedDuration)),
-                false
-            )
+            setLoanButton(string.format("Loan Top (%s)", getDurationLabel(State.selectedDuration)), false)
         end
     end
 end
@@ -1744,622 +1683,397 @@ local function runAutomationTick()
 end
 
 local function setVisible(visible)
-    State.visible = visible
+    State.visible = visible == true
 
-    if not State.mainFrame then
+    local window = State.window
+    if not window then
         return
     end
 
-    if visible then
-        State.mainFrame.Visible = true
-        State.mainFrame.Size = UDim2.fromOffset(760, 0)
-
-        TweenService:Create(
-            State.mainFrame,
-            TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-            {Size = UDim2.fromOffset(760, 720)}
-        ):Play()
-
+    if State.visible then
+        if type(window.Open) == "function" then
+            window:Open()
+        end
         refreshUI(false)
-    else
-        State.mainFrame.Visible = false
+    elseif type(window.Close) == "function" then
+        window:Close()
     end
 end
 
-local function makeDraggable(frame, handle)
-    local dragging = false
-    local dragInput = nil
-    local dragStart = nil
-    local startPosition = nil
+local function loadWindUI()
+    local success, result = pcall(function()
+        return loadstring(game:HttpGet(
+            "https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"
+        ))()
+    end)
 
-    addConnection(handle.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch
-        then
-            dragging = true
-            dragStart = input.Position
-            startPosition = frame.Position
+    if not success or type(result) ~= "table" then
+        error("Gagal memuat WindUI: " .. tostring(result))
+    end
 
-            addConnection(input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    dragging = false
-                end
-            end))
-        end
-    end))
-
-    addConnection(handle.InputChanged:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseMovement
-            or input.UserInputType == Enum.UserInputType.Touch
-        then
-            dragInput = input
-        end
-    end))
-
-    addConnection(UserInputService.InputChanged:Connect(function(input)
-        if not dragging or input ~= dragInput then
-            return
-        end
-
-        local delta = input.Position - dragStart
-        frame.Position = UDim2.new(
-            startPosition.X.Scale,
-            startPosition.X.Offset + delta.X,
-            startPosition.Y.Scale,
-            startPosition.Y.Offset + delta.Y
-        )
-    end))
+    return result
 end
 
 local function buildGui()
-    local parent = CoreGui
-    if type(gethui) == "function" then
-        local success, hiddenUi = pcall(gethui)
-        if success and hiddenUi then
-            parent = hiddenUi
-        end
+    local WindUI = loadWindUI()
+    State.windUI = WindUI
+
+    local Window = WindUI:CreateWindow({
+        Title = "Loan Out Manager",
+        Author = "Auto Loan • Auto Collect • Auto Prestige",
+        Folder = "LoanOutManager",
+        Icon = "handshake",
+        Theme = "Indigo",
+        ToggleKey = Enum.KeyCode.G,
+        Size = UDim2.fromOffset(720, 560),
+        MinSize = Vector2.new(560, 410),
+        MaxSize = Vector2.new(900, 700),
+        Resizable = true,
+        AutoScale = true,
+        NewElements = true,
+        HideSearchBar = true,
+        ScrollBarEnabled = false,
+        OpenButton = {
+            Title = "Loan Manager",
+            Enabled = false,
+            Draggable = true,
+            OnlyMobile = false,
+        },
+        Topbar = {
+            Height = 44,
+            ButtonsType = "Mac",
+        },
+        User = {
+            Enabled = true,
+            Anonymous = false,
+        },
+    })
+
+    if not Window then
+        error("WindUI gagal membuat window. Hancurkan window WindUI lama lalu jalankan ulang script.")
     end
 
-    local screenGui = create("ScreenGui", {
-        Name = GUI_NAME,
-        ResetOnSpawn = false,
-        IgnoreGuiInset = true,
-        ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-        Parent = parent,
-    })
-    State.screenGui = screenGui
+    State.window = Window
+    Environment.LoanOutGUIWindWindow = Window
 
-    if type(syn) == "table" and type(syn.protect_gui) == "function" then
-        pcall(syn.protect_gui, screenGui)
+    Window:Tag({
+        Title = "G to Toggle",
+        Icon = "keyboard",
+        Border = true,
+    })
+
+    Window:OnOpen(function()
+        State.visible = true
+    end)
+
+    Window:OnClose(function()
+        State.visible = false
+    end)
+
+    local DashboardTab = Window:Tab({
+        Title = "Dashboard",
+        Icon = "layout-dashboard",
+    })
+    State.dashboardTab = DashboardTab
+
+    State.summaryParagraph = DashboardTab:Paragraph({
+        Title = "Loan Summary",
+        Desc = "Loading loan data...",
+        Image = "handshake",
+    })
+
+    local actionGroup = DashboardTab:Group({})
+    State.loanButton = actionGroup:Button({
+        Title = "Loan Top",
+        Desc = "Kirim kandidat terbaik sesuai konfigurasi.",
+        Icon = "send",
+        Callback = function()
+            if State.loanButtonEnabled then
+                loanOutTopRarity(false)
+            end
+        end,
+    })
+
+    actionGroup:Space()
+
+    State.collectButton = actionGroup:Button({
+        Title = "Collect All",
+        Desc = "Ambil seluruh loan yang sudah selesai.",
+        Icon = "package-check",
+        Callback = function()
+            if State.collectButtonEnabled then
+                collectAllReadyLoans(false)
+            end
+        end,
+    })
+
+    DashboardTab:Space()
+    State.dashboardParagraph = DashboardTab:Paragraph({
+        Title = "Auto Loan Dashboard",
+        Desc = "No automation activity yet",
+        Image = "chart-no-axes-combined",
+    })
+
+    State.loanListParagraph = DashboardTab:Paragraph({
+        Title = "Active Loans",
+        Desc = "Tidak ada pemain yang sedang loan out.",
+        Image = "list",
+    })
+
+    State.statusParagraph = DashboardTab:Paragraph({
+        Title = "Activity Status",
+        Desc = "[WARNING] Connecting...",
+        Image = "activity",
+    })
+
+    local AutomationTab = Window:Tab({
+        Title = "Automation",
+        Icon = "bot",
+    })
+    State.automationTab = AutomationTab
+
+    State.autoLoanToggle = AutomationTab:Toggle({
+        Title = "Auto Loan",
+        Desc = "Isi slot kosong menggunakan rarity whitelist dan duration terpilih.",
+        Icon = "send",
+        Value = State.autoLoan,
+        Callback = function(enabled)
+            setAutoLoanEnabled(enabled)
+        end,
+    })
+
+    State.autoCollectToggle = AutomationTab:Toggle({
+        Title = "Auto Collect",
+        Desc = "Collect loan selesai sebelum Auto Loan mengisi slot kembali.",
+        Icon = "package-check",
+        Value = State.autoCollect,
+        Callback = function(enabled)
+            setAutoCollectEnabled(enabled)
+        end,
+    })
+
+    State.autoPrestigeToggle = AutomationTab:Toggle({
+        Title = "Auto Prestige",
+        Desc = "Prestige otomatis saat eligible. Division dan Coins akan di-reset.",
+        Icon = "badge-star",
+        Value = State.autoPrestige,
+        Callback = function(enabled)
+            setAutoPrestigeEnabled(enabled)
+        end,
+    })
+
+    AutomationTab:Space()
+    State.prestigeParagraph = AutomationTab:Paragraph({
+        Title = "Prestige Status",
+        Desc = "Prestige info belum tersedia.",
+        Image = "trophy",
+    })
+
+    local prestigeGroup = AutomationTab:Group({})
+    prestigeGroup:Button({
+        Title = "Check Prestige",
+        Desc = "Refresh eligibility dan seluruh requirement prestige.",
+        Icon = "refresh-cw",
+        Callback = function()
+            local info, errorMessage = fetchPrestigeInfo()
+            if info then
+                updatePrestigeParagraph()
+                setStatus("Prestige info berhasil diperbarui.", COLORS.success)
+            else
+                setStatus("Gagal mengecek prestige: " .. tostring(errorMessage), COLORS.danger)
+            end
+        end,
+    })
+
+    prestigeGroup:Space()
+    State.prestigeButton = prestigeGroup:Button({
+        Title = "Prestige Now",
+        Desc = "Menjalankan prestige jika seluruh requirement sudah terpenuhi.",
+        Icon = "sparkles",
+        Callback = function()
+            performPrestige(false)
+        end,
+    })
+
+    local ConfigurationTab = Window:Tab({
+        Title = "Configuration",
+        Icon = "settings-2",
+    })
+    State.configurationTab = ConfigurationTab
+
+    State.configurationParagraph = ConfigurationTab:Paragraph({
+        Title = "Auto Loan Configuration",
+        Desc = "Loading configuration...",
+        Image = "sliders-horizontal",
+    })
+
+    local durationValues = {}
+    for _, minutes in ipairs(State.durationOptions) do
+        durationValues[#durationValues + 1] = getDurationLabel(minutes)
     end
 
-    local main = create("Frame", {
-        Name = "Main",
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.fromScale(0.5, 0.5),
-        Size = UDim2.fromOffset(760, 720),
-        BackgroundColor3 = COLORS.background,
-        BorderSizePixel = 0,
-        ClipsDescendants = true,
-        Parent = screenGui,
+    State.durationDropdown = ConfigurationTab:Dropdown({
+        Title = "Loan Duration",
+        Desc = "Duration untuk tombol Loan Top dan Auto Loan.",
+        Values = durationValues,
+        Value = getDurationLabel(State.selectedDuration),
+        SearchBarEnabled = false,
+        Callback = function(selected)
+            if State.syncingConfiguration then
+                return
+            end
+
+            local selectedText = type(selected) == "table" and selected.Title or selected
+            for _, minutes in ipairs(State.durationOptions) do
+                if getDurationLabel(minutes) == tostring(selectedText) then
+                    State.selectedDuration = minutes
+                    PersistentConfig.duration = minutes
+                    State.nextAutoLoanAt = 0
+                    State.cachedTopCard = nil
+                    State.configurationFromUI = true
+                    updateConfigurationVisuals()
+                    refreshUI(false)
+                    setStatus("Durasi Auto Loan: " .. getDurationLabel(minutes), COLORS.success)
+                    break
+                end
+            end
+        end,
     })
-    State.mainFrame = main
-    addCorner(main, 13)
-    addStroke(main, COLORS.border, 1, 0.15)
 
-    local header = create("Frame", {
-        Name = "Header",
-        Size = UDim2.new(1, 0, 0, 66),
-        BackgroundColor3 = COLORS.panel,
-        BorderSizePixel = 0,
-        Parent = main,
-    })
-
-    local title = makeText(
-        header,
-        "Loan Out Manager",
-        UDim2.new(1, -100, 0, 26),
-        UDim2.fromOffset(20, 10),
-        Enum.TextXAlignment.Left
-    )
-    title.Font = Enum.Font.GothamBold
-    title.TextSize = 19
-
-    local subtitle = makeText(
-        header,
-        "Loan automation • Auto Prestige • Press G",
-        UDim2.new(1, -100, 0, 20),
-        UDim2.fromOffset(20, 36),
-        Enum.TextXAlignment.Left
-    )
-    subtitle.TextColor3 = COLORS.muted
-    subtitle.TextSize = 12
-
-    local closeButton = create("TextButton", {
-        Name = "Close",
-        AnchorPoint = Vector2.new(1, 0.5),
-        Position = UDim2.new(1, -16, 0.5, 0),
-        Size = UDim2.fromOffset(34, 34),
-        BackgroundColor3 = COLORS.panelAlt,
-        BorderSizePixel = 0,
-        AutoButtonColor = false,
-        Font = Enum.Font.GothamBold,
-        Text = "×",
-        TextColor3 = COLORS.text,
-        TextSize = 22,
-        Parent = header,
-    })
-    addCorner(closeButton, 8)
-    addConnection(closeButton.MouseButton1Click:Connect(function()
-        setVisible(false)
-    end))
-
-    local summary = makeText(
-        main,
-        "0 Active Loans  •  0 Ready",
-        UDim2.new(1, -370, 0, 32),
-        UDim2.fromOffset(20, 77),
-        Enum.TextXAlignment.Left
-    )
-    summary.Font = Enum.Font.GothamBold
-    summary.TextSize = 14
-    State.summaryLabel = summary
-
-    local collectButton = create("TextButton", {
-        Name = "CollectAll",
-        AnchorPoint = Vector2.new(1, 0),
-        Position = UDim2.new(1, -20, 0, 76),
-        Size = UDim2.fromOffset(150, 34),
-        BackgroundColor3 = COLORS.primary,
-        BorderSizePixel = 0,
-        AutoButtonColor = false,
-        Text = "",
-        Parent = main,
-    })
-    addCorner(collectButton, 8)
-    State.collectButton = collectButton
-
-    local collectLabel = makeText(
-        collectButton,
-        "Collect All",
-        UDim2.fromScale(1, 1),
-        UDim2.fromScale(0, 0),
-        Enum.TextXAlignment.Center
-    )
-    collectLabel.Font = Enum.Font.GothamBold
-    collectLabel.TextSize = 13
-    State.collectButtonLabel = collectLabel
-
-    addConnection(collectButton.MouseButton1Click:Connect(function()
-        if collectButton.Active then
-            collectAllReadyLoans(false)
-        end
-    end))
-
-    local loanButton = create("TextButton", {
-        Name = "LoanTopSelectedDuration",
-        AnchorPoint = Vector2.new(1, 0),
-        Position = UDim2.new(1, -180, 0, 76),
-        Size = UDim2.fromOffset(150, 34),
-        BackgroundColor3 = COLORS.success,
-        BorderSizePixel = 0,
-        AutoButtonColor = false,
-        Text = "",
-        Parent = main,
-    })
-    addCorner(loanButton, 8)
-    State.loanButton = loanButton
-
-    local loanLabel = makeText(
-        loanButton,
-        "Loan Top",
-        UDim2.fromScale(1, 1),
-        UDim2.fromScale(0, 0),
-        Enum.TextXAlignment.Center
-    )
-    loanLabel.Font = Enum.Font.GothamBold
-    loanLabel.TextSize = 12
-    loanLabel.TextColor3 = COLORS.background
-    State.loanButtonLabel = loanLabel
-
-    addConnection(loanButton.MouseButton1Click:Connect(function()
-        if loanButton.Active then
-            loanOutTopRarity(false)
-        end
-    end))
-
-    local automationPanel = create("Frame", {
-        Name = "Automation",
-        Size = UDim2.new(1, -40, 0, 36),
-        Position = UDim2.fromOffset(20, 120),
-        BackgroundColor3 = COLORS.panel,
-        BorderSizePixel = 0,
-        Parent = main,
-    })
-    addCorner(automationPanel, 8)
-
-    local automationTitle = makeText(
-        automationPanel,
-        "AUTOMATION",
-        UDim2.fromOffset(110, 36),
-        UDim2.fromOffset(12, 0),
-        Enum.TextXAlignment.Left
-    )
-    automationTitle.TextColor3 = COLORS.muted
-    automationTitle.TextSize = 10
-
-    local function createToggleButton(name, titleText, position)
-        local button = create("TextButton", {
-            Name = name,
-            Position = position,
-            Size = UDim2.fromOffset(184, 28),
-            BackgroundColor3 = COLORS.panelAlt,
-            BorderSizePixel = 0,
-            AutoButtonColor = false,
-            Text = "",
-            Parent = automationPanel,
-        })
-        addCorner(button, 7)
-        addStroke(button, COLORS.border, 1, 0.45)
-
-        local indicator = create("Frame", {
-            AnchorPoint = Vector2.new(0, 0.5),
-            Position = UDim2.new(0, 10, 0.5, 0),
-            Size = UDim2.fromOffset(9, 9),
-            BackgroundColor3 = Color3.fromRGB(90, 95, 114),
-            BorderSizePixel = 0,
-            Parent = button,
-        })
-        addCorner(indicator, 9)
-
-        local label = makeText(
-            button,
-            titleText .. ": OFF",
-            UDim2.new(1, -32, 1, 0),
-            UDim2.fromOffset(27, 0),
-            Enum.TextXAlignment.Left
-        )
-        label.Font = Enum.Font.GothamBold
-        label.TextSize = 11
-        label.TextColor3 = COLORS.muted
-        return button, label, indicator
+    local rarityValues = {}
+    for _, rarity in ipairs(State.rarityOptions) do
+        rarityValues[#rarityValues + 1] = tostring(rarity):gsub("WorldClass", "World Class")
     end
 
-    local autoLoanButton, autoLoanLabel, autoLoanIndicator = createToggleButton(
-        "AutoLoan",
-        "Auto Loan",
-        UDim2.fromOffset(124, 4)
-    )
-    State.autoLoanButton = autoLoanButton
-    State.autoLoanLabel = autoLoanLabel
-    State.autoLoanIndicator = autoLoanIndicator
+    State.rarityDropdown = ConfigurationTab:Dropdown({
+        Title = "Rarity Whitelist",
+        Desc = "Auto Loan hanya memilih rarity yang aktif.",
+        Values = rarityValues,
+        Value = getSelectedRarityLabels(),
+        Multi = true,
+        AllowNone = true,
+        SearchBarEnabled = true,
+        Callback = function(selectedValues)
+            if State.syncingConfiguration then
+                return
+            end
 
-    local autoCollectButton, autoCollectLabel, autoCollectIndicator = createToggleButton(
-        "AutoCollect",
-        "Auto Collect",
-        UDim2.fromOffset(314, 4)
-    )
-    State.autoCollectButton = autoCollectButton
-    State.autoCollectLabel = autoCollectLabel
-    State.autoCollectIndicator = autoCollectIndicator
+            local enabled = {}
+            if type(selectedValues) == "table" then
+                for _, selected in ipairs(selectedValues) do
+                    local selectedText = type(selected) == "table" and selected.Title or selected
+                    enabled[rarityFromDisplayLabel(selectedText)] = true
+                end
+            elseif selectedValues ~= nil then
+                enabled[rarityFromDisplayLabel(selectedValues)] = true
+            end
 
-    local autoPrestigeButton, autoPrestigeLabel, autoPrestigeIndicator = createToggleButton(
-        "AutoPrestige",
-        "Auto Prestige",
-        UDim2.fromOffset(504, 4)
-    )
-    State.autoPrestigeButton = autoPrestigeButton
-    State.autoPrestigeLabel = autoPrestigeLabel
-    State.autoPrestigeIndicator = autoPrestigeIndicator
+            for _, rarity in ipairs(State.rarityOptions) do
+                State.rarityWhitelist[rarity] = enabled[rarity] == true
+            end
 
-    addConnection(autoLoanButton.MouseButton1Click:Connect(function()
-        setAutoLoanEnabled(not State.autoLoan)
-    end))
-    addConnection(autoCollectButton.MouseButton1Click:Connect(function()
-        setAutoCollectEnabled(not State.autoCollect)
-    end))
-    addConnection(autoPrestigeButton.MouseButton1Click:Connect(function()
-        setAutoPrestigeEnabled(not State.autoPrestige)
-    end))
-
-    local dashboardPanel = create("Frame", {
-        Name = "Dashboard",
-        Size = UDim2.new(1, -40, 0, 100),
-        Position = UDim2.fromOffset(20, 164),
-        BackgroundColor3 = COLORS.panel,
-        BorderSizePixel = 0,
-        Parent = main,
-    })
-    addCorner(dashboardPanel, 9)
-    addStroke(dashboardPanel, COLORS.border, 1, 0.55)
-
-    local dashboardTitle = makeText(
-        dashboardPanel,
-        "AUTO LOAN DASHBOARD",
-        UDim2.new(1, -20, 0, 22),
-        UDim2.fromOffset(12, 4),
-        Enum.TextXAlignment.Left
-    )
-    dashboardTitle.TextColor3 = COLORS.muted
-    dashboardTitle.TextSize = 10
-
-    local function createMetricCard(xScale, labelText)
-        local card = create("Frame", {
-            Position = UDim2.new(xScale, xScale == 0 and 12 or 5, 0, 28),
-            Size = UDim2.new(0.25, -13, 0, 48),
-            BackgroundColor3 = COLORS.panelAlt,
-            BorderSizePixel = 0,
-            Parent = dashboardPanel,
-        })
-        addCorner(card, 7)
-
-        local value = makeText(
-            card,
-            "0",
-            UDim2.new(1, -12, 0, 25),
-            UDim2.fromOffset(8, 3),
-            Enum.TextXAlignment.Left
-        )
-        value.Font = Enum.Font.GothamBold
-        value.TextSize = 17
-        value.TextColor3 = COLORS.success
-
-        local label = makeText(
-            card,
-            labelText,
-            UDim2.new(1, -12, 0, 17),
-            UDim2.fromOffset(8, 27),
-            Enum.TextXAlignment.Left
-        )
-        label.TextSize = 9
-        label.TextColor3 = COLORS.muted
-        return value
-    end
-
-    State.dashboardSent = createMetricCard(0, "AUTO SENT")
-    State.dashboardActive = createMetricCard(0.25, "IN ROTATION")
-    State.dashboardCollected = createMetricCard(0.50, "AUTO COLLECTED")
-    State.dashboardIncome = createMetricCard(0.75, "AUTO INCOME")
-
-    local dashboardMeta = makeText(
-        dashboardPanel,
-        "No automation activity yet",
-        UDim2.new(1, -24, 0, 18),
-        UDim2.fromOffset(12, 79),
-        Enum.TextXAlignment.Left
-    )
-    dashboardMeta.TextColor3 = COLORS.muted
-    dashboardMeta.TextSize = 9
-    State.dashboardMeta = dashboardMeta
-
-    local configPanel = create("Frame", {
-        Name = "AutoLoanConfiguration",
-        Size = UDim2.new(1, -40, 0, 138),
-        Position = UDim2.fromOffset(20, 272),
-        BackgroundColor3 = COLORS.panel,
-        BorderSizePixel = 0,
-        Parent = main,
-    })
-    addCorner(configPanel, 9)
-    addStroke(configPanel, COLORS.border, 1, 0.55)
-
-    local durationTitle = makeText(
-        configPanel,
-        "LOAN DURATION",
-        UDim2.fromOffset(110, 24),
-        UDim2.fromOffset(12, 5),
-        Enum.TextXAlignment.Left
-    )
-    durationTitle.TextColor3 = COLORS.muted
-    durationTitle.TextSize = 10
-
-    local durationContainer = create("ScrollingFrame", {
-        Name = "DurationOptions",
-        Position = UDim2.fromOffset(118, 5),
-        Size = UDim2.new(1, -130, 0, 26),
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        ScrollBarThickness = 2,
-        AutomaticCanvasSize = Enum.AutomaticSize.X,
-        CanvasSize = UDim2.new(),
-        ScrollingDirection = Enum.ScrollingDirection.X,
-        Parent = configPanel,
-    })
-    State.durationContainer = durationContainer
-    create("UIListLayout", {
-        FillDirection = Enum.FillDirection.Horizontal,
-        Padding = UDim.new(0, 6),
-        SortOrder = Enum.SortOrder.LayoutOrder,
-        Parent = durationContainer,
-    })
-
-    for index, minutes in ipairs(State.durationOptions) do
-        local button = create("TextButton", {
-            Name = "Duration_" .. tostring(minutes),
-            Size = UDim2.fromOffset(92, 26),
-            BackgroundColor3 = COLORS.panelAlt,
-            BorderSizePixel = 0,
-            AutoButtonColor = false,
-            Text = "",
-            LayoutOrder = index,
-            Parent = durationContainer,
-        })
-        addCorner(button, 7)
-        addStroke(button, COLORS.border, 1, 0.45)
-        local label = makeText(button, getDurationLabel(minutes), UDim2.fromScale(1, 1), UDim2.new(), Enum.TextXAlignment.Center)
-        label.Font = Enum.Font.GothamBold
-        label.TextSize = 10
-        State.durationButtons[minutes] = {button = button, label = label}
-
-        addConnection(button.MouseButton1Click:Connect(function()
-            State.selectedDuration = minutes
-            PersistentConfig.duration = minutes
-            State.nextAutoLoanAt = 0
-            updateConfigurationVisuals()
-            refreshUI(false)
-            setStatus("Durasi Auto Loan: " .. getDurationLabel(minutes), COLORS.success)
-        end))
-    end
-
-    local rarityTitle = makeText(
-        configPanel,
-        "RARITY WHITELIST",
-        UDim2.fromOffset(130, 20),
-        UDim2.fromOffset(12, 39),
-        Enum.TextXAlignment.Left
-    )
-    rarityTitle.TextColor3 = COLORS.muted
-    rarityTitle.TextSize = 10
-
-    local rarityCount = makeText(
-        configPanel,
-        "0/0 enabled",
-        UDim2.fromOffset(120, 20),
-        UDim2.new(1, -132, 0, 39),
-        Enum.TextXAlignment.Right
-    )
-    rarityCount.TextColor3 = COLORS.muted
-    rarityCount.TextSize = 9
-    State.rarityCountLabel = rarityCount
-
-    local rarityContainer = create("Frame", {
-        Name = "RarityOptions",
-        Position = UDim2.fromOffset(12, 61),
-        Size = UDim2.new(1, -24, 0, 66),
-        BackgroundTransparency = 1,
-        Parent = configPanel,
-    })
-    State.rarityContainer = rarityContainer
-
-    create("UIGridLayout", {
-        CellSize = UDim2.new(1 / 6, -7, 0, 28),
-        CellPadding = UDim2.fromOffset(7, 6),
-        SortOrder = Enum.SortOrder.LayoutOrder,
-        FillDirectionMaxCells = 6,
-        Parent = rarityContainer,
-    })
-
-    for index, rarity in ipairs(State.rarityOptions) do
-        local button = create("TextButton", {
-            Name = "Rarity_" .. tostring(rarity),
-            BackgroundColor3 = COLORS.panelAlt,
-            BorderSizePixel = 0,
-            AutoButtonColor = false,
-            Text = "",
-            LayoutOrder = index,
-            Parent = rarityContainer,
-        })
-        addCorner(button, 7)
-        addStroke(button, COLORS.border, 1, 0.45)
-
-        local indicator = create("Frame", {
-            AnchorPoint = Vector2.new(0, 0.5),
-            Position = UDim2.new(0, 8, 0.5, 0),
-            Size = UDim2.fromOffset(8, 8),
-            BackgroundColor3 = COLORS.success,
-            BorderSizePixel = 0,
-            Parent = button,
-        })
-        addCorner(indicator, 8)
-
-        local label = makeText(
-            button,
-            tostring(rarity):gsub("WorldClass", "World Class"),
-            UDim2.new(1, -24, 1, 0),
-            UDim2.fromOffset(21, 0),
-            Enum.TextXAlignment.Left
-        )
-        label.Font = Enum.Font.GothamBold
-        label.TextSize = 9
-
-        State.rarityButtons[rarity] = {
-            button = button,
-            label = label,
-            indicator = indicator,
-        }
-
-        addConnection(button.MouseButton1Click:Connect(function()
-            State.rarityWhitelist[rarity] = not isRarityWhitelisted(rarity)
             PersistentConfig.rarityWhitelist = State.rarityWhitelist
             State.cachedTopCard = nil
             State.nextAutoLoanAt = 0
+            State.configurationFromUI = true
             updateConfigurationVisuals()
             refreshUI(true)
-        end))
-    end
-
-    local columnHeader = create("Frame", {
-        Size = UDim2.new(1, -40, 0, 28),
-        Position = UDim2.fromOffset(20, 418),
-        BackgroundColor3 = COLORS.panel,
-        BorderSizePixel = 0,
-        Parent = main,
+        end,
     })
-    addCorner(columnHeader, 7)
 
-    local playerHeader = makeText(columnHeader, "PLAYER", UDim2.new(0.39, -8, 1, 0), UDim2.fromOffset(12, 0), Enum.TextXAlignment.Left)
-    playerHeader.TextColor3 = COLORS.muted
-    playerHeader.TextSize = 10
-    local ratingHeader = makeText(columnHeader, "OVR", UDim2.new(0.11, 0, 1, 0), UDim2.new(0.39, 0, 0, 0), Enum.TextXAlignment.Center)
-    ratingHeader.TextColor3 = COLORS.muted
-    ratingHeader.TextSize = 10
-    local statusHeader = makeText(columnHeader, "STATUS", UDim2.new(0.22, 0, 1, 0), UDim2.new(0.50, 0, 0, 0), Enum.TextXAlignment.Center)
-    statusHeader.TextColor3 = COLORS.muted
-    statusHeader.TextSize = 10
-    local remainingHeader = makeText(columnHeader, "REMAINING", UDim2.new(0.28, -12, 1, 0), UDim2.new(0.72, 0, 0, 0), Enum.TextXAlignment.Right)
-    remainingHeader.TextColor3 = COLORS.muted
-    remainingHeader.TextSize = 10
-
-    local list = create("ScrollingFrame", {
-        Name = "LoanList",
-        Position = UDim2.fromOffset(20, 454),
-        Size = UDim2.new(1, -40, 1, -506),
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        ScrollBarThickness = 4,
-        ScrollBarImageColor3 = COLORS.primary,
-        CanvasSize = UDim2.new(),
-        Parent = main,
+    local whitelistGroup = ConfigurationTab:Group({})
+    whitelistGroup:Button({
+        Title = "Enable All Rarities",
+        Icon = "list-checks",
+        Callback = function()
+            for _, rarity in ipairs(State.rarityOptions) do
+                State.rarityWhitelist[rarity] = true
+            end
+            PersistentConfig.rarityWhitelist = State.rarityWhitelist
+            State.cachedTopCard = nil
+            updateConfigurationVisuals()
+            refreshUI(true)
+        end,
     })
-    State.list = list
 
-    local layout = create("UIListLayout", {
-        Padding = UDim.new(0, 7),
-        SortOrder = Enum.SortOrder.LayoutOrder,
-        Parent = list,
+    whitelistGroup:Space()
+    whitelistGroup:Button({
+        Title = "Clear Whitelist",
+        Icon = "list-x",
+        Callback = function()
+            for _, rarity in ipairs(State.rarityOptions) do
+                State.rarityWhitelist[rarity] = false
+            end
+            PersistentConfig.rarityWhitelist = State.rarityWhitelist
+            State.cachedTopCard = nil
+            updateConfigurationVisuals()
+            refreshUI(true)
+        end,
     })
-    addConnection(layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvasSize))
 
-    local emptyLabel = makeText(
-        main,
-        "No active loans",
-        UDim2.new(1, -40, 0, 60),
-        UDim2.new(0, 20, 0, 495),
-        Enum.TextXAlignment.Center
-    )
-    emptyLabel.Font = Enum.Font.GothamBold
-    emptyLabel.TextSize = 15
-    emptyLabel.TextColor3 = COLORS.muted
-    emptyLabel.Visible = true
-    State.emptyLabel = emptyLabel
+    local SettingsTab = Window:Tab({
+        Title = "Settings",
+        Icon = "settings",
+    })
+    State.settingsTab = SettingsTab
 
-    local statusLabel = makeText(
-        main,
-        "Connecting...",
-        UDim2.new(1, -40, 0, 30),
-        UDim2.new(0, 20, 1, -40),
-        Enum.TextXAlignment.Left
-    )
-    statusLabel.TextColor3 = COLORS.warning
-    statusLabel.TextSize = 11
-    State.statusLabel = statusLabel
+    SettingsTab:Keybind({
+        Title = "Window Keybind",
+        Desc = "Key untuk membuka dan menutup WindUI.",
+        Value = "G",
+        Callback = function(keyName)
+            local keyCode = Enum.KeyCode[tostring(keyName)]
+            if keyCode then
+                Window:SetToggleKey(keyCode)
+                setStatus("Window keybind diubah menjadi " .. tostring(keyName), COLORS.success)
+            end
+        end,
+    })
 
-    makeDraggable(main, header)
+    SettingsTab:Button({
+        Title = "Reset Dashboard",
+        Desc = "Reset statistik Auto Loan pada sesi ini.",
+        Icon = "rotate-ccw",
+        Callback = function()
+            State.stats.autoSent = 0
+            State.stats.autoCollected = 0
+            State.stats.autoIncome = 0
+            State.stats.failures = 0
+            State.stats.lastAction = "Dashboard reset"
+            State.stats.lastIncome = 0
+            State.stats.startedAt = os.time()
+            table.clear(State.autoLoanedIds)
+            updateDashboardUI()
+            setStatus("Dashboard automation di-reset.", COLORS.success)
+        end,
+    })
+
+    SettingsTab:Button({
+        Title = "Refresh All Data",
+        Desc = "Refresh loan, dashboard, candidate, dan prestige info.",
+        Icon = "refresh-cw",
+        Callback = function()
+            State.cachedTopCard = nil
+            fetchPrestigeInfo()
+            refreshUI(true)
+            setStatus("Seluruh data berhasil di-refresh.", COLORS.success)
+        end,
+    })
+
     setCollectButton("Collect All", false)
     setLoanButton("Loan Top", false)
     updateAutomationButtons()
     updateConfigurationVisuals()
     updateDashboardUI()
+    updatePrestigeParagraph()
+    setStatus(State.lastStatusText, COLORS.warning)
+
+    WindUI:Notify({
+        Title = "Loan Out Manager",
+        Content = "WindUI loaded. Tekan G untuk membuka atau menutup window.",
+        Icon = "handshake",
+        Duration = 5,
+    })
 end
 
 local function connectDataChanged()
@@ -2407,7 +2121,11 @@ end
 local API = {}
 
 function API.Toggle()
-    setVisible(not State.visible)
+    if State.window and type(State.window.Toggle) == "function" then
+        State.window:Toggle()
+    else
+        setVisible(not State.visible)
+    end
 end
 
 function API.Show()
@@ -2613,11 +2331,18 @@ function API.Stop()
     disconnectAll()
     clearRows()
 
-    if State.screenGui then
-        State.screenGui:Destroy()
-        State.screenGui = nil
+    if State.window and type(State.window.Destroy) == "function" then
+        pcall(function()
+            State.window:Destroy()
+        end)
     end
 
+    State.window = nil
+    State.windUI = nil
+
+    if Environment.LoanOutGUIWindWindow then
+        Environment.LoanOutGUIWindWindow = nil
+    end
     if Environment.LoanOutGUI == API then
         Environment.LoanOutGUI = nil
     end
@@ -2630,20 +2355,12 @@ initializeConfigurationOptions()
 buildGui()
 updateAutomationButtons()
 
-addConnection(UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed or UserInputService:GetFocusedTextBox() then
-        return
-    end
-
-    if input.KeyCode == Enum.KeyCode.G then
-        API.Toggle()
-    end
-end))
 
 task.spawn(function()
     if not discoverFramework() then
         setCollectButton("Collect All", false)
         setLoanButton("Loan Top", false)
+        setStatus("DataService/Networker tidak ditemukan.", COLORS.danger)
         return
     end
 
