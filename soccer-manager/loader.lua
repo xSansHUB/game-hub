@@ -7,7 +7,7 @@
       - Collect All untuk seluruh loan yang sudah selesai.
       - Loan Top berdasarkan whitelist rarity dan durasi yang dipilih.
       - Toggle Auto Loan, Auto Collect, dan Auto Prestige.
-      - Whitelist rarity multi-select untuk Auto Loan.
+      - Loan Duration dan Rarity Whitelist berada tepat di atas toggle Auto Loan.
       - Pilihan durasi diambil dari LoanConfig.Durations.
       - Dashboard sesi Auto Loan: terkirim, masih berputar, selesai, dan income.
       - Tidak mengubah atau membutuhkan ClubManager.
@@ -167,6 +167,8 @@ local State = {
     statusParagraph = nil,
     loanListParagraph = nil,
     prestigeParagraph = nil,
+    prestigeGateParagraphs = {},
+    prestigeInfoUpdatedAt = 0,
     configurationParagraph = nil,
 
     collectButton = nil,
@@ -380,7 +382,7 @@ local function setAutoPrestigeEnabled(enabled, announce)
     State.autoPrestige = enabled == true
     PersistentConfig.autoPrestige = State.autoPrestige
     State.nextPrestigeCheckAt = 0
-    State.prestigeInfo = nil
+    -- Pertahankan hasil Check Prestige terakhir saat toggle berubah.
     updateAutomationButtons()
 
     if announce ~= false then
@@ -1154,36 +1156,79 @@ local function updatePrestigeParagraph()
         return
     end
 
+    local gateParagraphs = State.prestigeGateParagraphs or {}
     local info = State.prestigeInfo
+
     if not info then
-        paragraph:SetDesc("Prestige info belum tersedia. Aktifkan Auto Prestige atau tekan Check Prestige.")
+        if type(paragraph.SetTitle) == "function" then
+            paragraph:SetTitle("Prestige Status")
+        end
+        paragraph:SetDesc("Belum ada data. Tekan Check Prestige untuk memuat status terbaru.")
+
+        for _, gateParagraph in ipairs(gateParagraphs) do
+            if gateParagraph.ElementFrame then
+                gateParagraph.ElementFrame.Visible = false
+            end
+        end
         return
     end
 
     local count = tonumber(info.count) or 0
     local nextNumber = tonumber(info.nextNumber) or (count + 1)
-    local status = info.eligible and "READY" or "NOT ELIGIBLE"
-    local lines = {
-        string.format("Current: Prestige %d  •  Next: Prestige %d  •  %s", count, nextNumber, status),
-    }
 
-    if type(info.gates) == "table" then
-        for _, gate in ipairs(info.gates) do
-            if type(gate) == "table" then
-                local gateStatus
-                if gate.met then
-                    gateStatus = "DONE"
-                elseif gate.kind == "text" then
-                    gateStatus = tostring(gate.cur or "Pending")
-                else
-                    gateStatus = string.format("%s/%s", tostring(gate.cur or 0), tostring(gate.need or 0))
-                end
-                lines[#lines + 1] = string.format("• %s: %s", tostring(gate.label or gate.kind or "Requirement"), gateStatus)
-            end
-        end
+    if type(paragraph.SetTitle) == "function" then
+        paragraph:SetTitle(string.format("Prestige %d  →  Prestige %d", count, nextNumber))
     end
 
-    paragraph:SetDesc(table.concat(lines, "\n"))
+    if info.eligible then
+        paragraph:SetDesc("READY TO PRESTIGE • Semua requirement sudah terpenuhi.")
+    else
+        paragraph:SetDesc("NOT ELIGIBLE • Selesaikan requirement yang belum terpenuhi.")
+    end
+
+    local gates = type(info.gates) == "table" and info.gates or {}
+
+    for index, gateParagraph in ipairs(gateParagraphs) do
+        local gate = gates[index]
+
+        if gate and type(gate) == "table" then
+            if gateParagraph.ElementFrame then
+                gateParagraph.ElementFrame.Visible = true
+            end
+
+            if type(gateParagraph.SetTitle) == "function" then
+                gateParagraph:SetTitle(tostring(gate.label or gate.kind or ("Requirement " .. index)))
+            end
+
+            local description
+            if gate.met then
+                description = "DONE"
+            elseif gate.kind == "text" then
+                local current = gate.cur
+                if current == nil or tostring(current) == "" then
+                    current = "Pending"
+                end
+                description = "Current: " .. tostring(current)
+            else
+                local current = tonumber(gate.cur) or 0
+                local needed = math.max(tonumber(gate.need) or 0, 0)
+                local percent = needed > 0 and math.clamp(current / needed, 0, 1) * 100 or 0
+
+                description = string.format(
+                    "%s / %s  •  %.1f%%",
+                    formatNumber(current),
+                    formatNumber(needed),
+                    percent
+                )
+            end
+
+            if type(gateParagraph.SetDesc) == "function" then
+                gateParagraph:SetDesc(description)
+            end
+        elseif gateParagraph.ElementFrame then
+            gateParagraph.ElementFrame.Visible = false
+        end
+    end
 end
 
 local function refreshUI(forceRebuild)
@@ -1319,7 +1364,9 @@ local function fetchPrestigeInfo()
     local response, errorMessage = callNetwork("GetPrestigeInfo")
     if response then
         State.prestigeInfo = response
+        State.prestigeInfoUpdatedAt = os.clock()
         updateAutomationButtons()
+        updatePrestigeParagraph()
     end
 
     return response, errorMessage
@@ -1386,6 +1433,13 @@ local function performPrestige(isAutomatic)
                 string.format("PRESTIGE %d COMPLETE!", completedCount),
                 COLORS.success
             )
+
+            task.delay(1, function()
+                if State.running then
+                    fetchPrestigeInfo()
+                    refreshUI(true)
+                end
+            end)
         else
             State.nextPrestigeCheckAt = os.clock() + PRESTIGE_RETRY_DELAY
             setStatus(
@@ -1828,78 +1882,9 @@ local function buildGui()
         Icon = "bot",
     })
     State.automationTab = AutomationTab
+    State.configurationTab = AutomationTab
 
-    State.autoLoanToggle = AutomationTab:Toggle({
-        Title = "Auto Loan",
-        Desc = "Isi slot kosong menggunakan rarity whitelist dan duration terpilih.",
-        Icon = "send",
-        Value = State.autoLoan,
-        Callback = function(enabled)
-            setAutoLoanEnabled(enabled)
-        end,
-    })
-
-    State.autoCollectToggle = AutomationTab:Toggle({
-        Title = "Auto Collect",
-        Desc = "Collect loan selesai sebelum Auto Loan mengisi slot kembali.",
-        Icon = "package-check",
-        Value = State.autoCollect,
-        Callback = function(enabled)
-            setAutoCollectEnabled(enabled)
-        end,
-    })
-
-    State.autoPrestigeToggle = AutomationTab:Toggle({
-        Title = "Auto Prestige",
-        Desc = "Prestige otomatis saat eligible. Division dan Coins akan di-reset.",
-        -- `badge-star` tidak tersedia pada icon set WindUI yang sedang dimuat.
-        Icon = "trophy",
-        Value = State.autoPrestige,
-        Callback = function(enabled)
-            setAutoPrestigeEnabled(enabled)
-        end,
-    })
-
-    AutomationTab:Space()
-    State.prestigeParagraph = AutomationTab:Paragraph({
-        Title = "Prestige Status",
-        Desc = "Prestige info belum tersedia.",
-        Image = "trophy",
-    })
-
-    local prestigeGroup = AutomationTab:Group({})
-    prestigeGroup:Button({
-        Title = "Check Prestige",
-        Desc = "Refresh eligibility dan seluruh requirement prestige.",
-        Icon = "refresh-cw",
-        Callback = function()
-            local info, errorMessage = fetchPrestigeInfo()
-            if info then
-                updatePrestigeParagraph()
-                setStatus("Prestige info berhasil diperbarui.", COLORS.success)
-            else
-                setStatus("Gagal mengecek prestige: " .. tostring(errorMessage), COLORS.danger)
-            end
-        end,
-    })
-
-    prestigeGroup:Space()
-    State.prestigeButton = prestigeGroup:Button({
-        Title = "Prestige Now",
-        Desc = "Menjalankan prestige jika seluruh requirement sudah terpenuhi.",
-        Icon = "sparkles",
-        Callback = function()
-            performPrestige(false)
-        end,
-    })
-
-    local ConfigurationTab = Window:Tab({
-        Title = "Configuration",
-        Icon = "settings-2",
-    })
-    State.configurationTab = ConfigurationTab
-
-    State.configurationParagraph = ConfigurationTab:Paragraph({
+    State.configurationParagraph = AutomationTab:Paragraph({
         Title = "Auto Loan Configuration",
         Desc = "Loading configuration...",
         Image = "sliders-horizontal",
@@ -1910,7 +1895,7 @@ local function buildGui()
         durationValues[#durationValues + 1] = getDurationLabel(minutes)
     end
 
-    State.durationDropdown = ConfigurationTab:Dropdown({
+    State.durationDropdown = AutomationTab:Dropdown({
         Title = "Loan Duration",
         Desc = "Duration untuk tombol Loan Top dan Auto Loan.",
         Values = durationValues,
@@ -1943,7 +1928,7 @@ local function buildGui()
         rarityValues[#rarityValues + 1] = tostring(rarity):gsub("WorldClass", "World Class")
     end
 
-    State.rarityDropdown = ConfigurationTab:Dropdown({
+    State.rarityDropdown = AutomationTab:Dropdown({
         Title = "Rarity Whitelist",
         Desc = "Auto Loan hanya memilih rarity yang aktif.",
         Values = rarityValues,
@@ -1979,7 +1964,7 @@ local function buildGui()
         end,
     })
 
-    local whitelistGroup = ConfigurationTab:Group({})
+    local whitelistGroup = AutomationTab:Group({})
     whitelistGroup:Button({
         Title = "Enable All Rarities",
         Icon = "list-checks",
@@ -2006,6 +1991,96 @@ local function buildGui()
             State.cachedTopCard = nil
             updateConfigurationVisuals()
             refreshUI(true)
+        end,
+    })
+
+    AutomationTab:Space()
+
+    State.autoLoanToggle = AutomationTab:Toggle({
+        Title = "Auto Loan",
+        Desc = "Isi slot kosong menggunakan rarity whitelist dan duration terpilih.",
+        Icon = "send",
+        Value = State.autoLoan,
+        Callback = function(enabled)
+            setAutoLoanEnabled(enabled)
+        end,
+    })
+
+    State.autoCollectToggle = AutomationTab:Toggle({
+        Title = "Auto Collect",
+        Desc = "Collect loan selesai sebelum Auto Loan mengisi slot kembali.",
+        Icon = "package-check",
+        Value = State.autoCollect,
+        Callback = function(enabled)
+            setAutoCollectEnabled(enabled)
+        end,
+    })
+
+    State.autoPrestigeToggle = AutomationTab:Toggle({
+        Title = "Auto Prestige",
+        Desc = "Prestige otomatis saat eligible. Division dan Coins akan di-reset.",
+        -- `badge-star` tidak tersedia pada icon set WindUI yang sedang dimuat.
+        Icon = "trophy",
+        Value = State.autoPrestige,
+        Callback = function(enabled)
+            setAutoPrestigeEnabled(enabled)
+        end,
+    })
+
+    AutomationTab:Space()
+    State.prestigeParagraph = AutomationTab:Paragraph({
+        Title = "Prestige Status",
+        Desc = "Belum ada data. Tekan Check Prestige untuk memuat status terbaru.",
+        Image = "trophy",
+    })
+
+    -- Requirement dibuat menjadi kartu 2 kolom agar tidak menumpuk dalam satu paragraph.
+    State.prestigeGateParagraphs = {}
+    for rowIndex = 1, 3 do
+        local gateGroup = AutomationTab:Group({})
+
+        for columnIndex = 1, 2 do
+            local gateParagraph = gateGroup:Paragraph({
+                Title = "Requirement",
+                Desc = "Menunggu data...",
+            })
+
+            if gateParagraph.ElementFrame then
+                gateParagraph.ElementFrame.Visible = false
+            end
+
+            State.prestigeGateParagraphs[#State.prestigeGateParagraphs + 1] = gateParagraph
+
+            if columnIndex == 1 then
+                gateGroup:Space()
+            end
+        end
+    end
+
+    AutomationTab:Space()
+    local prestigeGroup = AutomationTab:Group({})
+    prestigeGroup:Button({
+        Title = "Check Prestige",
+        Desc = "Refresh eligibility dan seluruh requirement prestige.",
+        Icon = "refresh-cw",
+        Callback = function()
+            local info, errorMessage = fetchPrestigeInfo()
+            if info then
+                updatePrestigeParagraph()
+                setStatus("Prestige info berhasil diperbarui.", COLORS.success)
+            else
+                setStatus("Gagal mengecek prestige: " .. tostring(errorMessage), COLORS.danger)
+            end
+        end,
+    })
+
+    prestigeGroup:Space()
+    State.prestigeButton = prestigeGroup:Button({
+        Title = "Prestige Now",
+        Desc = "Menjalankan prestige jika seluruh requirement sudah terpenuhi.",
+        Icon = "sparkles",
+        Callback = function()
+            performPrestige(false)
         end,
     })
 
@@ -2104,7 +2179,8 @@ local function connectDataChanged()
             end
 
             if prestigeRelevant then
-                State.prestigeInfo = nil
+                -- Jangan hapus hasil Check Prestige. Data lama tetap ditampilkan sampai
+                -- refresh berikutnya selesai, sehingga panel tidak kembali ke placeholder.
                 State.nextPrestigeCheckAt = 0
                 updateAutomationButtons()
             end
