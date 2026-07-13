@@ -6,7 +6,7 @@
       - Menampilkan seluruh pemain yang sedang loan out.
       - Collect All untuk seluruh loan yang sudah selesai.
       - Loan Top berdasarkan whitelist rarity dan durasi yang dipilih.
-      - Toggle Auto Loan dan Auto Collect.
+      - Toggle Auto Loan, Auto Collect, dan Auto Prestige.
       - Whitelist rarity multi-select untuk Auto Loan.
       - Pilihan durasi diambil dari LoanConfig.Durations.
       - Dashboard sesi Auto Loan: terkirim, masih berputar, selesai, dan income.
@@ -25,6 +25,8 @@
       LoanOutGUI.ResetDashboard()
       LoanOutGUI.ToggleAutoLoan()
       LoanOutGUI.ToggleAutoCollect()
+      LoanOutGUI.ToggleAutoPrestige()
+      LoanOutGUI.PrestigeNow()
       LoanOutGUI.Stop()
 ]]
 
@@ -44,6 +46,9 @@ local DISCOVERY_DELAY = 0.25
 local TOP_CARD_SCAN_INTERVAL = 2
 local AUTO_ACTION_INTERVAL = 0.75
 local AUTO_RETRY_DELAY = 2
+local PRESTIGE_CHECK_INTERVAL = 2
+local PRESTIGE_RETRY_DELAY = 8
+local PRESTIGE_SUCCESS_DELAY = 3
 local TRACKED_LOAN_GRACE = 5
 
 local FALLBACK_DURATIONS = {5, 15, 30, 60}
@@ -129,8 +134,10 @@ local State = {
     visible = true,
     collecting = false,
     loaning = false,
+    prestiging = false,
     autoLoan = PersistentConfig.autoLoan == true,
     autoCollect = PersistentConfig.autoCollect == true,
+    autoPrestige = PersistentConfig.autoPrestige == true,
     selectedDuration = tonumber(PersistentConfig.duration) or 5,
     rarityWhitelist = PersistentConfig.rarityWhitelist,
     durationOptions = {},
@@ -141,6 +148,7 @@ local State = {
     dataService = nil,
     networker = nil,
     eventBus = nil,
+    prestigeInfo = nil,
 
     playerCardDatabase = nil,
     variantConfig = nil,
@@ -162,6 +170,9 @@ local State = {
     autoCollectButton = nil,
     autoCollectLabel = nil,
     autoCollectIndicator = nil,
+    autoPrestigeButton = nil,
+    autoPrestigeLabel = nil,
+    autoPrestigeIndicator = nil,
     durationContainer = nil,
     rarityContainer = nil,
     durationButtons = {},
@@ -181,6 +192,7 @@ local State = {
     lastTopCardScan = 0,
     nextAutoLoanAt = 0,
     nextAutoCollectAt = 0,
+    nextPrestigeCheckAt = 0,
 }
 
 local function disconnectAll()
@@ -322,6 +334,24 @@ local function updateAutomationButtons()
         State.autoCollect,
         "Auto Collect"
     )
+
+    updateToggleVisual(
+        State.autoPrestigeButton,
+        State.autoPrestigeLabel,
+        State.autoPrestigeIndicator,
+        State.autoPrestige,
+        "Auto Prestige"
+    )
+
+    if State.autoPrestigeLabel and State.autoPrestige then
+        if State.prestiging then
+            State.autoPrestigeLabel.Text = "Auto Prestige: RUNNING"
+            State.autoPrestigeIndicator.BackgroundColor3 = COLORS.warning
+        elseif State.prestigeInfo and State.prestigeInfo.eligible then
+            State.autoPrestigeLabel.Text = "Auto Prestige: READY"
+            State.autoPrestigeIndicator.BackgroundColor3 = COLORS.warning
+        end
+    end
 end
 
 local function setAutoLoanEnabled(enabled, announce)
@@ -356,6 +386,23 @@ local function setAutoCollectEnabled(enabled, announce)
                 and "Auto Collect aktif • loan selesai akan diambil otomatis."
                 or "Auto Collect dinonaktifkan.",
             State.autoCollect and COLORS.success or COLORS.muted
+        )
+    end
+end
+
+local function setAutoPrestigeEnabled(enabled, announce)
+    State.autoPrestige = enabled == true
+    PersistentConfig.autoPrestige = State.autoPrestige
+    State.nextPrestigeCheckAt = 0
+    State.prestigeInfo = nil
+    updateAutomationButtons()
+
+    if announce ~= false then
+        setStatus(
+            State.autoPrestige
+                and "Auto Prestige aktif • Division & Coins akan di-reset otomatis saat eligible."
+                or "Auto Prestige dinonaktifkan.",
+            State.autoPrestige and COLORS.success or COLORS.muted
         )
     end
 end
@@ -1241,10 +1288,10 @@ local function refreshUI(forceRebuild)
     updateDashboardUI()
 
     local networkReady = isNetworker(State.networker)
-    local actionBusy = State.collecting or State.loaning
+    local actionBusy = State.collecting or State.loaning or State.prestiging
 
     if not State.collecting then
-        if readyCount > 0 and networkReady and not State.loaning then
+        if readyCount > 0 and networkReady and not State.loaning and not State.prestiging then
             setCollectButton(string.format("Collect All (%d)", readyCount), true)
         elseif readyCount > 0 then
             setCollectButton(string.format("Collect All (%d)", readyCount), false)
@@ -1276,7 +1323,12 @@ local function callNetwork(action, payload)
         return nil, "Networker belum ditemukan"
     end
 
-    local success, response = pcall(networker.Call, networker, action, payload)
+    local success, response
+    if payload == nil then
+        success, response = pcall(networker.Call, networker, action)
+    else
+        success, response = pcall(networker.Call, networker, action, payload)
+    end
     if not success then
         return nil, tostring(response)
     end
@@ -1314,8 +1366,108 @@ local function tryRediscoverNetworker()
     return isNetworker(State.networker)
 end
 
+local function fireBusEvent(eventName, payload)
+    local eventBus = State.eventBus
+    if eventBus == nil or type(eventBus.Fire) ~= "function" then
+        return false
+    end
+
+    return pcall(eventBus.Fire, eventBus, eventName, payload)
+end
+
+local function fetchPrestigeInfo()
+    if not tryRediscoverNetworker() then
+        return nil, "Networker belum ditemukan"
+    end
+
+    local response, errorMessage = callNetwork("GetPrestigeInfo")
+    if response then
+        State.prestigeInfo = response
+        updateAutomationButtons()
+    end
+
+    return response, errorMessage
+end
+
+local function performPrestige(isAutomatic)
+    if State.prestiging or State.collecting or State.loaning then
+        return false, "Automation lain sedang berjalan"
+    end
+
+    local prestigeInfo = State.prestigeInfo
+    if not prestigeInfo or not prestigeInfo.eligible then
+        local errorMessage
+        prestigeInfo, errorMessage = fetchPrestigeInfo()
+        if not prestigeInfo then
+            if not isAutomatic then
+                setStatus("Gagal mengecek prestige: " .. tostring(errorMessage), COLORS.danger)
+            end
+            State.nextPrestigeCheckAt = os.clock() + PRESTIGE_RETRY_DELAY
+            return false, errorMessage
+        end
+    end
+
+    if not prestigeInfo.eligible then
+        if not isAutomatic then
+            setStatus("Prestige belum eligible • masih ada requirement yang belum selesai.", COLORS.warning)
+        end
+        State.nextPrestigeCheckAt = os.clock() + PRESTIGE_CHECK_INTERVAL
+        updateAutomationButtons()
+        return false, "Prestige belum eligible"
+    end
+
+    State.prestiging = true
+    State.nextPrestigeCheckAt = math.huge
+    updateAutomationButtons()
+    setCollectButton("Collect All", false)
+    setLoanButton("Loan Top", false)
+
+    local targetNumber = tonumber(prestigeInfo.nextNumber)
+        or ((tonumber(prestigeInfo.count) or 0) + 1)
+    setStatus(
+        string.format("Menjalankan Prestige %d...", targetNumber),
+        COLORS.warning
+    )
+
+    task.spawn(function()
+        local response, errorMessage = callNetwork("DoPrestige")
+
+        State.prestiging = false
+        State.prestigeInfo = nil
+        State.cachedTopCard = nil
+        State.nextAutoLoanAt = os.clock() + AUTO_RETRY_DELAY
+        State.nextAutoCollectAt = os.clock() + AUTO_RETRY_DELAY
+
+        if response and response.success then
+            State.nextPrestigeCheckAt = os.clock() + PRESTIGE_SUCCESS_DELAY
+
+            if response.summary then
+                fireBusEvent("PrestigeComplete", response.summary)
+            end
+
+            local completedCount = tonumber(response.count) or targetNumber
+            setStatus(
+                string.format("PRESTIGE %d COMPLETE!", completedCount),
+                COLORS.success
+            )
+        else
+            State.nextPrestigeCheckAt = os.clock() + PRESTIGE_RETRY_DELAY
+            setStatus(
+                "Prestige gagal: " .. tostring(errorMessage or "Unknown error"),
+                COLORS.danger
+            )
+        end
+
+        updateAutomationButtons()
+        task.wait(0.35)
+        refreshUI(true)
+    end)
+
+    return true
+end
+
 local function collectAllReadyLoans(isAutomatic)
-    if State.collecting or State.loaning then
+    if State.collecting or State.loaning or State.prestiging then
         return
     end
 
@@ -1425,7 +1577,7 @@ local function collectAllReadyLoans(isAutomatic)
 end
 
 local function loanOutTopRarity(isAutomatic)
-    if State.loaning or State.collecting then
+    if State.loaning or State.collecting or State.prestiging then
         return
     end
 
@@ -1550,7 +1702,7 @@ local function getReadyLoanCount()
 end
 
 local function runAutomationTick()
-    if not State.running or State.collecting or State.loaning then
+    if not State.running or State.collecting or State.loaning or State.prestiging then
         return
     end
 
@@ -1559,6 +1711,17 @@ local function runAutomationTick()
     end
 
     local now = os.clock()
+
+    -- Prestige memiliki prioritas tertinggi ketika seluruh requirement sudah terpenuhi.
+    if State.autoPrestige and now >= State.nextPrestigeCheckAt then
+        State.nextPrestigeCheckAt = now + PRESTIGE_CHECK_INTERVAL
+
+        local prestigeInfo = fetchPrestigeInfo()
+        if prestigeInfo and prestigeInfo.eligible then
+            performPrestige(true)
+            return
+        end
+    end
 
     -- Collect lebih dahulu supaya slot yang selesai segera tersedia lagi.
     if State.autoCollect and now >= State.nextAutoCollectAt then
@@ -1704,7 +1867,7 @@ local function buildGui()
 
     local subtitle = makeText(
         header,
-        "Whitelist rarity • duration selector • session dashboard • Press G",
+        "Loan automation • Auto Prestige • Press G",
         UDim2.new(1, -100, 0, 20),
         UDim2.fromOffset(20, 36),
         Enum.TextXAlignment.Left
@@ -1829,7 +1992,7 @@ local function buildGui()
         local button = create("TextButton", {
             Name = name,
             Position = position,
-            Size = UDim2.fromOffset(255, 28),
+            Size = UDim2.fromOffset(184, 28),
             BackgroundColor3 = COLORS.panelAlt,
             BorderSizePixel = 0,
             AutoButtonColor = false,
@@ -1865,7 +2028,7 @@ local function buildGui()
     local autoLoanButton, autoLoanLabel, autoLoanIndicator = createToggleButton(
         "AutoLoan",
         "Auto Loan",
-        UDim2.new(0, 126, 0.5, -14)
+        UDim2.fromOffset(124, 4)
     )
     State.autoLoanButton = autoLoanButton
     State.autoLoanLabel = autoLoanLabel
@@ -1874,17 +2037,29 @@ local function buildGui()
     local autoCollectButton, autoCollectLabel, autoCollectIndicator = createToggleButton(
         "AutoCollect",
         "Auto Collect",
-        UDim2.new(1, -265, 0.5, -14)
+        UDim2.fromOffset(314, 4)
     )
     State.autoCollectButton = autoCollectButton
     State.autoCollectLabel = autoCollectLabel
     State.autoCollectIndicator = autoCollectIndicator
+
+    local autoPrestigeButton, autoPrestigeLabel, autoPrestigeIndicator = createToggleButton(
+        "AutoPrestige",
+        "Auto Prestige",
+        UDim2.fromOffset(504, 4)
+    )
+    State.autoPrestigeButton = autoPrestigeButton
+    State.autoPrestigeLabel = autoPrestigeLabel
+    State.autoPrestigeIndicator = autoPrestigeIndicator
 
     addConnection(autoLoanButton.MouseButton1Click:Connect(function()
         setAutoLoanEnabled(not State.autoLoan)
     end))
     addConnection(autoCollectButton.MouseButton1Click:Connect(function()
         setAutoCollectEnabled(not State.autoCollect)
+    end))
+    addConnection(autoPrestigeButton.MouseButton1Click:Connect(function()
+        setAutoPrestigeEnabled(not State.autoPrestige)
     end))
 
     local dashboardPanel = create("Frame", {
@@ -2196,17 +2371,30 @@ local function connectDataChanged()
     local success, connection = pcall(function()
         return eventBus:Connect("DataChanged", function(change)
             local path = change and change.path
-            if type(path) == "string"
-                and (
-                    string.find(path, "Loans", 1, true) == 1
-                    or string.find(path, "Squad.Owned", 1, true) == 1
-                    or string.find(path, "Squad.StartingEleven", 1, true) == 1
-                    or string.find(path, "Training", 1, true) == 1
-                    or string.find(path, "Promotion", 1, true) == 1
-                )
-            then
+            if type(path) ~= "string" then
+                return
+            end
+
+            local loanRelevant = string.find(path, "Loans", 1, true) == 1
+                or string.find(path, "Squad.Owned", 1, true) == 1
+                or string.find(path, "Squad.StartingEleven", 1, true) == 1
+                or string.find(path, "Training", 1, true) == 1
+                or string.find(path, "Promotion", 1, true) == 1
+
+            local prestigeRelevant = path == "Coins"
+                or path == "Progression.TotalWins"
+                or path == "Division.Current"
+                or string.find(path, "Squad", 1, true) == 1
+
+            if loanRelevant then
                 State.cachedTopCard = nil
                 task.defer(refreshUI, true)
+            end
+
+            if prestigeRelevant then
+                State.prestigeInfo = nil
+                State.nextPrestigeCheckAt = 0
+                updateAutomationButtons()
             end
         end)
     end)
@@ -2365,6 +2553,10 @@ function API.ToggleAutoCollect()
     setAutoCollectEnabled(not State.autoCollect)
 end
 
+function API.ToggleAutoPrestige()
+    setAutoPrestigeEnabled(not State.autoPrestige)
+end
+
 function API.SetAutoLoan(enabled)
     setAutoLoanEnabled(enabled)
 end
@@ -2373,10 +2565,36 @@ function API.SetAutoCollect(enabled)
     setAutoCollectEnabled(enabled)
 end
 
+function API.SetAutoPrestige(enabled)
+    setAutoPrestigeEnabled(enabled)
+end
+
+function API.PrestigeNow()
+    return performPrestige(false)
+end
+
+function API.CheckPrestige()
+    return fetchPrestigeInfo()
+end
+
+function API.GetPrestigeState()
+    local info = State.prestigeInfo
+    return {
+        enabled = State.autoPrestige,
+        running = State.prestiging,
+        eligible = info and info.eligible == true or false,
+        count = info and tonumber(info.count) or nil,
+        nextNumber = info and tonumber(info.nextNumber) or nil,
+        gates = info and info.gates or nil,
+    }
+end
+
 function API.GetAutomationState()
     return {
         autoLoan = State.autoLoan,
         autoCollect = State.autoCollect,
+        autoPrestige = State.autoPrestige,
+        prestiging = State.prestiging,
         duration = State.selectedDuration,
         whitelist = API.GetWhitelist(),
     }
@@ -2390,6 +2608,8 @@ function API.Stop()
     State.running = false
     State.autoLoan = false
     State.autoCollect = false
+    State.autoPrestige = false
+    State.prestiging = false
     disconnectAll()
     clearRows()
 
@@ -2408,6 +2628,7 @@ Environment.LoanOutGUI = API
 loadGameModules()
 initializeConfigurationOptions()
 buildGui()
+updateAutomationButtons()
 
 addConnection(UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed or UserInputService:GetFocusedTextBox() then
