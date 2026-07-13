@@ -7,7 +7,7 @@
       - Menampilkan seluruh pemain yang sedang loan out.
       - Collect All untuk seluruh loan yang sudah selesai.
       - Loan Top berdasarkan whitelist rarity dan durasi yang dipilih.
-      - Toggle Auto Loan, Auto Collect, Auto Match, Auto Open Packs, Auto Evolve Cards, Auto Equip Best, dan Auto Prestige.
+      - Toggle Auto Loan, Auto Collect, Auto Match, Auto Open Packs, Auto Evolve Cards, Auto Equip Best, Auto Join International Cup, dan Auto Prestige.
       - Loan Duration dan Rarity Whitelist berada tepat di atas toggle Auto Loan.
       - Pilihan durasi diambil dari LoanConfig.Durations.
       - Dashboard sesi Auto Loan: terkirim, masih berputar, selesai, dan income.
@@ -33,6 +33,8 @@
       LoanOutGUI.ToggleAutoOpenPacks()
       LoanOutGUI.ToggleAutoEvolveCards()
       LoanOutGUI.ToggleAutoEquipBest()
+      LoanOutGUI.ToggleAutoJoinWorldCup()
+      LoanOutGUI.SetWorldCupSquadMode("last_team" / "best_rarity_ovr")
       LoanOutGUI.PrestigeNow()
       LoanOutGUI.SaveConfig()
       LoanOutGUI.LoadConfig()
@@ -89,7 +91,7 @@ end
 local GAME_NAME = getCurrentGameName()
 local HUB_TITLE = "xSansHUB - " .. GAME_NAME
 
-local CONFIG_VERSION = 4
+local CONFIG_VERSION = 5
 local CONFIG_ROOT = "xSansHUB"
 local CONFIG_FOLDER = CONFIG_ROOT .. "/LoanOutManager"
 local CONFIG_FILE = CONFIG_FOLDER .. "/" .. tostring(game.PlaceId) .. ".json"
@@ -101,6 +103,29 @@ local function normalizeKeybindName(value)
         return keyName
     end
     return "G"
+end
+
+local WORLD_CUP_SQUAD_MODE_LAST = "last_team"
+local WORLD_CUP_SQUAD_MODE_BEST = "best_rarity_ovr"
+
+local function normalizeWorldCupSquadMode(value)
+    value = tostring(value or WORLD_CUP_SQUAD_MODE_BEST)
+
+    if value == WORLD_CUP_SQUAD_MODE_LAST
+        or value == "Last Team"
+        or value == "last"
+    then
+        return WORLD_CUP_SQUAD_MODE_LAST
+    end
+
+    return WORLD_CUP_SQUAD_MODE_BEST
+end
+
+local function worldCupSquadModeLabel(value)
+    if normalizeWorldCupSquadMode(value) == WORLD_CUP_SQUAD_MODE_LAST then
+        return "Last Team"
+    end
+    return "Best Rarity / OVR"
 end
 
 local function configFileExists()
@@ -166,6 +191,12 @@ local function mergeRawConfig(target, source)
     if source.autoEquipBest ~= nil then
         target.autoEquipBest = source.autoEquipBest == true
     end
+    if source.autoJoinWorldCup ~= nil then
+        target.autoJoinWorldCup = source.autoJoinWorldCup == true
+    end
+    if source.worldCupSquadMode ~= nil then
+        target.worldCupSquadMode = normalizeWorldCupSquadMode(source.worldCupSquadMode)
+    end
     if tonumber(source.duration) then
         target.duration = tonumber(source.duration)
     end
@@ -202,9 +233,19 @@ local AUTO_EVOLVE_INTERVAL = 2
 local AUTO_EVOLVE_RETRY_DELAY = 6
 local AUTO_EQUIP_BEST_RETRY_DELAY = 8
 local AUTO_MATCH_PAUSE_TIMEOUT = 3
+local WORLD_CUP_CHECK_INTERVAL = 6
+local WORLD_CUP_RETRY_DELAY = 12
+local WORLD_CUP_SUCCESS_DELAY = 15
 local TRACKED_LOAN_GRACE = 5
 
 local FALLBACK_DURATIONS = {5, 15, 30, 60}
+
+local WORLD_CUP_FORMATIONS = {
+    "4-4-2",
+    "4-3-3",
+    "5-3-2",
+    "4-2-3-1",
+}
 
 local RARITY_PRIORITY = {
     Common = 1,
@@ -291,6 +332,7 @@ if PersistentConfig.autoLoad == nil then
     PersistentConfig.autoLoad = true
 end
 PersistentConfig.windowKeybind = normalizeKeybindName(PersistentConfig.windowKeybind)
+PersistentConfig.worldCupSquadMode = normalizeWorldCupSquadMode(PersistentConfig.worldCupSquadMode)
 
 local Dashboard = Environment.LoanOutGUIDashboard
 if type(Dashboard) ~= "table" then
@@ -329,10 +371,13 @@ local State = {
     autoOpenPacks = PersistentConfig.autoOpenPacks == true,
     autoEvolveCards = PersistentConfig.autoEvolveCards == true,
     autoEquipBest = PersistentConfig.autoEquipBest == true,
+    autoJoinWorldCup = PersistentConfig.autoJoinWorldCup == true,
+    worldCupSquadMode = normalizeWorldCupSquadMode(PersistentConfig.worldCupSquadMode),
     settingAutoMatch = false,
     openingPacks = false,
     evolvingCards = false,
     equippingBest = false,
+    joiningWorldCup = false,
     autoMatchTransaction = false,
     matchPlaybackActive = false,
     matchEventListenersConnected = false,
@@ -344,6 +389,10 @@ local State = {
     lastPackOpenAt = 0,
     lastEquipBestSignature = nil,
     lastEquipBestAt = 0,
+    worldCupStatus = nil,
+    worldCupStatusUpdatedAt = 0,
+    lastWorldCupJoinAt = 0,
+    lastWorldCupCollectAt = 0,
     autoSave = PersistentConfig.autoSave ~= false,
     autoLoad = PersistentConfig.autoLoad ~= false,
     windowKeybind = normalizeKeybindName(PersistentConfig.windowKeybind),
@@ -363,6 +412,9 @@ local State = {
     variantConfig = nil,
     loanConfig = nil,
     skillsConfig = nil,
+    worldCupConfig = nil,
+    formationLayout = nil,
+    cardResolve = nil,
 
     windUI = nil,
     window = nil,
@@ -389,8 +441,10 @@ local State = {
     autoOpenPacksToggle = nil,
     autoEvolveCardsToggle = nil,
     autoEquipBestToggle = nil,
+    autoJoinWorldCupToggle = nil,
     autoPrestigeToggle = nil,
     durationDropdown = nil,
+    worldCupSquadDropdown = nil,
     rarityDropdown = nil,
     configParagraph = nil,
     autoSaveToggle = nil,
@@ -423,6 +477,7 @@ local State = {
     nextPrestigeCheckAt = 0,
     nextAutoEvolveAt = 0,
     nextAutoEquipBestAt = 0,
+    nextWorldCupCheckAt = 0,
 
     -- DataChanged milik game dijalankan melalui free-thread Signal.
     -- Callback tersebut tidak boleh menyentuh Instance/WindUI secara langsung.
@@ -456,6 +511,8 @@ local function syncPersistentConfig()
     PersistentConfig.autoOpenPacks = State.autoOpenPacks == true
     PersistentConfig.autoEvolveCards = State.autoEvolveCards == true
     PersistentConfig.autoEquipBest = State.autoEquipBest == true
+    PersistentConfig.autoJoinWorldCup = State.autoJoinWorldCup == true
+    PersistentConfig.worldCupSquadMode = normalizeWorldCupSquadMode(State.worldCupSquadMode)
     PersistentConfig.autoSave = State.autoSave == true
     PersistentConfig.autoLoad = State.autoLoad == true
     PersistentConfig.windowKeybind = normalizeKeybindName(State.windowKeybind)
@@ -481,6 +538,8 @@ local function buildConfigSnapshot()
         autoOpenPacks = State.autoOpenPacks == true,
         autoEvolveCards = State.autoEvolveCards == true,
         autoEquipBest = State.autoEquipBest == true,
+        autoJoinWorldCup = State.autoJoinWorldCup == true,
+        worldCupSquadMode = normalizeWorldCupSquadMode(State.worldCupSquadMode),
         duration = tonumber(State.selectedDuration) or 5,
         rarityWhitelist = copyWhitelistForConfig(),
     }
@@ -660,6 +719,8 @@ local getOwnedPackCount
 local getData
 local getEvolvableGroupCount
 local getSquadEquipSignature
+local getWorldCupPhase
+local getWorldCupReservedIds
 
 local function statusKindFromColor(color)
     if color == COLORS.success then
@@ -830,6 +891,36 @@ local function updateAutomationButtons()
         State.autoEquipBestToggle:SetDesc(equipDesc)
     end
 
+    if State.autoJoinWorldCupToggle and type(State.autoJoinWorldCupToggle.Set) == "function" then
+        if State.autoJoinWorldCupToggle.Value ~= State.autoJoinWorldCup then
+            State.autoJoinWorldCupToggle:Set(State.autoJoinWorldCup, false)
+        end
+
+        local status = State.worldCupStatus
+        local phaseInfo = getWorldCupPhase and getWorldCupPhase() or nil
+        local phase = phaseInfo and phaseInfo.phase or "unknown"
+        local modeLabel = worldCupSquadModeLabel(State.worldCupSquadMode)
+        local cupDesc
+
+        if State.joiningWorldCup then
+            cupDesc = "RUNNING • memproses reward atau entry International Cup."
+        elseif State.autoJoinWorldCup and status and status.pendingClaim and status.canCollect == true then
+            cupDesc = "ACTIVE • reward sebelumnya akan di-collect agar entry berikutnya terbuka."
+        elseif State.autoJoinWorldCup and status and status.pendingClaim then
+            cupDesc = "WAITING • hasil turnamen belum siap untuk diklaim."
+        elseif State.autoJoinWorldCup and status and status.youEntered then
+            cupDesc = "ENTERED • tim sudah terdaftar pada International Cup saat ini."
+        elseif State.autoJoinWorldCup and phase == "entry" then
+            cupDesc = "READY • entry sedang terbuka • squad: " .. modeLabel .. "."
+        elseif State.autoJoinWorldCup then
+            cupDesc = "ACTIVE • menunggu entry International Cup berikutnya • squad: " .. modeLabel .. "."
+        else
+            cupDesc = "Join otomatis saat entry terbuka • squad: " .. modeLabel .. "."
+        end
+
+        State.autoJoinWorldCupToggle:SetDesc(cupDesc)
+    end
+
     if State.autoPrestigeToggle and type(State.autoPrestigeToggle.Set) == "function" then
         if State.autoPrestigeToggle.Value ~= State.autoPrestige then
             State.autoPrestigeToggle:Set(State.autoPrestige, false)
@@ -937,6 +1028,42 @@ local function setAutoEquipBestEnabled(enabled, announce)
                 and "Auto Equip Best aktif • Auto Match dipause sementara saat lineup perlu diperbarui."
                 or "Auto Equip Best dinonaktifkan.",
             State.autoEquipBest and COLORS.success or COLORS.muted
+        )
+    end
+end
+
+local function setWorldCupSquadMode(value, announce)
+    State.worldCupSquadMode = normalizeWorldCupSquadMode(value)
+    PersistentConfig.worldCupSquadMode = State.worldCupSquadMode
+    State.nextWorldCupCheckAt = 0
+    State.cachedTopCard = nil
+    requestConfigSave()
+    updateAutomationButtons()
+
+    if announce ~= false then
+        setStatus(
+            "International Cup squad: " .. worldCupSquadModeLabel(State.worldCupSquadMode),
+            COLORS.success
+        )
+    end
+
+    return State.worldCupSquadMode
+end
+
+local function setAutoJoinWorldCupEnabled(enabled, announce)
+    State.autoJoinWorldCup = enabled == true
+    PersistentConfig.autoJoinWorldCup = State.autoJoinWorldCup
+    State.nextWorldCupCheckAt = 0
+    State.cachedTopCard = nil
+    updateAutomationButtons()
+    requestConfigSave()
+
+    if announce ~= false then
+        setStatus(
+            State.autoJoinWorldCup
+                and ("Auto Join International Cup aktif • squad: " .. worldCupSquadModeLabel(State.worldCupSquadMode) .. ".")
+                or "Auto Join International Cup dinonaktifkan.",
+            State.autoJoinWorldCup and COLORS.success or COLORS.muted
         )
     end
 end
@@ -1240,6 +1367,9 @@ local function loadGameModules()
     local variantModule = modulesFolder:FindFirstChild("VariantConfig")
     local loanConfigModule = modulesFolder:FindFirstChild("LoanConfig")
     local skillsConfigModule = modulesFolder:FindFirstChild("SkillsConfig")
+    local worldCupConfigModule = modulesFolder:FindFirstChild("WorldCupConfig")
+    local formationLayoutModule = modulesFolder:FindFirstChild("FormationLayout")
+    local cardResolveModule = modulesFolder:FindFirstChild("CardResolve")
 
     if databaseModule then
         local success, result = pcall(require, databaseModule)
@@ -1266,6 +1396,27 @@ local function loadGameModules()
         local success, result = pcall(require, skillsConfigModule)
         if success then
             State.skillsConfig = result
+        end
+    end
+
+    if worldCupConfigModule then
+        local success, result = pcall(require, worldCupConfigModule)
+        if success then
+            State.worldCupConfig = result
+        end
+    end
+
+    if formationLayoutModule then
+        local success, result = pcall(require, formationLayoutModule)
+        if success then
+            State.formationLayout = result
+        end
+    end
+
+    if cardResolveModule then
+        local success, result = pcall(require, cardResolveModule)
+        if success then
+            State.cardResolve = result
         end
     end
 end
@@ -1638,6 +1789,16 @@ local function findTopAvailableCard()
     end
 
     local unavailable = getUnavailableCardIds()
+
+    -- Saat Auto Join Cup aktif, jangan loan pemain yang sedang dicadangkan
+    -- untuk Last Team atau Best Rarity/OVR sebelum entry selesai.
+    if State.autoJoinWorldCup and getWorldCupReservedIds then
+        local reserved = getWorldCupReservedIds()
+        for instanceId in pairs(reserved) do
+            unavailable[tostring(instanceId)] = true
+        end
+    end
+
     local bestByBaseId = {}
 
     for instanceId in pairs(ownedCards) do
@@ -1870,6 +2031,17 @@ local function syncConfigurationControls()
         State.rarityDropdown:Select(getSelectedRarityLabels())
     end
 
+    if State.worldCupSquadDropdown then
+        local label = worldCupSquadModeLabel(State.worldCupSquadMode)
+        pcall(function()
+            if type(State.worldCupSquadDropdown.Select) == "function" then
+                State.worldCupSquadDropdown:Select(label)
+            elseif type(State.worldCupSquadDropdown.SetValue) == "function" then
+                State.worldCupSquadDropdown:SetValue(label)
+            end
+        end)
+    end
+
     State.syncingConfiguration = false
 end
 
@@ -1987,6 +2159,12 @@ local function applyLoadedConfig(config)
     if config.autoEquipBest ~= nil then
         State.autoEquipBest = config.autoEquipBest == true
     end
+    if config.autoJoinWorldCup ~= nil then
+        State.autoJoinWorldCup = config.autoJoinWorldCup == true
+    end
+    if config.worldCupSquadMode ~= nil then
+        State.worldCupSquadMode = normalizeWorldCupSquadMode(config.worldCupSquadMode)
+    end
 
     State.nextAutoLoanAt = 0
     State.nextAutoCollectAt = 0
@@ -1994,6 +2172,7 @@ local function applyLoadedConfig(config)
     State.nextAutoOpenPackAt = 0
     State.nextAutoEvolveAt = 0
     State.nextAutoEquipBestAt = 0
+    State.nextWorldCupCheckAt = 0
     State.lastObservedPackCount = 0
     State.lastEquipBestSignature = nil
     State.cachedTopCard = nil
@@ -2540,7 +2719,7 @@ local function runWithAutoMatchPaused(actionCallback)
 end
 
 local function evolveCardsNow(isAutomatic)
-    if State.evolvingCards or State.equippingBest or State.collecting or State.loaning or State.prestiging then
+    if State.evolvingCards or State.equippingBest or State.collecting or State.loaning or State.prestiging or State.joiningWorldCup then
         return false, "Automation lain sedang berjalan"
     end
 
@@ -2588,7 +2767,7 @@ local function evolveCardsNow(isAutomatic)
 end
 
 local function equipBestEleven(isAutomatic)
-    if State.equippingBest or State.evolvingCards or State.collecting or State.loaning or State.prestiging then
+    if State.equippingBest or State.evolvingCards or State.collecting or State.loaning or State.prestiging or State.joiningWorldCup then
         return false, "Automation lain sedang berjalan"
     end
     if State.matchPlaybackActive then
@@ -2625,6 +2804,484 @@ local function equipBestEleven(isAutomatic)
     return true
 end
 
+getWorldCupPhase = function()
+    local config = State.worldCupConfig
+    if not config or type(config.Phase) ~= "function" then
+        return nil
+    end
+
+    local success, result = pcall(config.Phase, os.time())
+    if success and type(result) == "table" then
+        return result
+    end
+
+    return nil
+end
+
+local function fetchWorldCupStatus()
+    if not tryRediscoverNetworker() then
+        return nil, "Networker belum ditemukan"
+    end
+
+    local response, errorMessage = callNetwork("GetWorldCupStatus")
+    if type(response) == "table" and response.success ~= false then
+        State.worldCupStatus = response
+        State.worldCupStatusUpdatedAt = os.clock()
+        State.cachedTopCard = nil
+        updateAutomationButtons()
+        return response
+    end
+
+    return nil, errorMessage or "Status International Cup tidak tersedia"
+end
+
+local function getWorldCupUnavailableIds()
+    local unavailable = {}
+    addActiveIds(unavailable, getData("Loans.active"))
+    addActiveIds(unavailable, getData("Training.active"))
+    return unavailable
+end
+
+local function resolveWorldCupCandidate(instanceId, cardData)
+    if type(cardData) ~= "table" or cardData.baseId == nil then
+        return nil
+    end
+
+    local database = State.playerCardDatabase
+    if not database or type(database.GetById) ~= "function" then
+        return nil
+    end
+
+    local success, baseCard = pcall(database.GetById, cardData.baseId)
+    if not success or not baseCard then
+        return nil
+    end
+
+    local resolved = nil
+    local cardResolve = State.cardResolve
+    if cardResolve and type(cardResolve.Resolve) == "function" then
+        local resolveSuccess, result = pcall(cardResolve.Resolve, cardData)
+        if resolveSuccess and type(result) == "table" then
+            resolved = result
+        end
+    end
+
+    local upgrade = tonumber(cardData.upgrade) or 0
+    local rating = resolved and tonumber(resolved.rating)
+        or ((tonumber(baseCard.rating) or 0) + upgrade)
+    local rarity = resolved and resolved.rarity or getRarity(baseCard, rating)
+
+    return {
+        instanceId = tostring(instanceId),
+        baseId = tostring(cardData.baseId),
+        name = tostring(baseCard.name or "Unknown Player"),
+        position = tostring(baseCard.position or ""),
+        nation = tostring(baseCard.nation or ""),
+        rating = tonumber(rating) or 0,
+        rarity = tostring(rarity or "Unknown"),
+        rank = rarityRank(rarity),
+    }
+end
+
+local function getFormationRoles(formation)
+    local layout = State.formationLayout
+    if not layout or type(layout.Get) ~= "function" then
+        return nil
+    end
+
+    local success, roles = pcall(layout.Get, formation)
+    if not success or type(roles) ~= "table" then
+        return nil
+    end
+
+    return roles
+end
+
+local function buildWorldCupCandidatePools()
+    local owned = getData("Squad.Owned")
+    if type(owned) ~= "table" then
+        return nil, "Squad.Owned belum tersedia"
+    end
+
+    local unavailable = getWorldCupUnavailableIds()
+    local bestByRoleAndBase = {
+        GK = {},
+        DEF = {},
+        MID = {},
+        FWD = {},
+    }
+
+    for rawInstanceId, cardData in pairs(owned) do
+        local instanceId = tostring(rawInstanceId)
+        if not unavailable[instanceId] then
+            local candidate = resolveWorldCupCandidate(instanceId, cardData)
+            local role = candidate and candidate.position
+            if candidate and bestByRoleAndBase[role] then
+                local current = bestByRoleAndBase[role][candidate.baseId]
+                if not current
+                    or candidate.rank > current.rank
+                    or (candidate.rank == current.rank and candidate.rating > current.rating)
+                then
+                    bestByRoleAndBase[role][candidate.baseId] = candidate
+                end
+            end
+        end
+    end
+
+    local pools = {
+        GK = {},
+        DEF = {},
+        MID = {},
+        FWD = {},
+    }
+
+    for role, byBase in pairs(bestByRoleAndBase) do
+        for _, candidate in pairs(byBase) do
+            pools[role][#pools[role] + 1] = candidate
+        end
+
+        table.sort(pools[role], function(a, b)
+            if a.rank ~= b.rank then
+                return a.rank > b.rank
+            end
+            if a.rating ~= b.rating then
+                return a.rating > b.rating
+            end
+            return a.name < b.name
+        end)
+    end
+
+    return pools
+end
+
+local function buildBestWorldCupTeamForFormation(formation, pools)
+    local roles = getFormationRoles(formation)
+    if not roles then
+        return nil, "FormationLayout tidak tersedia"
+    end
+
+    local required = {GK = 0, DEF = 0, MID = 0, FWD = 0}
+    for _, slot in ipairs(roles) do
+        local role = slot.role
+        if required[role] ~= nil then
+            required[role] += 1
+        end
+    end
+
+    local selectedByRole = {GK = {}, DEF = {}, MID = {}, FWD = {}}
+    local score = 0
+
+    for role, amount in pairs(required) do
+        local pool = pools[role] or {}
+        if #pool < amount then
+            return nil, string.format("Butuh %d %s, tersedia %d", amount, role, #pool)
+        end
+
+        for index = 1, amount do
+            local candidate = pool[index]
+            selectedByRole[role][index] = candidate
+            score += candidate.rank * 100000 + candidate.rating * 100
+        end
+    end
+
+    local roleIndex = {GK = 1, DEF = 1, MID = 1, FWD = 1}
+    local instanceIds = {}
+    local cards = {}
+
+    for slotIndex, slot in ipairs(roles) do
+        local role = slot.role
+        local candidate = selectedByRole[role][roleIndex[role]]
+        if not candidate then
+            return nil, "Gagal mengisi slot " .. tostring(slotIndex)
+        end
+
+        roleIndex[role] += 1
+        instanceIds[#instanceIds + 1] = candidate.instanceId
+        cards[#cards + 1] = candidate
+    end
+
+    return {
+        formation = formation,
+        instanceIds = instanceIds,
+        cards = cards,
+        score = score,
+    }
+end
+
+local function buildBestWorldCupTeam()
+    local pools, poolError = buildWorldCupCandidatePools()
+    if not pools then
+        return nil, poolError
+    end
+
+    local bestTeam = nil
+    local reasons = {}
+
+    for _, formation in ipairs(WORLD_CUP_FORMATIONS) do
+        local team, reason = buildBestWorldCupTeamForFormation(formation, pools)
+        if team then
+            if not bestTeam or team.score > bestTeam.score then
+                bestTeam = team
+            end
+        elseif reason then
+            reasons[#reasons + 1] = formation .. ": " .. reason
+        end
+    end
+
+    if not bestTeam then
+        return nil, reasons[1] or "Tidak cukup pemain untuk membentuk 11 pemain"
+    end
+
+    return bestTeam
+end
+
+local function buildLastWorldCupTeam(status)
+    if type(status) ~= "table" then
+        return nil, "Status International Cup belum tersedia"
+    end
+
+    local lastTeam = status.lastTeam
+    local formation = tostring(status.lastFormation or "4-3-3")
+    if type(lastTeam) ~= "table" or #lastTeam <= 0 then
+        return nil, "Belum ada Last Team"
+    end
+
+    local roles = getFormationRoles(formation)
+    if not roles then
+        return nil, "Formation Last Team tidak valid"
+    end
+
+    local owned = getData("Squad.Owned")
+    if type(owned) ~= "table" then
+        return nil, "Squad.Owned belum tersedia"
+    end
+
+    local unavailable = getWorldCupUnavailableIds()
+    local candidatesByRole = {GK = {}, DEF = {}, MID = {}, FWD = {}}
+    local usedBaseIds = {}
+
+    for _, rawInstanceId in ipairs(lastTeam) do
+        local instanceId = tostring(rawInstanceId)
+        local cardData = owned[instanceId] or owned[rawInstanceId]
+        if type(cardData) == "table" and not unavailable[instanceId] then
+            local candidate = resolveWorldCupCandidate(instanceId, cardData)
+            if candidate
+                and candidatesByRole[candidate.position]
+                and not usedBaseIds[candidate.baseId]
+            then
+                usedBaseIds[candidate.baseId] = true
+                candidatesByRole[candidate.position][#candidatesByRole[candidate.position] + 1] = candidate
+            end
+        end
+    end
+
+    local roleIndex = {GK = 1, DEF = 1, MID = 1, FWD = 1}
+    local instanceIds = {}
+    local cards = {}
+
+    for slotIndex, slot in ipairs(roles) do
+        local role = slot.role
+        local candidate = candidatesByRole[role][roleIndex[role]]
+        if not candidate then
+            return nil, string.format("Last Team tidak lengkap untuk slot %d (%s)", slotIndex, tostring(role))
+        end
+
+        roleIndex[role] += 1
+        instanceIds[#instanceIds + 1] = candidate.instanceId
+        cards[#cards + 1] = candidate
+    end
+
+    if #instanceIds ~= 11 then
+        return nil, "Last Team tidak berisi 11 pemain yang tersedia"
+    end
+
+    return {
+        formation = formation,
+        instanceIds = instanceIds,
+        cards = cards,
+        score = 0,
+    }
+end
+
+local function selectWorldCupTeam(status)
+    if normalizeWorldCupSquadMode(State.worldCupSquadMode) == WORLD_CUP_SQUAD_MODE_LAST then
+        return buildLastWorldCupTeam(status)
+    end
+
+    return buildBestWorldCupTeam()
+end
+
+getWorldCupReservedIds = function()
+    local reserved = {}
+    if not State.autoJoinWorldCup then
+        return reserved
+    end
+
+    local status = State.worldCupStatus
+    if type(status) == "table" and status.youEntered then
+        return reserved
+    end
+
+    local team = nil
+    if normalizeWorldCupSquadMode(State.worldCupSquadMode) == WORLD_CUP_SQUAD_MODE_LAST then
+        if type(status) == "table" then
+            team = buildLastWorldCupTeam(status)
+        end
+    else
+        team = buildBestWorldCupTeam()
+    end
+
+    if type(team) == "table" and type(team.instanceIds) == "table" then
+        for _, instanceId in ipairs(team.instanceIds) do
+            reserved[tostring(instanceId)] = true
+        end
+    end
+
+    return reserved
+end
+
+local function joinInternationalCup(isAutomatic)
+    if State.joiningWorldCup
+        or State.collecting
+        or State.loaning
+        or State.prestiging
+        or State.evolvingCards
+        or State.equippingBest
+        or State.joiningWorldCup
+        or State.autoMatchTransaction
+    then
+        return false, "Automation lain sedang berjalan"
+    end
+
+    if State.matchPlaybackActive then
+        State.nextWorldCupCheckAt = os.clock() + WORLD_CUP_RETRY_DELAY
+        return false, "Match sedang berlangsung"
+    end
+
+    local status, statusError = fetchWorldCupStatus()
+    if not status then
+        State.nextWorldCupCheckAt = os.clock() + WORLD_CUP_RETRY_DELAY
+        if not isAutomatic then
+            setStatus("Gagal mengecek International Cup: " .. tostring(statusError), COLORS.danger)
+        end
+        return false, statusError
+    end
+
+    -- Reward yang belum diklaim mengunci entry berikutnya. Auto Join mengklaim
+    -- reward tersebut terlebih dahulu agar siklus berikutnya dapat dilanjutkan.
+    if status.pendingClaim then
+        if status.canCollect ~= true then
+            State.nextWorldCupCheckAt = os.clock() + WORLD_CUP_CHECK_INTERVAL
+            return false, "Reward belum dapat diklaim"
+        end
+
+        State.joiningWorldCup = true
+        updateAutomationButtons()
+
+        task.spawn(function()
+            local response, errorMessage = callNetwork("CollectWorldCup")
+            State.joiningWorldCup = false
+            State.nextWorldCupCheckAt = os.clock()
+                + (response and response.success and AUTO_ACTION_INTERVAL or WORLD_CUP_RETRY_DELAY)
+
+            if response and response.success then
+                State.lastWorldCupCollectAt = os.time()
+                setStatus(
+                    string.format(
+                        "Reward International Cup berhasil diklaim%s.",
+                        response.label and (" • " .. tostring(response.label)) or ""
+                    ),
+                    COLORS.success
+                )
+                State.worldCupStatus = nil
+                State.cachedTopCard = nil
+            elseif not isAutomatic then
+                setStatus(
+                    "Collect reward International Cup gagal: " .. tostring(errorMessage),
+                    COLORS.danger
+                )
+            end
+
+            updateAutomationButtons()
+            task.wait(0.35)
+            refreshUI(true)
+        end)
+
+        return true
+    end
+
+    if status.youEntered then
+        State.nextWorldCupCheckAt = os.clock() + WORLD_CUP_CHECK_INTERVAL
+        return false, "Sudah terdaftar"
+    end
+
+    local phaseInfo = getWorldCupPhase()
+    if not phaseInfo or phaseInfo.phase ~= "entry" then
+        State.nextWorldCupCheckAt = os.clock() + WORLD_CUP_CHECK_INTERVAL
+        return false, "Entry belum terbuka"
+    end
+
+    local team, teamError = selectWorldCupTeam(status)
+    if not team then
+        State.nextWorldCupCheckAt = os.clock() + WORLD_CUP_RETRY_DELAY
+        if not isAutomatic then
+            setStatus("Tidak dapat menyiapkan squad Cup: " .. tostring(teamError), COLORS.warning)
+        end
+        return false, teamError
+    end
+
+    State.joiningWorldCup = true
+    updateAutomationButtons()
+    setStatus(
+        string.format(
+            "Mendaftarkan International Cup • %s • %s...",
+            tostring(team.formation),
+            worldCupSquadModeLabel(State.worldCupSquadMode)
+        ),
+        COLORS.warning
+    )
+
+    task.spawn(function()
+        local response, errorMessage = runWithAutoMatchPaused(function()
+            return callNetworkLoose("EnterWorldCup", {
+                formation = team.formation,
+                instanceIds = team.instanceIds,
+            })
+        end)
+
+        State.joiningWorldCup = false
+        local joined = response ~= nil
+            and (type(response) ~= "table" or response.success ~= false)
+        State.nextWorldCupCheckAt = os.clock()
+            + (joined and WORLD_CUP_SUCCESS_DELAY or WORLD_CUP_RETRY_DELAY)
+
+        if joined then
+            State.lastWorldCupJoinAt = os.time()
+            State.worldCupStatus = nil
+            State.cachedTopCard = nil
+            setStatus(
+                string.format(
+                    "Berhasil join International Cup • %s • %d pemain.",
+                    tostring(team.formation),
+                    #team.instanceIds
+                ),
+                COLORS.success
+            )
+        elseif not isAutomatic then
+            setStatus(
+                "Join International Cup gagal: " .. tostring(errorMessage or "Unknown error"),
+                COLORS.danger
+            )
+        end
+
+        updateAutomationButtons()
+        task.wait(0.35)
+        refreshUI(true)
+    end)
+
+    return true
+end
+
 local function fetchPrestigeInfo()
     if not tryRediscoverNetworker() then
         return nil, "Networker belum ditemukan"
@@ -2642,7 +3299,7 @@ local function fetchPrestigeInfo()
 end
 
 local function performPrestige(isAutomatic)
-    if State.prestiging or State.collecting or State.loaning then
+    if State.prestiging or State.collecting or State.loaning or State.joiningWorldCup then
         return false, "Automation lain sedang berjalan"
     end
 
@@ -2731,6 +3388,7 @@ local function collectAllReadyLoans(isAutomatic)
         or State.prestiging
         or State.evolvingCards
         or State.equippingBest
+        or State.joiningWorldCup
         or State.autoMatchTransaction
     then
         return
@@ -2842,7 +3500,7 @@ local function collectAllReadyLoans(isAutomatic)
 end
 
 local function loanOutTopRarity(isAutomatic)
-    if State.loaning or State.collecting or State.prestiging then
+    if State.loaning or State.collecting or State.prestiging or State.joiningWorldCup then
         return
     end
 
@@ -2987,6 +3645,7 @@ local function runAutomationTick()
         or State.prestiging
         or State.evolvingCards
         or State.equippingBest
+        or State.joiningWorldCup
         or State.autoMatchTransaction
     then
         return
@@ -3043,6 +3702,23 @@ local function runAutomationTick()
         end
     end
 
+    -- Auto Join International Cup memeriksa entry secara berkala. Mode Last Team
+    -- memakai lineup turnamen terakhir; mode Best menyusun 11 pemain berdasarkan
+    -- rarity terlebih dahulu lalu OVR, sekaligus memilih formation terbaik.
+    local blockAutoLoanForWorldCup = false
+    if State.autoJoinWorldCup and now >= State.nextWorldCupCheckAt then
+        State.nextWorldCupCheckAt = now + WORLD_CUP_CHECK_INTERVAL
+        if joinInternationalCup(true) then
+            return
+        end
+
+        local phaseInfo = getWorldCupPhase()
+        local cupStatus = State.worldCupStatus
+        blockAutoLoanForWorldCup = phaseInfo
+            and phaseInfo.phase == "entry"
+            and not (cupStatus and cupStatus.youEntered)
+    end
+
     -- Prestige memiliki prioritas tertinggi ketika seluruh requirement sudah terpenuhi.
     if State.autoPrestige and now >= State.nextPrestigeCheckAt then
         State.nextPrestigeCheckAt = now + PRESTIGE_CHECK_INTERVAL
@@ -3063,7 +3739,7 @@ local function runAutomationTick()
         end
     end
 
-    if State.autoLoan and now >= State.nextAutoLoanAt then
+    if State.autoLoan and not blockAutoLoanForWorldCup and now >= State.nextAutoLoanAt then
         local hasFreeSlot = getLoanSlotState()
         if hasFreeSlot and getTopAvailableCard(false) then
             State.nextAutoLoanAt = now + AUTO_ACTION_INTERVAL
@@ -3576,6 +4252,34 @@ local function buildGui()
     })
     compactElement(State.autoEquipBestToggle, 15, 13)
 
+    State.worldCupSquadDropdown = compactDropdown(AutomationTab:Dropdown({
+        Title = "International Cup Squad",
+        Desc = "Last Team memakai tim turnamen sebelumnya; Best memilih rarity lalu OVR tertinggi.",
+        Values = {"Last Team", "Best Rarity / OVR"},
+        Value = worldCupSquadModeLabel(State.worldCupSquadMode),
+        SearchBarEnabled = false,
+        Callback = function(selected)
+            if State.syncingConfiguration then
+                return
+            end
+
+            local selectedText = type(selected) == "table" and selected.Title or selected
+            setWorldCupSquadMode(selectedText)
+        end,
+    }))
+
+    State.autoJoinWorldCupToggle = AutomationTab:Toggle({
+        Title = "Auto Join International Cup",
+        Desc = "Join otomatis saat entry terbuka dan claim reward sebelumnya bila diperlukan.",
+        Icon = "trophy",
+        IconSize = 18,
+        Value = State.autoJoinWorldCup,
+        Callback = function(enabled)
+            setAutoJoinWorldCupEnabled(enabled)
+        end,
+    })
+    compactElement(State.autoJoinWorldCupToggle, 15, 13)
+
     State.autoPrestigeToggle = AutomationTab:Toggle({
         Title = "Auto Prestige",
         Desc = "Prestige otomatis saat eligible. Division dan Coins akan di-reset.",
@@ -3992,6 +4696,10 @@ function API.ToggleAutoEquipBest()
     setAutoEquipBestEnabled(not State.autoEquipBest)
 end
 
+function API.ToggleAutoJoinWorldCup()
+    setAutoJoinWorldCupEnabled(not State.autoJoinWorldCup)
+end
+
 function API.ToggleAutoMatch()
     return setAutoMatchEnabled(not State.autoMatch)
 end
@@ -4020,6 +4728,14 @@ function API.SetAutoEquipBest(enabled)
     setAutoEquipBestEnabled(enabled)
 end
 
+function API.SetAutoJoinWorldCup(enabled)
+    setAutoJoinWorldCupEnabled(enabled)
+end
+
+function API.SetWorldCupSquadMode(mode)
+    return setWorldCupSquadMode(mode)
+end
+
 function API.SetAutoMatch(enabled)
     return setAutoMatchEnabled(enabled)
 end
@@ -4034,6 +4750,29 @@ end
 
 function API.EquipBestNow()
     return equipBestEleven(false)
+end
+
+function API.JoinInternationalCupNow()
+    return joinInternationalCup(false)
+end
+
+function API.CheckInternationalCup()
+    return fetchWorldCupStatus()
+end
+
+function API.GetAutoJoinWorldCupState()
+    local phaseInfo = getWorldCupPhase()
+    return {
+        enabled = State.autoJoinWorldCup,
+        running = State.joiningWorldCup,
+        squadMode = State.worldCupSquadMode,
+        squadModeLabel = worldCupSquadModeLabel(State.worldCupSquadMode),
+        phase = phaseInfo and phaseInfo.phase or nil,
+        status = State.worldCupStatus,
+        lastJoinedAt = State.lastWorldCupJoinAt,
+        lastCollectedAt = State.lastWorldCupCollectAt,
+        nextAttemptAt = State.nextWorldCupCheckAt,
+    }
 end
 
 function API.GetAutoEvolveState()
@@ -4104,6 +4843,9 @@ function API.GetAutomationState()
         autoOpenPacks = State.autoOpenPacks,
         autoEvolveCards = State.autoEvolveCards,
         autoEquipBest = State.autoEquipBest,
+        autoJoinWorldCup = State.autoJoinWorldCup,
+        worldCupSquadMode = State.worldCupSquadMode,
+        joiningWorldCup = State.joiningWorldCup,
         openingPacks = State.openingPacks,
         evolvingCards = State.evolvingCards,
         equippingBest = State.equippingBest,
@@ -4145,6 +4887,8 @@ function API.GetConfigState()
         startupLoaded = State.startupConfigLoaded,
         startupError = State.startupConfigError,
         windowKeybind = State.windowKeybind,
+        autoJoinWorldCup = State.autoJoinWorldCup,
+        worldCupSquadMode = State.worldCupSquadMode,
     }
 end
 
@@ -4160,9 +4904,11 @@ function API.Stop()
     State.autoOpenPacks = false
     State.autoEvolveCards = false
     State.autoEquipBest = false
+    State.autoJoinWorldCup = false
     State.openingPacks = false
     State.evolvingCards = false
     State.equippingBest = false
+    State.joiningWorldCup = false
     State.autoMatchTransaction = false
     State.settingAutoMatch = false
     State.autoMatchPendingSync = false
