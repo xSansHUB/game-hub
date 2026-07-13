@@ -363,6 +363,11 @@ local State = {
     nextAutoLoanAt = 0,
     nextAutoCollectAt = 0,
     nextPrestigeCheckAt = 0,
+
+    -- DataChanged milik game dijalankan melalui free-thread Signal.
+    -- Callback tersebut tidak boleh menyentuh Instance/WindUI secara langsung.
+    uiRefreshRequested = false,
+    forceUIRefreshRequested = false,
 }
 
 local updateConfigManagerUI
@@ -2907,16 +2912,20 @@ local function connectDataChanged()
                 or path == "Division.Current"
                 or string.find(path, "Squad", 1, true) == 1
 
+            -- PENTING: callback DataChanged berjalan dari ReplicatedStorage.Packages.Signal
+            -- menggunakan free thread milik game. Thread itu tidak memiliki capability
+            -- untuk mengakses Instance yang dibuat executor/WindUI. Karena itu callback
+            -- ini hanya menandai refresh; seluruh perubahan UI dilakukan oleh main loop.
             if loanRelevant then
                 State.cachedTopCard = nil
-                task.defer(refreshUI, true)
+                State.uiRefreshRequested = true
+                State.forceUIRefreshRequested = true
             end
 
             if prestigeRelevant then
-                -- Jangan hapus hasil Check Prestige. Data lama tetap ditampilkan sampai
-                -- refresh berikutnya selesai, sehingga panel tidak kembali ke placeholder.
+                -- Pertahankan hasil Check Prestige sampai hasil refresh baru tersedia.
                 State.nextPrestigeCheckAt = 0
-                updateAutomationButtons()
+                State.uiRefreshRequested = true
             end
         end)
     end)
@@ -3213,7 +3222,14 @@ task.spawn(function()
 
     while State.running do
         task.wait(POLL_INTERVAL)
-        refreshUI(false)
+
+        -- Semua operasi WindUI dijalankan dari thread utama script ini, bukan dari
+        -- callback free-thread DataChanged milik game.
+        local forceRefresh = State.forceUIRefreshRequested == true
+        State.uiRefreshRequested = false
+        State.forceUIRefreshRequested = false
+
+        refreshUI(forceRefresh)
         runAutomationTick()
     end
 end)
