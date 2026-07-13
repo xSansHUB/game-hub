@@ -7,7 +7,7 @@
       - Menampilkan seluruh pemain yang sedang loan out.
       - Collect All untuk seluruh loan yang sudah selesai.
       - Loan Top berdasarkan whitelist rarity dan durasi yang dipilih.
-      - Toggle Auto Loan, Auto Collect, Auto Match, Auto Open Packs, Auto Evolve Cards, Auto Equip Best, Auto Join International Cup, dan Auto Prestige.
+      - Toggle Auto Loan, Auto Collect, Auto Match, Auto Open Packs, Auto Evolve satu-per-satu, Auto Equip Best, Auto Join International Cup, dan Auto Prestige.
       - Loan Duration dan Rarity Whitelist berada tepat di atas toggle Auto Loan.
       - Pilihan durasi diambil dari LoanConfig.Durations.
       - Dashboard sesi Auto Loan: terkirim, masih berputar, selesai, dan income.
@@ -35,6 +35,7 @@
       LoanOutGUI.ToggleAutoEquipBest()
       LoanOutGUI.ToggleAutoJoinWorldCup()
       LoanOutGUI.SetWorldCupSquadMode("last_team" / "best_rarity_ovr")
+      LoanOutGUI.Rejoin()
       LoanOutGUI.PrestigeNow()
       LoanOutGUI.SaveConfig()
       LoanOutGUI.LoadConfig()
@@ -50,6 +51,7 @@ local TweenService = game:GetService("TweenService")
 local MarketplaceService = game:GetService("MarketplaceService")
 local CoreGui = game:GetService("CoreGui")
 local HttpService = game:GetService("HttpService")
+local TeleportService = game:GetService("TeleportService")
 
 local LocalPlayer = Players.LocalPlayer
 local Environment = if type(getgenv) == "function" then getgenv() else _G
@@ -91,7 +93,7 @@ end
 local GAME_NAME = getCurrentGameName()
 local HUB_TITLE = "xSansHUB - " .. GAME_NAME
 
-local CONFIG_VERSION = 5
+local CONFIG_VERSION = 6
 local CONFIG_ROOT = "xSansHUB"
 local CONFIG_FOLDER = CONFIG_ROOT .. "/LoanOutManager"
 local CONFIG_FILE = CONFIG_FOLDER .. "/" .. tostring(game.PlaceId) .. ".json"
@@ -378,6 +380,7 @@ local State = {
     evolvingCards = false,
     equippingBest = false,
     joiningWorldCup = false,
+    rejoining = false,
     autoMatchTransaction = false,
     matchPlaybackActive = false,
     matchEventListenersConnected = false,
@@ -422,6 +425,7 @@ local State = {
     automationTab = nil,
     configurationTab = nil,
     settingsTab = nil,
+    worldCupTab = nil,
 
     summaryParagraph = nil,
     dashboardParagraph = nil,
@@ -431,6 +435,7 @@ local State = {
     prestigeGateParagraphs = {},
     prestigeInfoUpdatedAt = 0,
     configurationParagraph = nil,
+    worldCupParagraph = nil,
 
     collectButton = nil,
     loanButton = nil,
@@ -452,6 +457,9 @@ local State = {
     windowKeybindControl = nil,
     saveConfigButton = nil,
     loadConfigButton = nil,
+    worldCupJoinButton = nil,
+    worldCupCheckButton = nil,
+    rejoinButton = nil,
 
     configSupported = CONFIG_FILE_SUPPORTED,
     configLoading = false,
@@ -854,19 +862,16 @@ local function updateAutomationButtons()
             State.autoEvolveCardsToggle:Set(State.autoEvolveCards, false)
         end
 
-        local passOwned = getData("Passes.AutoEvolve") == true
         local evolvableCount = getEvolvableGroupCount and getEvolvableGroupCount() or 0
         local evolveDesc
-        if not passOwned then
-            evolveDesc = "REQUIRES PASS • mengikuti AutoEvolve bawaan game; tidak membypass game pass."
-        elseif State.evolvingCards then
-            evolveDesc = string.format("EVOLVING • memproses %d grup kartu yang dapat di-evolve.", evolvableCount)
+        if State.evolvingCards then
+            evolveDesc = string.format("EVOLVING • memproses 1 kartu • %d grup tersisa.", evolvableCount)
         elseif State.autoEvolveCards and evolvableCount > 0 then
-            evolveDesc = string.format("ACTIVE • %d grup kartu siap diproses AutoUpgradeAll.", evolvableCount)
+            evolveDesc = string.format("ACTIVE • %d grup siap • diproses satu per satu dengan CombineCards.", evolvableCount)
         elseif State.autoEvolveCards then
             evolveDesc = "ACTIVE • menunggu duplicate yang cukup untuk evolve."
         else
-            evolveDesc = string.format("Evolve otomatis memakai fitur resmi game • %d grup siap.", evolvableCount)
+            evolveDesc = string.format("Evolve satu per satu tanpa AutoEvolve game pass • %d grup siap.", evolvableCount)
         end
         State.autoEvolveCardsToggle:SetDesc(evolveDesc)
     end
@@ -919,6 +924,59 @@ local function updateAutomationButtons()
         end
 
         State.autoJoinWorldCupToggle:SetDesc(cupDesc)
+
+        if State.worldCupParagraph then
+            local title = "International Cup"
+            if status and status.youEntered then
+                title = "International Cup • ENTERED"
+            elseif status and status.pendingClaim then
+                title = "International Cup • REWARD"
+            elseif phase == "entry" then
+                title = "International Cup • ENTRY OPEN"
+            elseif phase ~= "unknown" then
+                title = "International Cup • " .. string.upper(tostring(phase))
+            end
+
+            if type(State.worldCupParagraph.SetTitle) == "function" then
+                State.worldCupParagraph:SetTitle(title)
+            end
+            if type(State.worldCupParagraph.SetDesc) == "function" then
+                State.worldCupParagraph:SetDesc(cupDesc)
+            end
+        end
+
+        if State.worldCupJoinButton then
+            local buttonTitle = "Join International Cup"
+            local buttonDesc = "Entry belum terbuka."
+            local buttonEnabled = false
+
+            if State.joiningWorldCup then
+                buttonTitle = "Processing Cup..."
+                buttonDesc = "Request International Cup sedang berjalan."
+            elseif status and status.pendingClaim and status.canCollect == true then
+                buttonTitle = "Collect Cup Reward"
+                buttonDesc = "Klaim reward agar dapat mengikuti Cup berikutnya."
+                buttonEnabled = true
+            elseif status and status.youEntered then
+                buttonTitle = "Already Entered"
+                buttonDesc = "Squad sudah terdaftar pada International Cup saat ini."
+            elseif phase == "entry" then
+                buttonTitle = "Join International Cup"
+                buttonDesc = "Gunakan " .. modeLabel .. " untuk mendaftar sekarang."
+                buttonEnabled = true
+            else
+                buttonTitle = "Entry Closed"
+                buttonDesc = "Menunggu fase entry International Cup berikutnya."
+            end
+
+            if type(State.worldCupJoinButton.SetTitle) == "function" then
+                State.worldCupJoinButton:SetTitle(buttonTitle)
+            end
+            if type(State.worldCupJoinButton.SetDesc) == "function" then
+                State.worldCupJoinButton:SetDesc(buttonDesc)
+            end
+            setElementLocked(State.worldCupJoinButton, not buttonEnabled)
+        end
     end
 
     if State.autoPrestigeToggle and type(State.autoPrestigeToggle.Set) == "function" then
@@ -1000,17 +1058,12 @@ local function setAutoEvolveCardsEnabled(enabled, announce)
     requestConfigSave()
 
     if announce ~= false then
-        local passOwned = getData("Passes.AutoEvolve") == true
-        if State.autoEvolveCards and not passOwned then
-            setStatus("Auto Evolve membutuhkan game pass AutoEvolve bawaan game.", COLORS.warning)
-        else
-            setStatus(
-                State.autoEvolveCards
-                    and "Auto Evolve Cards aktif • memakai AutoUpgradeAll resmi game."
-                    or "Auto Evolve Cards dinonaktifkan.",
-                State.autoEvolveCards and COLORS.success or COLORS.muted
-            )
-        end
+        setStatus(
+            State.autoEvolveCards
+                and "Auto Evolve Cards aktif • duplicate diproses satu per satu dengan CombineCards."
+                or "Auto Evolve Cards dinonaktifkan.",
+            State.autoEvolveCards and COLORS.success or COLORS.muted
+        )
     end
 end
 
@@ -2426,7 +2479,7 @@ local function callNetworkLoose(action, payload)
         return nil, tostring(response.reason or "Request gagal")
     end
 
-    -- Sebagian action UI seperti AutoFillBestEleven/AutoUpgradeAll bersifat
+    -- Sebagian action UI seperti AutoFillBestEleven/CombineCards bersifat
     -- fire-and-forget dan dapat mengembalikan nil meskipun request diterima.
     return response ~= nil and response or true, nil
 end
@@ -2723,24 +2776,29 @@ local function evolveCardsNow(isAutomatic)
         return false, "Automation lain sedang berjalan"
     end
 
-    if getData("Passes.AutoEvolve") ~= true then
-        if not isAutomatic then
-            setStatus("Auto Evolve membutuhkan game pass AutoEvolve.", COLORS.warning)
-        end
-        return false, "Game pass AutoEvolve belum dimiliki"
-    end
-
-    local evolvableCount = getEvolvableGroupCount()
-    if evolvableCount <= 0 then
+    local groups = buildEvolvableGroups()
+    local target = groups[1]
+    if not target then
         return false, "Tidak ada kartu yang dapat di-evolve"
     end
+
+    local instanceId = target.bestInstanceId
+    if not instanceId or tostring(instanceId) == "" then
+        instanceId = "dupe:" .. tostring(target.baseId)
+    end
+
+    local cardName = target.baseCard and target.baseCard.name
+        or tostring(target.baseId)
 
     State.evolvingCards = true
     updateAutomationButtons()
 
     task.spawn(function()
         local response, errorMessage = runWithAutoMatchPaused(function()
-            return callNetworkLoose("AutoUpgradeAll")
+            return callNetworkLoose("CombineCards", {
+                instanceId = instanceId,
+                levels = 1,
+            })
         end)
 
         State.evolvingCards = false
@@ -2751,13 +2809,17 @@ local function evolveCardsNow(isAutomatic)
 
         if response then
             setStatus(
-                string.format("Auto Evolve memproses %d grup kartu.", evolvableCount),
+                string.format(
+                    "Evolve berhasil • %s +1 • %d duplicate digunakan.",
+                    tostring(cardName),
+                    math.min(2, tonumber(target.duplicateCount) or 2)
+                ),
                 COLORS.success
             )
-            task.wait(0.4)
+            task.wait(0.45)
             refreshUI(true)
         elseif not isAutomatic then
-            setStatus("Auto Evolve gagal: " .. tostring(errorMessage), COLORS.danger)
+            setStatus("Evolve gagal: " .. tostring(errorMessage), COLORS.danger)
         end
 
         updateAutomationButtons()
@@ -3676,11 +3738,11 @@ local function runAutomationTick()
 
     ensureMatchPlaybackListeners()
 
-    -- Auto Evolve mengikuti endpoint resmi AutoUpgradeAll dan hanya aktif bila
-    -- game pass AutoEvolve tercatat pada data pemain.
+    -- Auto Evolve memproses satu grup duplicate per siklus melalui CombineCards.
+    -- Tidak memakai AutoUpgradeAll dan tidak membutuhkan game pass AutoEvolve.
     if State.autoEvolveCards and now >= State.nextAutoEvolveAt then
         State.nextAutoEvolveAt = now + AUTO_EVOLVE_RETRY_DELAY
-        if getData("Passes.AutoEvolve") == true and getEvolvableGroupCount() > 0 then
+        if getEvolvableGroupCount() > 0 then
             if evolveCardsNow(true) then
                 return
             end
@@ -3766,6 +3828,32 @@ local function setVisible(visible)
     elseif type(window.Close) == "function" then
         window:Close()
     end
+end
+
+local function rejoinCurrentServer()
+    if State.rejoining then
+        return false, "Rejoin sedang diproses"
+    end
+
+    State.rejoining = true
+    setStatus("Rejoining current server...", COLORS.warning)
+
+    task.spawn(function()
+        local success, errorMessage = pcall(function()
+            if tostring(game.JobId or "") ~= "" then
+                TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
+            else
+                TeleportService:Teleport(game.PlaceId, LocalPlayer)
+            end
+        end)
+
+        if not success then
+            State.rejoining = false
+            setStatus("Rejoin gagal: " .. tostring(errorMessage), COLORS.danger)
+        end
+    end)
+
+    return true
 end
 
 local function loadWindUI()
@@ -3920,7 +4008,7 @@ local function buildGui()
 
     local Window = WindUI:CreateWindow({
         Title = HUB_TITLE,
-        Author = "Auto Loan • Auto Collect • Auto Match • Auto Packs • Auto Evolve • Equip Best • Auto Prestige",
+        Author = "Loan • Match • Packs • Evolve • Equip Best • International Cup • Prestige",
         Folder = "xSansHUB_LoanOutManager",
         Icon = "handshake",
         Theme = "Indigo",
@@ -4230,7 +4318,7 @@ local function buildGui()
 
     State.autoEvolveCardsToggle = AutomationTab:Toggle({
         Title = "Auto Evolve Cards",
-        Desc = "Evolve duplicate otomatis menggunakan AutoUpgradeAll resmi game (memerlukan game pass).",
+        Desc = "Evolve duplicate satu per satu menggunakan CombineCards; tidak memerlukan game pass AutoEvolve.",
         Icon = "sparkles",
         IconSize = 18,
         Value = State.autoEvolveCards,
@@ -4251,34 +4339,6 @@ local function buildGui()
         end,
     })
     compactElement(State.autoEquipBestToggle, 15, 13)
-
-    State.worldCupSquadDropdown = compactDropdown(AutomationTab:Dropdown({
-        Title = "International Cup Squad",
-        Desc = "Last Team memakai tim turnamen sebelumnya; Best memilih rarity lalu OVR tertinggi.",
-        Values = {"Last Team", "Best Rarity / OVR"},
-        Value = worldCupSquadModeLabel(State.worldCupSquadMode),
-        SearchBarEnabled = false,
-        Callback = function(selected)
-            if State.syncingConfiguration then
-                return
-            end
-
-            local selectedText = type(selected) == "table" and selected.Title or selected
-            setWorldCupSquadMode(selectedText)
-        end,
-    }))
-
-    State.autoJoinWorldCupToggle = AutomationTab:Toggle({
-        Title = "Auto Join International Cup",
-        Desc = "Join otomatis saat entry terbuka dan claim reward sebelumnya bila diperlukan.",
-        Icon = "trophy",
-        IconSize = 18,
-        Value = State.autoJoinWorldCup,
-        Callback = function(enabled)
-            setAutoJoinWorldCupEnabled(enabled)
-        end,
-    })
-    compactElement(State.autoJoinWorldCupToggle, 15, 13)
 
     State.autoPrestigeToggle = AutomationTab:Toggle({
         Title = "Auto Prestige",
@@ -4352,6 +4412,78 @@ local function buildGui()
         Size = "Small",
         Callback = function()
             performPrestige(false)
+        end,
+    }))
+
+    local WorldCupTab = Window:Tab({
+        Title = "International Cup",
+        Icon = "trophy",
+        IconSize = 16,
+    })
+    State.worldCupTab = WorldCupTab
+
+    State.worldCupParagraph = compactElement(WorldCupTab:Paragraph({
+        Title = "International Cup",
+        Desc = "Tekan Check Cup Status untuk memuat fase dan status entry terbaru.",
+        Image = "trophy",
+        ImageSize = 20,
+        Size = "Small",
+    }))
+
+    State.worldCupSquadDropdown = compactDropdown(WorldCupTab:Dropdown({
+        Title = "Cup Squad Selection",
+        Desc = "Last Team memakai tim Cup sebelumnya; Best memilih rarity lalu OVR tertinggi.",
+        Values = {"Last Team", "Best Rarity / OVR"},
+        Value = worldCupSquadModeLabel(State.worldCupSquadMode),
+        SearchBarEnabled = false,
+        Callback = function(selected)
+            if State.syncingConfiguration then
+                return
+            end
+
+            local selectedText = type(selected) == "table" and selected.Title or selected
+            setWorldCupSquadMode(selectedText)
+        end,
+    }))
+
+    State.autoJoinWorldCupToggle = WorldCupTab:Toggle({
+        Title = "Auto Join International Cup",
+        Desc = "Join otomatis ketika entry terbuka dan claim reward sebelumnya bila diperlukan.",
+        Icon = "trophy",
+        IconSize = 18,
+        Value = State.autoJoinWorldCup,
+        Callback = function(enabled)
+            setAutoJoinWorldCupEnabled(enabled)
+        end,
+    })
+    compactElement(State.autoJoinWorldCupToggle, 15, 13)
+
+    WorldCupTab:Space()
+    local worldCupActionGroup = WorldCupTab:Group({})
+    State.worldCupCheckButton = compactButton(worldCupActionGroup:Button({
+        Title = "Check Cup Status",
+        Desc = "Refresh phase, reward, dan status entry International Cup.",
+        Icon = "refresh-cw",
+        Size = "Small",
+        Callback = function()
+            local status, errorMessage = fetchWorldCupStatus()
+            if status then
+                setStatus("Status International Cup berhasil diperbarui.", COLORS.success)
+                refreshUI(true)
+            else
+                setStatus("Gagal mengecek International Cup: " .. tostring(errorMessage), COLORS.danger)
+            end
+        end,
+    }))
+
+    worldCupActionGroup:Space()
+    State.worldCupJoinButton = compactButton(worldCupActionGroup:Button({
+        Title = "Join International Cup",
+        Desc = "Join menggunakan squad mode yang dipilih.",
+        Icon = "trophy",
+        Size = "Small",
+        Callback = function()
+            joinInternationalCup(false)
         end,
     }))
 
@@ -4452,6 +4584,16 @@ local function buildGui()
     }))
 
     SettingsTab:Space()
+    State.rejoinButton = compactButton(SettingsTab:Button({
+        Title = "Rejoin Server",
+        Desc = "Masuk kembali ke server saat ini; fallback ke place yang sama jika JobId tidak tersedia.",
+        Icon = "refresh-cw",
+        Size = "Small",
+        Callback = function()
+            rejoinCurrentServer()
+        end,
+    }))
+
     compactButton(SettingsTab:Button({
         Title = "Reset Dashboard",
         Desc = "Reset statistik Auto Loan pada sesi ini.",
@@ -4760,6 +4902,10 @@ function API.CheckInternationalCup()
     return fetchWorldCupStatus()
 end
 
+function API.Rejoin()
+    return rejoinCurrentServer()
+end
+
 function API.GetAutoJoinWorldCupState()
     local phaseInfo = getWorldCupPhase()
     return {
@@ -4776,11 +4922,16 @@ function API.GetAutoJoinWorldCupState()
 end
 
 function API.GetAutoEvolveState()
+    local groups = buildEvolvableGroups()
+    local nextGroup = groups[1]
     return {
         enabled = State.autoEvolveCards,
         running = State.evolvingCards,
-        passOwned = getData("Passes.AutoEvolve") == true,
-        evolvableGroups = getEvolvableGroupCount(),
+        mode = "CombineCards",
+        oneByOne = true,
+        evolvableGroups = #groups,
+        nextBaseId = nextGroup and nextGroup.baseId or nil,
+        nextCardName = nextGroup and nextGroup.baseCard and nextGroup.baseCard.name or nil,
         nextAttemptAt = State.nextAutoEvolveAt,
     }
 end
@@ -4909,6 +5060,7 @@ function API.Stop()
     State.evolvingCards = false
     State.equippingBest = false
     State.joiningWorldCup = false
+    State.rejoining = false
     State.autoMatchTransaction = false
     State.settingAutoMatch = false
     State.autoMatchPendingSync = false
