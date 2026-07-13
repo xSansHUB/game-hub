@@ -881,13 +881,13 @@ local function updateAutomationButtons()
         local evolvableCount = getEvolvableGroupCount and getEvolvableGroupCount() or 0
         local evolveDesc
         if State.evolvingCards then
-            evolveDesc = string.format("EVOLVING • memproses 1 kartu • %d grup tersisa.", evolvableCount)
+            evolveDesc = string.format("EVOLVING • memproses 1 kartu • %d kartu tersisa.", evolvableCount)
         elseif State.autoEvolveCards and evolvableCount > 0 then
-            evolveDesc = string.format("ACTIVE • %d grup siap • diproses satu per satu dengan CombineCards.", evolvableCount)
+            evolveDesc = string.format("ACTIVE • %d kartu siap • diproses satu per satu dengan CombineCards.", evolvableCount)
         elseif State.autoEvolveCards then
             evolveDesc = "ACTIVE • menunggu duplicate yang cukup untuk evolve."
         else
-            evolveDesc = string.format("Evolve satu per satu tanpa AutoEvolve game pass • %d grup siap.", evolvableCount)
+            evolveDesc = string.format("Evolve satu per satu tanpa AutoEvolve game pass • %d kartu benar-benar siap.", evolvableCount)
         end
         State.autoEvolveCardsToggle:SetDesc(evolveDesc)
     end
@@ -1718,32 +1718,42 @@ local function buildEvolvableGroups()
     local unavailable = getEvolutionUnavailableCardIds()
     local groupsByBaseId = {}
 
+    local function getOrCreateGroup(rawBaseId, baseCard)
+        local baseId = tostring(rawBaseId)
+        local group = groupsByBaseId[baseId]
+        if group then
+            return group
+        end
+
+        local baseRating = tonumber(baseCard.rating) or 0
+        group = {
+            baseId = baseId,
+            baseCard = baseCard,
+            physicalCount = 0,
+            storedDupeCount = 0,
+            bestInstanceId = nil,
+            bestUpgrade = 0,
+            bestRating = baseRating,
+            rarity = getRarity(baseCard, baseRating),
+        }
+        groupsByBaseId[baseId] = group
+        return group
+    end
+
+    -- Kartu instance nyata yang sedang loan/training/promotion tidak boleh
+    -- digunakan sebagai target maupun material evolve.
     for rawInstanceId, cardData in pairs(ownedCards) do
         if type(cardData) == "table" and cardData.baseId ~= nil then
             local instanceId = tostring(rawInstanceId)
             if not unavailable[instanceId] then
                 local success, baseCard = pcall(database.GetById, cardData.baseId)
                 if success and baseCard then
-                    local baseId = tostring(cardData.baseId)
+                    local group = getOrCreateGroup(cardData.baseId, baseCard)
                     local upgrade = tonumber(cardData.upgrade) or 0
                     local rating = (tonumber(baseCard.rating) or 0) + upgrade
-                    local group = groupsByBaseId[baseId]
 
-                    if not group then
-                        group = {
-                            baseId = baseId,
-                            baseCard = baseCard,
-                            count = 0,
-                            bestInstanceId = nil,
-                            bestUpgrade = -1,
-                            bestRating = -math.huge,
-                            rarity = getRarity(baseCard, rating),
-                        }
-                        groupsByBaseId[baseId] = group
-                    end
-
-                    group.count += 1
-                    if rating > group.bestRating then
+                    group.physicalCount += 1
+                    if group.bestInstanceId == nil or rating > group.bestRating then
                         group.bestRating = rating
                         group.bestUpgrade = upgrade
                         group.bestInstanceId = instanceId
@@ -1754,28 +1764,18 @@ local function buildEvolvableGroups()
         end
     end
 
+    -- Squad.Dupes dan copy tambahan di Squad.Owned dapat merepresentasikan
+    -- duplicate yang sama pada snapshot client tertentu. Karena itu keduanya
+    -- tidak dijumlahkan secara mentah. Nilai terbesar dipakai sebagai jumlah
+    -- material yang benar-benar tersedia agar kandidat tidak terdeteksi ganda.
     if type(storedDupes) == "table" then
         for rawBaseId, amount in pairs(storedDupes) do
-            local dupeCount = math.max(0, tonumber(amount) or 0)
+            local dupeCount = math.max(0, math.floor(tonumber(amount) or 0))
             if dupeCount > 0 then
                 local success, baseCard = pcall(database.GetById, rawBaseId)
                 if success and baseCard then
-                    local baseId = tostring(rawBaseId)
-                    local group = groupsByBaseId[baseId]
-                    if not group then
-                        local baseRating = tonumber(baseCard.rating) or 0
-                        group = {
-                            baseId = baseId,
-                            baseCard = baseCard,
-                            count = 0,
-                            bestInstanceId = nil,
-                            bestUpgrade = 0,
-                            bestRating = baseRating,
-                            rarity = getRarity(baseCard, baseRating),
-                        }
-                        groupsByBaseId[baseId] = group
-                    end
-                    group.count += dupeCount
+                    local group = getOrCreateGroup(rawBaseId, baseCard)
+                    group.storedDupeCount = math.max(group.storedDupeCount, dupeCount)
                 end
             end
         end
@@ -1784,10 +1784,28 @@ local function buildEvolvableGroups()
     local result = {}
     for _, group in pairs(groupsByBaseId) do
         local maxUpgrade = getCardMaxUpgrade(group.baseCard)
-        local duplicateCount = math.max(0, group.count - 1)
+
+        -- Satu kartu/copy harus disisakan sebagai target evolve.
+        local physicalMaterials = math.max(
+            0,
+            group.physicalCount - (group.bestInstanceId and 1 or 0)
+        )
+        local storedMaterials = group.storedDupeCount
+        if not group.bestInstanceId then
+            storedMaterials = math.max(0, storedMaterials - 1)
+        end
+
+        -- Gunakan sumber material terbesar, bukan penjumlahan kedua sumber.
+        -- Ini memperbaiki false positive seperti 54 kandidat padahal UI game
+        -- hanya memiliki beberapa kartu yang benar-benar dapat di-evolve.
+        local duplicateCount = math.max(physicalMaterials, storedMaterials)
+
         if group.bestUpgrade < maxUpgrade and duplicateCount >= 2 then
             group.maxUpgrade = maxUpgrade
             group.duplicateCount = duplicateCount
+            group.physicalMaterials = physicalMaterials
+            group.storedMaterials = storedMaterials
+            group.count = duplicateCount + 1
             result[#result + 1] = group
         end
     end
