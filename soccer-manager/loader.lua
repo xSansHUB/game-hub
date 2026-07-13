@@ -1792,6 +1792,103 @@ local function loadWindUI()
     return result
 end
 
+local function getElementBaseFrame(element)
+    if type(element) ~= "table" then
+        return nil
+    end
+
+    return element.ParagraphFrame
+        or element.ButtonFrame
+        or element.ToggleFrame
+        or element.DropdownFrame
+        or element.KeybindFrame
+        or element.SectionFrame
+end
+
+local function compactElement(element, titleSize, descSize)
+    local frame = getElementBaseFrame(element)
+    local ui = frame and frame.UIElements
+
+    if not ui then
+        return element
+    end
+
+    if ui.Title and ui.Title:IsA("TextLabel") then
+        ui.Title.TextSize = titleSize or 15
+    end
+
+    if ui.Desc and ui.Desc:IsA("TextLabel") then
+        ui.Desc.TextSize = descSize or 13
+    end
+
+    local container = ui.Container
+    if container then
+        local containerLayout = container:FindFirstChildOfClass("UIListLayout")
+        if containerLayout then
+            containerLayout.Padding = UDim.new(0, 6)
+        end
+
+        local titleFrame = container:FindFirstChild("TitleFrame")
+        if titleFrame then
+            local inner = titleFrame:FindFirstChild("TitleFrame")
+            if inner then
+                local innerPadding = inner:FindFirstChildOfClass("UIPadding")
+                if innerPadding then
+                    innerPadding.PaddingTop = UDim.new(0, 2)
+                    innerPadding.PaddingBottom = UDim.new(0, 2)
+                    innerPadding.PaddingLeft = UDim.new(0, 2)
+                    innerPadding.PaddingRight = UDim.new(0, 2)
+                end
+
+                local innerLayout = inner:FindFirstChildOfClass("UIListLayout")
+                if innerLayout then
+                    innerLayout.Padding = UDim.new(0, 3)
+                end
+            end
+        end
+    end
+
+    return element
+end
+
+local function compactButton(button)
+    compactElement(button, 15, 13)
+
+    local icon = button and button.UIElements and button.UIElements.ButtonIcon
+    if icon then
+        icon.Size = UDim2.fromOffset(17, 17)
+    end
+
+    return button
+end
+
+local function compactDropdown(dropdown)
+    compactElement(dropdown, 15, 13)
+
+    local control = dropdown and dropdown.UIElements and dropdown.UIElements.Dropdown
+    if control then
+        control.Size = UDim2.new(0, 142, 0, 32)
+
+        local frame = control:FindFirstChild("Frame")
+        local inner = frame and frame:FindFirstChild("Frame")
+        local label = inner and inner:FindFirstChildWhichIsA("TextLabel")
+        if label then
+            label.TextSize = 14
+        end
+    end
+
+    return dropdown
+end
+
+local function selectDashboardTab()
+    local dashboardTab = State.dashboardTab
+    if dashboardTab and type(dashboardTab.Select) == "function" then
+        dashboardTab:Select()
+    elseif State.window and type(State.window.SelectTab) == "function" then
+        State.window:SelectTab(1)
+    end
+end
+
 local function buildGui()
     local WindUI = loadWindUI()
     State.windUI = WindUI
@@ -1803,12 +1900,17 @@ local function buildGui()
         Icon = "handshake",
         Theme = "Indigo",
         ToggleKey = Enum.KeyCode.G,
-        Size = UDim2.fromOffset(720, 560),
-        MinSize = Vector2.new(560, 410),
-        MaxSize = Vector2.new(900, 700),
+        Size = UDim2.fromOffset(740, 560),
+        MinSize = Vector2.new(590, 420),
+        MaxSize = Vector2.new(920, 700),
         Resizable = true,
         AutoScale = true,
         NewElements = true,
+        Radius = 10,
+        ElementsRadius = 9,
+        IconSize = 18,
+        TopBarButtonIconSize = 10,
+        SideBarWidth = 170,
         HideSearchBar = true,
         ScrollBarEnabled = false,
         OpenButton = {
@@ -1819,11 +1921,11 @@ local function buildGui()
             OnlyMobile = false,
         },
         Topbar = {
-            Height = 44,
+            Height = 40,
             ButtonsType = "Mac",
         },
         User = {
-            Enabled = true,
+            Enabled = false,
             Anonymous = false,
         },
     })
@@ -1835,6 +1937,11 @@ local function buildGui()
     State.window = Window
     Environment.LoanOutGUIWindWindow = Window
 
+    -- Compact visual scale. These values are read when tab elements are created.
+    Window.Gap = 4
+    Window.ElementConfig.UIPadding = 8
+    Window.ElementConfig.UICorner = 9
+
     Window:Tag({
         Title = "G to Toggle",
         Icon = "keyboard",
@@ -1843,6 +1950,10 @@ local function buildGui()
 
     Window:OnOpen(function()
         State.visible = true
+        task.defer(function()
+            selectDashboardTab()
+            refreshUI(false)
+        end)
     end)
 
     Window:OnClose(function()
@@ -1852,78 +1963,92 @@ local function buildGui()
     local DashboardTab = Window:Tab({
         Title = "Dashboard",
         Icon = "layout-dashboard",
+        IconSize = 16,
     })
     State.dashboardTab = DashboardTab
 
-    State.summaryParagraph = DashboardTab:Paragraph({
+    State.summaryParagraph = compactElement(DashboardTab:Paragraph({
         Title = "Loan Summary",
         Desc = "Loading loan data...",
         Image = "handshake",
-    })
+        ImageSize = 21,
+        Size = "Small",
+    }))
 
     local actionGroup = DashboardTab:Group({})
-    State.loanButton = actionGroup:Button({
+    State.loanButton = compactButton(actionGroup:Button({
         Title = "Loan Top",
         Desc = "Kirim kandidat terbaik sesuai konfigurasi.",
         Icon = "send",
+        Size = "Small",
         Callback = function()
             if State.loanButtonEnabled then
                 loanOutTopRarity(false)
             end
         end,
-    })
+    }))
 
     actionGroup:Space()
 
-    State.collectButton = actionGroup:Button({
+    State.collectButton = compactButton(actionGroup:Button({
         Title = "Collect All",
         Desc = "Ambil seluruh loan yang sudah selesai.",
         Icon = "package-check",
+        Size = "Small",
         Callback = function()
             if State.collectButtonEnabled then
                 collectAllReadyLoans(false)
             end
         end,
-    })
+    }))
 
     DashboardTab:Space()
-    State.dashboardParagraph = DashboardTab:Paragraph({
+    State.dashboardParagraph = compactElement(DashboardTab:Paragraph({
         Title = "Auto Loan Dashboard",
         Desc = "No automation activity yet",
         Image = "chart-no-axes-combined",
-    })
+        ImageSize = 21,
+        Size = "Small",
+    }))
 
-    State.loanListParagraph = DashboardTab:Paragraph({
+    State.loanListParagraph = compactElement(DashboardTab:Paragraph({
         Title = "Active Loans",
         Desc = "Tidak ada pemain yang sedang loan out.",
         Image = "list",
-    })
+        ImageSize = 20,
+        Size = "Small",
+    }))
 
-    State.statusParagraph = DashboardTab:Paragraph({
+    State.statusParagraph = compactElement(DashboardTab:Paragraph({
         Title = "Activity Status",
         Desc = "[WARNING] Connecting...",
         Image = "activity",
-    })
+        ImageSize = 20,
+        Size = "Small",
+    }))
 
     local AutomationTab = Window:Tab({
         Title = "Automation",
         Icon = "bot",
+        IconSize = 16,
     })
     State.automationTab = AutomationTab
     State.configurationTab = AutomationTab
 
-    State.configurationParagraph = AutomationTab:Paragraph({
+    State.configurationParagraph = compactElement(AutomationTab:Paragraph({
         Title = "Auto Loan Configuration",
         Desc = "Loading configuration...",
         Image = "sliders-horizontal",
-    })
+        ImageSize = 20,
+        Size = "Small",
+    }))
 
     local durationValues = {}
     for _, minutes in ipairs(State.durationOptions) do
         durationValues[#durationValues + 1] = getDurationLabel(minutes)
     end
 
-    State.durationDropdown = AutomationTab:Dropdown({
+    State.durationDropdown = compactDropdown(AutomationTab:Dropdown({
         Title = "Loan Duration",
         Desc = "Duration untuk tombol Loan Top dan Auto Loan.",
         Values = durationValues,
@@ -1949,14 +2074,14 @@ local function buildGui()
                 end
             end
         end,
-    })
+    }))
 
     local rarityValues = {}
     for _, rarity in ipairs(State.rarityOptions) do
         rarityValues[#rarityValues + 1] = tostring(rarity):gsub("WorldClass", "World Class")
     end
 
-    State.rarityDropdown = AutomationTab:Dropdown({
+    State.rarityDropdown = compactDropdown(AutomationTab:Dropdown({
         Title = "Rarity Whitelist",
         Desc = "Auto Loan hanya memilih rarity yang aktif.",
         Values = rarityValues,
@@ -1990,12 +2115,13 @@ local function buildGui()
             updateConfigurationVisuals()
             refreshUI(true)
         end,
-    })
+    }))
 
     local whitelistGroup = AutomationTab:Group({})
-    whitelistGroup:Button({
+    compactButton(whitelistGroup:Button({
         Title = "Enable All Rarities",
         Icon = "list-checks",
+        Size = "Small",
         Callback = function()
             for _, rarity in ipairs(State.rarityOptions) do
                 State.rarityWhitelist[rarity] = true
@@ -2005,12 +2131,13 @@ local function buildGui()
             updateConfigurationVisuals()
             refreshUI(true)
         end,
-    })
+    }))
 
     whitelistGroup:Space()
-    whitelistGroup:Button({
+    compactButton(whitelistGroup:Button({
         Title = "Clear Whitelist",
         Icon = "list-x",
+        Size = "Small",
         Callback = function()
             for _, rarity in ipairs(State.rarityOptions) do
                 State.rarityWhitelist[rarity] = false
@@ -2020,7 +2147,7 @@ local function buildGui()
             updateConfigurationVisuals()
             refreshUI(true)
         end,
-    })
+    }))
 
     AutomationTab:Space()
 
@@ -2028,39 +2155,47 @@ local function buildGui()
         Title = "Auto Loan",
         Desc = "Isi slot kosong menggunakan rarity whitelist dan duration terpilih.",
         Icon = "send",
+        IconSize = 18,
         Value = State.autoLoan,
         Callback = function(enabled)
             setAutoLoanEnabled(enabled)
         end,
     })
+    compactElement(State.autoLoanToggle, 15, 13)
 
     State.autoCollectToggle = AutomationTab:Toggle({
         Title = "Auto Collect",
         Desc = "Collect loan selesai sebelum Auto Loan mengisi slot kembali.",
         Icon = "package-check",
+        IconSize = 18,
         Value = State.autoCollect,
         Callback = function(enabled)
             setAutoCollectEnabled(enabled)
         end,
     })
+    compactElement(State.autoCollectToggle, 15, 13)
 
     State.autoPrestigeToggle = AutomationTab:Toggle({
         Title = "Auto Prestige",
         Desc = "Prestige otomatis saat eligible. Division dan Coins akan di-reset.",
         -- `badge-star` tidak tersedia pada icon set WindUI yang sedang dimuat.
         Icon = "trophy",
+        IconSize = 18,
         Value = State.autoPrestige,
         Callback = function(enabled)
             setAutoPrestigeEnabled(enabled)
         end,
     })
+    compactElement(State.autoPrestigeToggle, 15, 13)
 
     AutomationTab:Space()
-    State.prestigeParagraph = AutomationTab:Paragraph({
+    State.prestigeParagraph = compactElement(AutomationTab:Paragraph({
         Title = "Prestige Status",
         Desc = "Belum ada data. Tekan Check Prestige untuk memuat status terbaru.",
         Image = "trophy",
-    })
+        ImageSize = 20,
+        Size = "Small",
+    }))
 
     -- Requirement dibuat menjadi kartu 2 kolom agar tidak menumpuk dalam satu paragraph.
     State.prestigeGateParagraphs = {}
@@ -2068,10 +2203,11 @@ local function buildGui()
         local gateGroup = AutomationTab:Group({})
 
         for columnIndex = 1, 2 do
-            local gateParagraph = gateGroup:Paragraph({
+            local gateParagraph = compactElement(gateGroup:Paragraph({
                 Title = "Requirement",
                 Desc = "Menunggu data...",
-            })
+                Size = "Small",
+            }))
 
             if gateParagraph.ElementFrame then
                 gateParagraph.ElementFrame.Visible = false
@@ -2087,10 +2223,11 @@ local function buildGui()
 
     AutomationTab:Space()
     local prestigeGroup = AutomationTab:Group({})
-    prestigeGroup:Button({
+    compactButton(prestigeGroup:Button({
         Title = "Check Prestige",
         Desc = "Refresh eligibility dan seluruh requirement prestige.",
         Icon = "refresh-cw",
+        Size = "Small",
         Callback = function()
             local info, errorMessage = fetchPrestigeInfo()
             if info then
@@ -2100,25 +2237,27 @@ local function buildGui()
                 setStatus("Gagal mengecek prestige: " .. tostring(errorMessage), COLORS.danger)
             end
         end,
-    })
+    }))
 
     prestigeGroup:Space()
-    State.prestigeButton = prestigeGroup:Button({
+    State.prestigeButton = compactButton(prestigeGroup:Button({
         Title = "Prestige Now",
         Desc = "Menjalankan prestige jika seluruh requirement sudah terpenuhi.",
         Icon = "sparkles",
+        Size = "Small",
         Callback = function()
             performPrestige(false)
         end,
-    })
+    }))
 
     local SettingsTab = Window:Tab({
         Title = "Settings",
         Icon = "settings",
+        IconSize = 16,
     })
     State.settingsTab = SettingsTab
 
-    SettingsTab:Keybind({
+    local windowKeybind = SettingsTab:Keybind({
         Title = "Window Keybind",
         Desc = "Key untuk membuka dan menutup WindUI.",
         Value = "G",
@@ -2130,11 +2269,13 @@ local function buildGui()
             end
         end,
     })
+    compactElement(windowKeybind, 15, 13)
 
-    SettingsTab:Button({
+    compactButton(SettingsTab:Button({
         Title = "Reset Dashboard",
         Desc = "Reset statistik Auto Loan pada sesi ini.",
         Icon = "rotate-ccw",
+        Size = "Small",
         Callback = function()
             State.stats.autoSent = 0
             State.stats.autoCollected = 0
@@ -2147,19 +2288,20 @@ local function buildGui()
             updateDashboardUI()
             setStatus("Dashboard automation di-reset.", COLORS.success)
         end,
-    })
+    }))
 
-    SettingsTab:Button({
+    compactButton(SettingsTab:Button({
         Title = "Refresh All Data",
         Desc = "Refresh loan, dashboard, candidate, dan prestige info.",
         Icon = "refresh-cw",
+        Size = "Small",
         Callback = function()
             State.cachedTopCard = nil
             fetchPrestigeInfo()
             refreshUI(true)
             setStatus("Seluruh data berhasil di-refresh.", COLORS.success)
         end,
-    })
+    }))
 
     setCollectButton("Collect All", false)
     setLoanButton("Loan Top", false)
@@ -2168,6 +2310,13 @@ local function buildGui()
     updateDashboardUI()
     updatePrestigeParagraph()
     setStatus(State.lastStatusText, COLORS.warning)
+
+    -- WindUI does not always select the first tab automatically.
+    -- Select Dashboard now and every time the window is reopened.
+    task.defer(function()
+        selectDashboardTab()
+        refreshUI(true)
+    end)
 
     WindUI:Notify({
         Title = HUB_TITLE,
