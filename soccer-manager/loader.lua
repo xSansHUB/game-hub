@@ -7,7 +7,7 @@
       - Menampilkan seluruh pemain yang sedang loan out.
       - Collect All untuk seluruh loan yang sudah selesai.
       - Loan Top berdasarkan whitelist rarity dan durasi yang dipilih.
-      - Toggle Auto Loan, Auto Collect, Auto Match, Auto Open Packs, dan Auto Prestige.
+      - Toggle Auto Loan, Auto Collect, Auto Match, Auto Open Packs, Auto Evolve Cards, Auto Equip Best, dan Auto Prestige.
       - Loan Duration dan Rarity Whitelist berada tepat di atas toggle Auto Loan.
       - Pilihan durasi diambil dari LoanConfig.Durations.
       - Dashboard sesi Auto Loan: terkirim, masih berputar, selesai, dan income.
@@ -31,6 +31,8 @@
       LoanOutGUI.ToggleAutoPrestige()
       LoanOutGUI.ToggleAutoMatch()
       LoanOutGUI.ToggleAutoOpenPacks()
+      LoanOutGUI.ToggleAutoEvolveCards()
+      LoanOutGUI.ToggleAutoEquipBest()
       LoanOutGUI.PrestigeNow()
       LoanOutGUI.SaveConfig()
       LoanOutGUI.LoadConfig()
@@ -87,7 +89,7 @@ end
 local GAME_NAME = getCurrentGameName()
 local HUB_TITLE = "xSansHUB - " .. GAME_NAME
 
-local CONFIG_VERSION = 3
+local CONFIG_VERSION = 4
 local CONFIG_ROOT = "xSansHUB"
 local CONFIG_FOLDER = CONFIG_ROOT .. "/LoanOutManager"
 local CONFIG_FILE = CONFIG_FOLDER .. "/" .. tostring(game.PlaceId) .. ".json"
@@ -158,6 +160,12 @@ local function mergeRawConfig(target, source)
     if source.autoOpenPacks ~= nil then
         target.autoOpenPacks = source.autoOpenPacks == true
     end
+    if source.autoEvolveCards ~= nil then
+        target.autoEvolveCards = source.autoEvolveCards == true
+    end
+    if source.autoEquipBest ~= nil then
+        target.autoEquipBest = source.autoEquipBest == true
+    end
     if tonumber(source.duration) then
         target.duration = tonumber(source.duration)
     end
@@ -190,6 +198,10 @@ local PRESTIGE_RETRY_DELAY = 8
 local PRESTIGE_SUCCESS_DELAY = 3
 local AUTO_MATCH_RETRY_DELAY = 5
 local AUTO_PACK_RETRY_DELAY = 8
+local AUTO_EVOLVE_INTERVAL = 2
+local AUTO_EVOLVE_RETRY_DELAY = 6
+local AUTO_EQUIP_BEST_RETRY_DELAY = 8
+local AUTO_MATCH_PAUSE_TIMEOUT = 3
 local TRACKED_LOAN_GRACE = 5
 
 local FALLBACK_DURATIONS = {5, 15, 30, 60}
@@ -315,14 +327,23 @@ local State = {
     autoPrestige = PersistentConfig.autoPrestige == true,
     autoMatch = PersistentConfig.autoMatch == true,
     autoOpenPacks = PersistentConfig.autoOpenPacks == true,
+    autoEvolveCards = PersistentConfig.autoEvolveCards == true,
+    autoEquipBest = PersistentConfig.autoEquipBest == true,
     settingAutoMatch = false,
     openingPacks = false,
+    evolvingCards = false,
+    equippingBest = false,
+    autoMatchTransaction = false,
+    matchPlaybackActive = false,
+    matchEventListenersConnected = false,
     autoMatchPendingSync = PersistentConfig.autoMatch ~= nil and StartupConfigLoaded,
     autoMatchSyncIgnoreUntil = 0,
     nextAutoMatchSyncAt = 0,
     nextAutoOpenPackAt = 0,
     lastObservedPackCount = 0,
     lastPackOpenAt = 0,
+    lastEquipBestSignature = nil,
+    lastEquipBestAt = 0,
     autoSave = PersistentConfig.autoSave ~= false,
     autoLoad = PersistentConfig.autoLoad ~= false,
     windowKeybind = normalizeKeybindName(PersistentConfig.windowKeybind),
@@ -366,6 +387,8 @@ local State = {
     autoCollectToggle = nil,
     autoMatchToggle = nil,
     autoOpenPacksToggle = nil,
+    autoEvolveCardsToggle = nil,
+    autoEquipBestToggle = nil,
     autoPrestigeToggle = nil,
     durationDropdown = nil,
     rarityDropdown = nil,
@@ -398,6 +421,8 @@ local State = {
     nextAutoLoanAt = 0,
     nextAutoCollectAt = 0,
     nextPrestigeCheckAt = 0,
+    nextAutoEvolveAt = 0,
+    nextAutoEquipBestAt = 0,
 
     -- DataChanged milik game dijalankan melalui free-thread Signal.
     -- Callback tersebut tidak boleh menyentuh Instance/WindUI secara langsung.
@@ -429,6 +454,8 @@ local function syncPersistentConfig()
     PersistentConfig.autoPrestige = State.autoPrestige == true
     PersistentConfig.autoMatch = State.autoMatch == true
     PersistentConfig.autoOpenPacks = State.autoOpenPacks == true
+    PersistentConfig.autoEvolveCards = State.autoEvolveCards == true
+    PersistentConfig.autoEquipBest = State.autoEquipBest == true
     PersistentConfig.autoSave = State.autoSave == true
     PersistentConfig.autoLoad = State.autoLoad == true
     PersistentConfig.windowKeybind = normalizeKeybindName(State.windowKeybind)
@@ -452,6 +479,8 @@ local function buildConfigSnapshot()
         autoPrestige = State.autoPrestige == true,
         autoMatch = State.autoMatch == true,
         autoOpenPacks = State.autoOpenPacks == true,
+        autoEvolveCards = State.autoEvolveCards == true,
+        autoEquipBest = State.autoEquipBest == true,
         duration = tonumber(State.selectedDuration) or 5,
         rarityWhitelist = copyWhitelistForConfig(),
     }
@@ -628,6 +657,9 @@ end
 local getDurationLabel
 local getEnabledRarityCount
 local getOwnedPackCount
+local getData
+local getEvolvableGroupCount
+local getSquadEquipSignature
 
 local function statusKindFromColor(color)
     if color == COLORS.success then
@@ -723,7 +755,9 @@ local function updateAutomationButtons()
         end
 
         local autoMatchDesc
-        if State.settingAutoMatch then
+        if State.autoMatchTransaction then
+            autoMatchDesc = "PAUSED TEMPORARILY • menjalankan squad automation lalu Auto Match dipulihkan."
+        elseif State.settingAutoMatch then
             autoMatchDesc = "SYNCING • mengirim pengaturan Auto Match ke server."
         elseif State.autoMatchPendingSync then
             autoMatchDesc = "PENDING • menunggu Networker untuk menerapkan config Auto Match."
@@ -752,6 +786,48 @@ local function updateAutomationButtons()
             packsDesc = string.format("Buka pack otomatis saat tersedia • sekarang %d pack.", packCount)
         end
         State.autoOpenPacksToggle:SetDesc(packsDesc)
+    end
+
+    if State.autoEvolveCardsToggle and type(State.autoEvolveCardsToggle.Set) == "function" then
+        if State.autoEvolveCardsToggle.Value ~= State.autoEvolveCards then
+            State.autoEvolveCardsToggle:Set(State.autoEvolveCards, false)
+        end
+
+        local passOwned = getData("Passes.AutoEvolve") == true
+        local evolvableCount = getEvolvableGroupCount and getEvolvableGroupCount() or 0
+        local evolveDesc
+        if not passOwned then
+            evolveDesc = "REQUIRES PASS • mengikuti AutoEvolve bawaan game; tidak membypass game pass."
+        elseif State.evolvingCards then
+            evolveDesc = string.format("EVOLVING • memproses %d grup kartu yang dapat di-evolve.", evolvableCount)
+        elseif State.autoEvolveCards and evolvableCount > 0 then
+            evolveDesc = string.format("ACTIVE • %d grup kartu siap diproses AutoUpgradeAll.", evolvableCount)
+        elseif State.autoEvolveCards then
+            evolveDesc = "ACTIVE • menunggu duplicate yang cukup untuk evolve."
+        else
+            evolveDesc = string.format("Evolve otomatis memakai fitur resmi game • %d grup siap.", evolvableCount)
+        end
+        State.autoEvolveCardsToggle:SetDesc(evolveDesc)
+    end
+
+    if State.autoEquipBestToggle and type(State.autoEquipBestToggle.Set) == "function" then
+        if State.autoEquipBestToggle.Value ~= State.autoEquipBest then
+            State.autoEquipBestToggle:Set(State.autoEquipBest, false)
+        end
+
+        local equipDesc
+        if State.equippingBest then
+            equipDesc = "EQUIPPING • menyusun Starting Eleven terbaik."
+        elseif State.matchPlaybackActive then
+            equipDesc = "WAITING • match sedang berlangsung; akan dicoba setelah playback selesai."
+        elseif State.autoEquipBest and State.autoMatch then
+            equipDesc = "ACTIVE • Auto Match akan dipause sementara, Equip Best dijalankan, lalu diaktifkan kembali."
+        elseif State.autoEquipBest then
+            equipDesc = "ACTIVE • Starting Eleven diperbarui saat koleksi kartu berubah."
+        else
+            equipDesc = "Susun Starting Eleven terbaik otomatis saat koleksi berubah."
+        end
+        State.autoEquipBestToggle:SetDesc(equipDesc)
     end
 
     if State.autoPrestigeToggle and type(State.autoPrestigeToggle.Set) == "function" then
@@ -821,6 +897,46 @@ local function setAutoOpenPacksEnabled(enabled, announce)
                 and "Auto Open Packs aktif • pack akan dibuka memakai mode AUTO OPEN bawaan game."
                 or "Auto Open Packs dinonaktifkan.",
             State.autoOpenPacks and COLORS.success or COLORS.muted
+        )
+    end
+end
+
+local function setAutoEvolveCardsEnabled(enabled, announce)
+    State.autoEvolveCards = enabled == true
+    PersistentConfig.autoEvolveCards = State.autoEvolveCards
+    State.nextAutoEvolveAt = 0
+    updateAutomationButtons()
+    requestConfigSave()
+
+    if announce ~= false then
+        local passOwned = getData("Passes.AutoEvolve") == true
+        if State.autoEvolveCards and not passOwned then
+            setStatus("Auto Evolve membutuhkan game pass AutoEvolve bawaan game.", COLORS.warning)
+        else
+            setStatus(
+                State.autoEvolveCards
+                    and "Auto Evolve Cards aktif • memakai AutoUpgradeAll resmi game."
+                    or "Auto Evolve Cards dinonaktifkan.",
+                State.autoEvolveCards and COLORS.success or COLORS.muted
+            )
+        end
+    end
+end
+
+local function setAutoEquipBestEnabled(enabled, announce)
+    State.autoEquipBest = enabled == true
+    PersistentConfig.autoEquipBest = State.autoEquipBest
+    State.nextAutoEquipBestAt = 0
+    State.lastEquipBestSignature = nil
+    updateAutomationButtons()
+    requestConfigSave()
+
+    if announce ~= false then
+        setStatus(
+            State.autoEquipBest
+                and "Auto Equip Best aktif • Auto Match dipause sementara saat lineup perlu diperbarui."
+                or "Auto Equip Best dinonaktifkan.",
+            State.autoEquipBest and COLORS.success or COLORS.muted
         )
     end
 end
@@ -1154,7 +1270,7 @@ local function loadGameModules()
     end
 end
 
-local function getData(path)
+getData = function(path)
     local dataService = State.dataService
     if not isDataService(dataService) then
         return nil
@@ -1341,6 +1457,178 @@ local function getUnavailableCardIds()
     end
 
     return unavailable
+end
+
+local function getEvolutionUnavailableCardIds()
+    local unavailable = {}
+    addActiveIds(unavailable, getData("Loans.active"))
+    addActiveIds(unavailable, getData("Training.active"))
+
+    local promotion = getData("Promotion")
+    if type(promotion) == "table" and promotion.active then
+        addActiveIds(unavailable, promotion.players)
+    end
+
+    return unavailable
+end
+
+local function getCardMaxUpgrade(baseCard)
+    local database = State.playerCardDatabase
+    if not database or type(database.MaxUpgrade) ~= "function" or not baseCard then
+        return 0
+    end
+
+    local success, result = pcall(database.MaxUpgrade, baseCard)
+    if success then
+        return math.max(0, tonumber(result) or 0)
+    end
+
+    return 0
+end
+
+local function buildEvolvableGroups()
+    local database = State.playerCardDatabase
+    local ownedCards = getData("Squad.Owned")
+    local storedDupes = getData("Squad.Dupes")
+
+    if not database or type(database.GetById) ~= "function" or type(ownedCards) ~= "table" then
+        return {}
+    end
+
+    local unavailable = getEvolutionUnavailableCardIds()
+    local groupsByBaseId = {}
+
+    for rawInstanceId, cardData in pairs(ownedCards) do
+        if type(cardData) == "table" and cardData.baseId ~= nil then
+            local instanceId = tostring(rawInstanceId)
+            if not unavailable[instanceId] then
+                local success, baseCard = pcall(database.GetById, cardData.baseId)
+                if success and baseCard then
+                    local baseId = tostring(cardData.baseId)
+                    local upgrade = tonumber(cardData.upgrade) or 0
+                    local rating = (tonumber(baseCard.rating) or 0) + upgrade
+                    local group = groupsByBaseId[baseId]
+
+                    if not group then
+                        group = {
+                            baseId = baseId,
+                            baseCard = baseCard,
+                            count = 0,
+                            bestInstanceId = nil,
+                            bestUpgrade = -1,
+                            bestRating = -math.huge,
+                            rarity = getRarity(baseCard, rating),
+                        }
+                        groupsByBaseId[baseId] = group
+                    end
+
+                    group.count += 1
+                    if rating > group.bestRating then
+                        group.bestRating = rating
+                        group.bestUpgrade = upgrade
+                        group.bestInstanceId = instanceId
+                        group.rarity = getRarity(baseCard, rating)
+                    end
+                end
+            end
+        end
+    end
+
+    if type(storedDupes) == "table" then
+        for rawBaseId, amount in pairs(storedDupes) do
+            local dupeCount = math.max(0, tonumber(amount) or 0)
+            if dupeCount > 0 then
+                local success, baseCard = pcall(database.GetById, rawBaseId)
+                if success and baseCard then
+                    local baseId = tostring(rawBaseId)
+                    local group = groupsByBaseId[baseId]
+                    if not group then
+                        local baseRating = tonumber(baseCard.rating) or 0
+                        group = {
+                            baseId = baseId,
+                            baseCard = baseCard,
+                            count = 0,
+                            bestInstanceId = nil,
+                            bestUpgrade = 0,
+                            bestRating = baseRating,
+                            rarity = getRarity(baseCard, baseRating),
+                        }
+                        groupsByBaseId[baseId] = group
+                    end
+                    group.count += dupeCount
+                end
+            end
+        end
+    end
+
+    local result = {}
+    for _, group in pairs(groupsByBaseId) do
+        local maxUpgrade = getCardMaxUpgrade(group.baseCard)
+        local duplicateCount = math.max(0, group.count - 1)
+        if group.bestUpgrade < maxUpgrade and duplicateCount >= 2 then
+            group.maxUpgrade = maxUpgrade
+            group.duplicateCount = duplicateCount
+            result[#result + 1] = group
+        end
+    end
+
+    table.sort(result, function(a, b)
+        local aRank = rarityRank(a.rarity)
+        local bRank = rarityRank(b.rarity)
+        if aRank ~= bRank then
+            return aRank > bRank
+        end
+        if a.bestRating ~= b.bestRating then
+            return a.bestRating > b.bestRating
+        end
+        return tostring(a.baseId) < tostring(b.baseId)
+    end)
+
+    return result
+end
+
+getEvolvableGroupCount = function()
+    return #buildEvolvableGroups()
+end
+
+getSquadEquipSignature = function()
+    local parts = {"formation=" .. tostring(getData("Squad.Formation") or "")}
+    local ownedCards = getData("Squad.Owned")
+
+    if type(ownedCards) == "table" then
+        for instanceId, cardData in pairs(ownedCards) do
+            if type(cardData) == "table" then
+                parts[#parts + 1] = string.format(
+                    "card:%s:%s:%s",
+                    tostring(instanceId),
+                    tostring(cardData.baseId or ""),
+                    tostring(cardData.upgrade or 0)
+                )
+            end
+        end
+    end
+
+    local function appendActive(prefix, entries)
+        if type(entries) ~= "table" then
+            return
+        end
+        for _, entry in pairs(entries) do
+            if type(entry) == "table" and entry.instanceId ~= nil then
+                parts[#parts + 1] = prefix .. ":" .. tostring(entry.instanceId)
+            end
+        end
+    end
+
+    appendActive("loan", getData("Loans.active"))
+    appendActive("training", getData("Training.active"))
+
+    local promotion = getData("Promotion")
+    if type(promotion) == "table" and promotion.active then
+        appendActive("promotion", promotion.players)
+    end
+
+    table.sort(parts)
+    return table.concat(parts, "|")
 end
 
 local function findTopAvailableCard()
@@ -1693,12 +1981,21 @@ local function applyLoadedConfig(config)
     if config.autoOpenPacks ~= nil then
         State.autoOpenPacks = config.autoOpenPacks == true
     end
+    if config.autoEvolveCards ~= nil then
+        State.autoEvolveCards = config.autoEvolveCards == true
+    end
+    if config.autoEquipBest ~= nil then
+        State.autoEquipBest = config.autoEquipBest == true
+    end
 
     State.nextAutoLoanAt = 0
     State.nextAutoCollectAt = 0
     State.nextPrestigeCheckAt = 0
     State.nextAutoOpenPackAt = 0
+    State.nextAutoEvolveAt = 0
+    State.nextAutoEquipBestAt = 0
     State.lastObservedPackCount = 0
+    State.lastEquipBestSignature = nil
     State.cachedTopCard = nil
     State.configDirty = false
 
@@ -1822,6 +2119,7 @@ refreshUI = function(forceRebuild)
     -- menunggu sinkronisasi dan request tidak sedang berjalan, ikuti perubahan
     -- dari menu/indicator bawaan game (misalnya tombol STOP).
     if not State.settingAutoMatch
+        and not State.autoMatchTransaction
         and not State.autoMatchPendingSync
         and os.clock() >= State.autoMatchSyncIgnoreUntil
     then
@@ -1872,10 +2170,15 @@ refreshUI = function(forceRebuild)
     updatePrestigeParagraph()
 
     local networkReady = isNetworker(State.networker)
-    local actionBusy = State.collecting or State.loaning or State.prestiging
+    local actionBusy = State.collecting
+        or State.loaning
+        or State.prestiging
+        or State.evolvingCards
+        or State.equippingBest
+        or State.autoMatchTransaction
 
     if not State.collecting then
-        if readyCount > 0 and networkReady and not State.loaning and not State.prestiging then
+        if readyCount > 0 and networkReady and not actionBusy then
             setCollectButton(string.format("Collect All (%d)", readyCount), true)
         elseif readyCount > 0 then
             setCollectButton(string.format("Collect All (%d)", readyCount), false)
@@ -1917,17 +2220,42 @@ local function callNetwork(action, payload)
         return nil, "Server tidak memberikan respons"
     end
 
-    if response.success == false then
+    if type(response) == "table" and response.success == false then
         return response, tostring(response.reason or "Request gagal")
     end
 
     return response, nil
 end
 
+local function callNetworkLoose(action, payload)
+    local networker = State.networker
+    if not isNetworker(networker) then
+        return nil, "Networker belum ditemukan"
+    end
+
+    local success, response
+    if payload == nil then
+        success, response = pcall(networker.Call, networker, action)
+    else
+        success, response = pcall(networker.Call, networker, action, payload)
+    end
+
+    if not success then
+        return nil, tostring(response)
+    end
+    if type(response) == "table" and response.success == false then
+        return nil, tostring(response.reason or "Request gagal")
+    end
+
+    -- Sebagian action UI seperti AutoFillBestEleven/AutoUpgradeAll bersifat
+    -- fire-and-forget dan dapat mengembalikan nil meskipun request diterima.
+    return response ~= nil and response or true, nil
+end
+
 local function setAutoMatchEnabled(enabled, announce, forceRequest)
     enabled = enabled == true
 
-    if State.settingAutoMatch then
+    if State.settingAutoMatch or State.autoMatchTransaction then
         return false, "Pengaturan Auto Match sedang diproses"
     end
 
@@ -2105,6 +2433,198 @@ local function openOwnedPacksAutomatically(isAutomatic)
     return false, errorMessage
 end
 
+local function ensureMatchPlaybackListeners()
+    if State.matchEventListenersConnected then
+        return true
+    end
+
+    if not tryRediscoverEventBus() then
+        return false
+    end
+
+    local eventBus = State.eventBus
+    if type(eventBus.Connect) ~= "function" then
+        return false
+    end
+
+    local connectedAny = false
+
+    local successRequested, requestedConnection = pcall(eventBus.Connect, eventBus, "MatchPlaybackRequested", function()
+        -- Callback Signal game dapat berjalan pada free thread. Hanya ubah state Lua;
+        -- jangan memanggil WindUI/Instance dari callback ini.
+        State.matchPlaybackActive = true
+        State.uiRefreshRequested = true
+    end)
+    if successRequested and requestedConnection then
+        addConnection(requestedConnection)
+        connectedAny = true
+    end
+
+    local successEnded, endedConnection = pcall(eventBus.Connect, eventBus, "MatchPlaybackEnded", function()
+        State.matchPlaybackActive = false
+        State.nextAutoEquipBestAt = 0
+        State.uiRefreshRequested = true
+    end)
+    if successEnded and endedConnection then
+        addConnection(endedConnection)
+        connectedAny = true
+    end
+
+    State.matchEventListenersConnected = connectedAny
+    return connectedAny
+end
+
+local function waitForAutoMatchValue(expectedValue, timeoutSeconds)
+    local deadline = os.clock() + math.max(0, tonumber(timeoutSeconds) or 0)
+    repeat
+        local current = getData("Settings.AutoMatch")
+        if current == expectedValue then
+            return true
+        end
+        task.wait(0.1)
+    until os.clock() >= deadline or not State.running
+
+    return getData("Settings.AutoMatch") == expectedValue
+end
+
+local function runWithAutoMatchPaused(actionCallback)
+    if State.autoMatchTransaction or State.settingAutoMatch then
+        return nil, "Auto Match sedang diproses"
+    end
+    if State.matchPlaybackActive then
+        return nil, "Match sedang berlangsung"
+    end
+
+    local desiredAutoMatch = State.autoMatch == true
+        or getData("Settings.AutoMatch") == true
+    local paused = false
+    State.autoMatchTransaction = true
+    State.autoMatchSyncIgnoreUntil = os.clock() + 12
+    updateAutomationButtons()
+
+    if desiredAutoMatch then
+        local pauseResponse, pauseError = callNetworkLoose("SetAutoMatch", {enabled = false})
+        if not pauseResponse then
+            State.autoMatchTransaction = false
+            updateAutomationButtons()
+            return nil, "Gagal pause Auto Match: " .. tostring(pauseError)
+        end
+        paused = true
+        waitForAutoMatchValue(false, AUTO_MATCH_PAUSE_TIMEOUT)
+    end
+
+    local actionResponse, actionError = actionCallback()
+
+    local restoreError = nil
+    if paused then
+        local restoreResponse
+        restoreResponse, restoreError = callNetworkLoose("SetAutoMatch", {enabled = true})
+        if restoreResponse then
+            State.autoMatch = true
+            PersistentConfig.autoMatch = true
+            State.autoMatchPendingSync = false
+            State.autoMatchSyncIgnoreUntil = os.clock() + 5
+        end
+    end
+
+    State.autoMatchTransaction = false
+    updateAutomationButtons()
+
+    if restoreError then
+        State.autoMatchPendingSync = true
+        State.nextAutoMatchSyncAt = os.clock() + AUTO_MATCH_RETRY_DELAY
+        return actionResponse, actionError or ("Action selesai, tetapi gagal mengaktifkan kembali Auto Match: " .. tostring(restoreError))
+    end
+
+    return actionResponse, actionError
+end
+
+local function evolveCardsNow(isAutomatic)
+    if State.evolvingCards or State.equippingBest or State.collecting or State.loaning or State.prestiging then
+        return false, "Automation lain sedang berjalan"
+    end
+
+    if getData("Passes.AutoEvolve") ~= true then
+        if not isAutomatic then
+            setStatus("Auto Evolve membutuhkan game pass AutoEvolve.", COLORS.warning)
+        end
+        return false, "Game pass AutoEvolve belum dimiliki"
+    end
+
+    local evolvableCount = getEvolvableGroupCount()
+    if evolvableCount <= 0 then
+        return false, "Tidak ada kartu yang dapat di-evolve"
+    end
+
+    State.evolvingCards = true
+    updateAutomationButtons()
+
+    task.spawn(function()
+        local response, errorMessage = runWithAutoMatchPaused(function()
+            return callNetworkLoose("AutoUpgradeAll")
+        end)
+
+        State.evolvingCards = false
+        State.nextAutoEvolveAt = os.clock()
+            + (response and AUTO_EVOLVE_INTERVAL or AUTO_EVOLVE_RETRY_DELAY)
+        State.cachedTopCard = nil
+        State.lastEquipBestSignature = nil
+
+        if response then
+            setStatus(
+                string.format("Auto Evolve memproses %d grup kartu.", evolvableCount),
+                COLORS.success
+            )
+            task.wait(0.4)
+            refreshUI(true)
+        elseif not isAutomatic then
+            setStatus("Auto Evolve gagal: " .. tostring(errorMessage), COLORS.danger)
+        end
+
+        updateAutomationButtons()
+    end)
+
+    return true
+end
+
+local function equipBestEleven(isAutomatic)
+    if State.equippingBest or State.evolvingCards or State.collecting or State.loaning or State.prestiging then
+        return false, "Automation lain sedang berjalan"
+    end
+    if State.matchPlaybackActive then
+        State.nextAutoEquipBestAt = os.clock() + AUTO_EQUIP_BEST_RETRY_DELAY
+        return false, "Match sedang berlangsung"
+    end
+
+    local signature = getSquadEquipSignature()
+    State.equippingBest = true
+    updateAutomationButtons()
+
+    task.spawn(function()
+        local response, errorMessage = runWithAutoMatchPaused(function()
+            return callNetworkLoose("AutoFillBestEleven")
+        end)
+
+        State.equippingBest = false
+        State.nextAutoEquipBestAt = os.clock()
+            + (response and AUTO_ACTION_INTERVAL or AUTO_EQUIP_BEST_RETRY_DELAY)
+
+        if response then
+            State.lastEquipBestSignature = signature
+            State.lastEquipBestAt = os.time()
+            setStatus("Starting Eleven terbaik berhasil dipasang.", COLORS.success)
+            task.wait(0.35)
+            refreshUI(true)
+        elseif not isAutomatic then
+            setStatus("Equip Best gagal: " .. tostring(errorMessage), COLORS.danger)
+        end
+
+        updateAutomationButtons()
+    end)
+
+    return true
+end
+
 local function fetchPrestigeInfo()
     if not tryRediscoverNetworker() then
         return nil, "Networker belum ditemukan"
@@ -2206,7 +2726,13 @@ local function performPrestige(isAutomatic)
 end
 
 local function collectAllReadyLoans(isAutomatic)
-    if State.collecting or State.loaning or State.prestiging then
+    if State.collecting
+        or State.loaning
+        or State.prestiging
+        or State.evolvingCards
+        or State.equippingBest
+        or State.autoMatchTransaction
+    then
         return
     end
 
@@ -2456,7 +2982,13 @@ local function runAutomationTick()
         end
     end
 
-    if State.collecting or State.loaning or State.prestiging then
+    if State.collecting
+        or State.loaning
+        or State.prestiging
+        or State.evolvingCards
+        or State.equippingBest
+        or State.autoMatchTransaction
+    then
         return
     end
 
@@ -2481,6 +3013,34 @@ local function runAutomationTick()
 
     if not tryRediscoverNetworker() then
         return
+    end
+
+    ensureMatchPlaybackListeners()
+
+    -- Auto Evolve mengikuti endpoint resmi AutoUpgradeAll dan hanya aktif bila
+    -- game pass AutoEvolve tercatat pada data pemain.
+    if State.autoEvolveCards and now >= State.nextAutoEvolveAt then
+        State.nextAutoEvolveAt = now + AUTO_EVOLVE_RETRY_DELAY
+        if getData("Passes.AutoEvolve") == true and getEvolvableGroupCount() > 0 then
+            if evolveCardsNow(true) then
+                return
+            end
+        end
+    end
+
+    -- Equip Best hanya dijalankan saat koleksi/availability kartu berubah.
+    -- Bila Auto Match aktif, setting tersebut dipause sementara melalui remote
+    -- resmi game, AutoFillBestEleven dipanggil, lalu Auto Match dipulihkan.
+    if State.autoEquipBest and now >= State.nextAutoEquipBestAt then
+        local currentSignature = getSquadEquipSignature()
+        if currentSignature ~= State.lastEquipBestSignature then
+            State.nextAutoEquipBestAt = now + AUTO_EQUIP_BEST_RETRY_DELAY
+            if equipBestEleven(true) then
+                return
+            end
+        else
+            State.nextAutoEquipBestAt = now + AUTO_EQUIP_BEST_RETRY_DELAY
+        end
     end
 
     -- Prestige memiliki prioritas tertinggi ketika seluruh requirement sudah terpenuhi.
@@ -2684,7 +3244,7 @@ local function buildGui()
 
     local Window = WindUI:CreateWindow({
         Title = HUB_TITLE,
-        Author = "Auto Loan • Auto Collect • Auto Match • Auto Packs • Auto Prestige",
+        Author = "Auto Loan • Auto Collect • Auto Match • Auto Packs • Auto Evolve • Equip Best • Auto Prestige",
         Folder = "xSansHUB_LoanOutManager",
         Icon = "handshake",
         Theme = "Indigo",
@@ -2991,6 +3551,30 @@ local function buildGui()
         end,
     })
     compactElement(State.autoOpenPacksToggle, 15, 13)
+
+    State.autoEvolveCardsToggle = AutomationTab:Toggle({
+        Title = "Auto Evolve Cards",
+        Desc = "Evolve duplicate otomatis menggunakan AutoUpgradeAll resmi game (memerlukan game pass).",
+        Icon = "sparkles",
+        IconSize = 18,
+        Value = State.autoEvolveCards,
+        Callback = function(enabled)
+            setAutoEvolveCardsEnabled(enabled)
+        end,
+    })
+    compactElement(State.autoEvolveCardsToggle, 15, 13)
+
+    State.autoEquipBestToggle = AutomationTab:Toggle({
+        Title = "Auto Equip Best",
+        Desc = "Susun Starting Eleven terbaik saat koleksi berubah; Auto Match dipause lalu dipulihkan.",
+        Icon = "users",
+        IconSize = 18,
+        Value = State.autoEquipBest,
+        Callback = function(enabled)
+            setAutoEquipBestEnabled(enabled)
+        end,
+    })
+    compactElement(State.autoEquipBestToggle, 15, 13)
 
     State.autoPrestigeToggle = AutomationTab:Toggle({
         Title = "Auto Prestige",
@@ -3400,6 +3984,14 @@ function API.ToggleAutoOpenPacks()
     setAutoOpenPacksEnabled(not State.autoOpenPacks)
 end
 
+function API.ToggleAutoEvolveCards()
+    setAutoEvolveCardsEnabled(not State.autoEvolveCards)
+end
+
+function API.ToggleAutoEquipBest()
+    setAutoEquipBestEnabled(not State.autoEquipBest)
+end
+
 function API.ToggleAutoMatch()
     return setAutoMatchEnabled(not State.autoMatch)
 end
@@ -3420,12 +4012,48 @@ function API.SetAutoOpenPacks(enabled)
     setAutoOpenPacksEnabled(enabled)
 end
 
+function API.SetAutoEvolveCards(enabled)
+    setAutoEvolveCardsEnabled(enabled)
+end
+
+function API.SetAutoEquipBest(enabled)
+    setAutoEquipBestEnabled(enabled)
+end
+
 function API.SetAutoMatch(enabled)
     return setAutoMatchEnabled(enabled)
 end
 
 function API.OpenPacksNow()
     return openOwnedPacksAutomatically(false)
+end
+
+function API.EvolveCardsNow()
+    return evolveCardsNow(false)
+end
+
+function API.EquipBestNow()
+    return equipBestEleven(false)
+end
+
+function API.GetAutoEvolveState()
+    return {
+        enabled = State.autoEvolveCards,
+        running = State.evolvingCards,
+        passOwned = getData("Passes.AutoEvolve") == true,
+        evolvableGroups = getEvolvableGroupCount(),
+        nextAttemptAt = State.nextAutoEvolveAt,
+    }
+end
+
+function API.GetAutoEquipBestState()
+    return {
+        enabled = State.autoEquipBest,
+        running = State.equippingBest,
+        matchPlaybackActive = State.matchPlaybackActive,
+        lastEquippedAt = State.lastEquipBestAt,
+        nextAttemptAt = State.nextAutoEquipBestAt,
+    }
 end
 
 function API.GetAutoOpenPacksState()
@@ -3474,7 +4102,11 @@ function API.GetAutomationState()
         autoPrestige = State.autoPrestige,
         autoMatch = State.autoMatch,
         autoOpenPacks = State.autoOpenPacks,
+        autoEvolveCards = State.autoEvolveCards,
+        autoEquipBest = State.autoEquipBest,
         openingPacks = State.openingPacks,
+        evolvingCards = State.evolvingCards,
+        equippingBest = State.equippingBest,
         ownedPacks = getOwnedPackCount(),
         settingAutoMatch = State.settingAutoMatch,
         prestiging = State.prestiging,
@@ -3526,7 +4158,12 @@ function API.Stop()
     State.autoCollect = false
     State.autoPrestige = false
     State.autoOpenPacks = false
+    State.autoEvolveCards = false
+    State.autoEquipBest = false
     State.openingPacks = false
+    State.evolvingCards = false
+    State.equippingBest = false
+    State.autoMatchTransaction = false
     State.settingAutoMatch = false
     State.autoMatchPendingSync = false
     State.prestiging = false
@@ -3571,6 +4208,8 @@ task.spawn(function()
     if State.autoMatchPendingSync then
         setAutoMatchEnabled(State.autoMatch, false, true)
     end
+
+    ensureMatchPlaybackListeners()
 
     -- Polling-only mode: jangan hubungkan DataChanged milik game. Callback
     -- ReplicatedStorage.Packages.Signal berjalan pada free thread yang tidak
