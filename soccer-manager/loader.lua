@@ -3,11 +3,11 @@
 
     Fitur:
       - Menggunakan WindUI dengan keybind G dan floating OpenButton.
-      - Judul otomatis: xSansHUB - nama game saat ini.
+      - Title menggunakan nama game dan author xSansHUB.
       - Menampilkan seluruh pemain yang sedang loan out.
       - Collect All untuk seluruh loan yang sudah selesai.
       - Loan Top berdasarkan whitelist rarity dan durasi yang dipilih.
-      - Toggle Auto Loan, Auto Collect, Auto Play, Auto Open Packs, Auto Evolve satu-per-satu, Auto Equip Best stabil (pause Auto Play sampai lineup tidak berubah), Auto Join International Cup, Auto Collect Cup Rewards, Auto Collect PackDrop, Auto Conveyor, Anti AFK, Lock Position, dan Auto Prestige.
+      - Toggle Auto Loan, Auto Collect, Auto Play, Auto Open Packs, Auto Equip Best stabil (pause Auto Play sampai lineup tidak berubah), Auto Join International Cup, Auto Collect Cup Rewards, Auto Collect PackDrop, Auto Conveyor, Anti AFK, Lock Position, dan Auto Prestige.
       - Visual Fill International Cup: membuka menu Cup dan mengisi slot React melalui simulasi tombol UI.
       - Movement: anti tabrak sesama player tanpa anchor, Back to Base melalui Workspace.World.Plots, dan recovery Auto Conveyor pada part Animed Convoyor.
       - Loan Duration dan Rarity Whitelist berada tepat di atas toggle Auto Loan.
@@ -33,7 +33,6 @@
       LoanOutGUI.ToggleAutoPrestige()
       LoanOutGUI.ToggleAutoMatch()
       LoanOutGUI.ToggleAutoOpenPacks()
-      LoanOutGUI.ToggleAutoEvolveCards()
       LoanOutGUI.ToggleAutoEquipBest()
       LoanOutGUI.ToggleAutoJoinWorldCup()
       LoanOutGUI.ToggleAutoCollectWorldCupRewards()
@@ -110,7 +109,7 @@ end
 local GAME_NAME = getCurrentGameName()
 local HUB_TITLE = GAME_NAME
 
-local CONFIG_VERSION = 10
+local CONFIG_VERSION = 11
 local CONFIG_ROOT = "xSansHUB"
 local CONFIG_FOLDER = CONFIG_ROOT .. "/LoanOutManager"
 local CONFIG_FILE = CONFIG_FOLDER .. "/" .. tostring(game.PlaceId) .. ".json"
@@ -210,9 +209,6 @@ local function mergeRawConfig(target, source)
     if source.autoOpenPacks ~= nil then
         target.autoOpenPacks = source.autoOpenPacks == true
     end
-    if source.autoEvolveCards ~= nil then
-        target.autoEvolveCards = source.autoEvolveCards == true
-    end
     if source.autoEquipBest ~= nil then
         target.autoEquipBest = source.autoEquipBest == true
     end
@@ -270,8 +266,6 @@ local PRESTIGE_SUCCESS_DELAY = 3
 local AUTO_MATCH_RETRY_DELAY = 5
 local AUTO_PLAY_ENSURE_DELAY = 8
 local AUTO_PACK_RETRY_DELAY = 8
-local AUTO_EVOLVE_INTERVAL = 2
-local AUTO_EVOLVE_RETRY_DELAY = 6
 local AUTO_EQUIP_BEST_RETRY_DELAY = 8
 local AUTO_EQUIP_BEST_SETTLE_TIMEOUT = 2
 local AUTO_EQUIP_BEST_MAX_PASSES = 4
@@ -446,7 +440,6 @@ local State = {
     autoPrestige = PersistentConfig.autoPrestige == true,
     autoMatch = (PersistentConfig.autoPlay ~= nil and PersistentConfig.autoPlay or PersistentConfig.autoMatch) == true,
     autoOpenPacks = PersistentConfig.autoOpenPacks == true,
-    autoEvolveCards = PersistentConfig.autoEvolveCards == true,
     autoEquipBest = PersistentConfig.autoEquipBest == true,
     autoJoinWorldCup = PersistentConfig.autoJoinWorldCup == true,
     autoCollectWorldCupRewards = PersistentConfig.autoCollectWorldCupRewards ~= false,
@@ -460,7 +453,6 @@ local State = {
     worldCupSquadMode = normalizeWorldCupSquadMode(PersistentConfig.worldCupSquadMode),
     settingAutoMatch = false,
     openingPacks = false,
-    evolvingCards = false,
     equippingBest = false,
     joiningWorldCup = false,
     collectingWorldCupReward = false,
@@ -566,7 +558,6 @@ local State = {
     autoCollectToggle = nil,
     autoMatchToggle = nil,
     autoOpenPacksToggle = nil,
-    autoEvolveCardsToggle = nil,
     autoEquipBestToggle = nil,
     autoJoinWorldCupToggle = nil,
     autoCollectWorldCupRewardsToggle = nil,
@@ -616,7 +607,6 @@ local State = {
     nextAutoLoanAt = 0,
     nextAutoCollectAt = 0,
     nextPrestigeCheckAt = 0,
-    nextAutoEvolveAt = 0,
     nextAutoEquipBestAt = 0,
     nextWorldCupCheckAt = 0,
     nextWorldCupRewardCheckAt = 0,
@@ -653,7 +643,6 @@ local function syncPersistentConfig()
     PersistentConfig.autoPlay = State.autoMatch == true
     PersistentConfig.autoMatch = State.autoMatch == true -- compatibility untuk config lama
     PersistentConfig.autoOpenPacks = State.autoOpenPacks == true
-    PersistentConfig.autoEvolveCards = State.autoEvolveCards == true
     PersistentConfig.autoEquipBest = State.autoEquipBest == true
     PersistentConfig.autoJoinWorldCup = State.autoJoinWorldCup == true
     PersistentConfig.autoCollectWorldCupRewards = State.autoCollectWorldCupRewards == true
@@ -687,7 +676,6 @@ local function buildConfigSnapshot()
         autoPlay = State.autoMatch == true,
         autoMatch = State.autoMatch == true, -- compatibility untuk versi lama
         autoOpenPacks = State.autoOpenPacks == true,
-        autoEvolveCards = State.autoEvolveCards == true,
         autoEquipBest = State.autoEquipBest == true,
         autoJoinWorldCup = State.autoJoinWorldCup == true,
         autoCollectWorldCupRewards = State.autoCollectWorldCupRewards == true,
@@ -899,6 +887,11 @@ local function setElementLocked(element, locked)
         return
     end
 
+    if element.__friendlyAction then
+        element.FriendlyLocked = locked == true
+        return
+    end
+
     if locked and element.Locked ~= true and type(element.Lock) == "function" then
         element:Lock()
     elseif not locked and element.Locked == true and type(element.Unlock) == "function" then
@@ -918,7 +911,7 @@ local function setCollectButton(text, enabled)
         button:SetTitle(tostring(text or "Collect All"))
     end
     if type(button.SetDesc) == "function" then
-        button:SetDesc(enabled and "Ambil seluruh loan yang sudah selesai." or "Belum ada loan selesai atau automation sedang sibuk.")
+        button:SetDesc(nil)
     end
     setElementLocked(button, not enabled)
 end
@@ -935,9 +928,7 @@ local function setLoanButton(text, enabled)
         button:SetTitle(tostring(text or "Loan Top"))
     end
     if type(button.SetDesc) == "function" then
-        button:SetDesc(enabled
-            and "Kirim kandidat rarity/OVR tertinggi sesuai whitelist."
-            or "Tidak ada kandidat, slot penuh, atau automation sedang sibuk.")
+        button:SetDesc(nil)
     end
     setElementLocked(button, not enabled)
 end
@@ -1003,24 +994,6 @@ local function updateAutomationButtons()
         State.autoOpenPacksToggle:SetDesc(packsDesc)
     end
 
-    if State.autoEvolveCardsToggle and type(State.autoEvolveCardsToggle.Set) == "function" then
-        if State.autoEvolveCardsToggle.Value ~= State.autoEvolveCards then
-            State.autoEvolveCardsToggle:Set(State.autoEvolveCards, false)
-        end
-
-        local evolvableCount = Runtime.getEvolvableGroupCount and Runtime.getEvolvableGroupCount() or 0
-        local evolveDesc
-        if State.evolvingCards then
-            evolveDesc = string.format("EVOLVING • memproses 1 kartu • %d kartu tersisa.", evolvableCount)
-        elseif State.autoEvolveCards and evolvableCount > 0 then
-            evolveDesc = string.format("ACTIVE • %d kartu siap • diproses satu per satu dengan CombineCards.", evolvableCount)
-        elseif State.autoEvolveCards then
-            evolveDesc = "ACTIVE • menunggu duplicate yang cukup untuk evolve."
-        else
-            evolveDesc = string.format("Evolve satu per satu tanpa AutoEvolve game pass • %d kartu benar-benar siap.", evolvableCount)
-        end
-        State.autoEvolveCardsToggle:SetDesc(evolveDesc)
-    end
 
     if State.autoEquipBestToggle and type(State.autoEquipBestToggle.Set) == "function" then
         if State.autoEquipBestToggle.Value ~= State.autoEquipBest then
@@ -1168,7 +1141,7 @@ local function updateAutomationButtons()
                 State.worldCupCollectButton:SetTitle(State.collectingWorldCupReward and "Collecting Reward..." or "Collect Cup Reward")
             end
             if type(State.worldCupCollectButton.SetDesc) == "function" then
-                State.worldCupCollectButton:SetDesc(canCollect and "Klaim coin dan reward pack International Cup sekarang." or "Belum ada reward Cup yang siap diklaim.")
+                State.worldCupCollectButton:SetDesc(nil)
             end
             setElementLocked(State.worldCupCollectButton, not canCollect)
         end
@@ -1179,7 +1152,7 @@ local function updateAutomationButtons()
                 State.worldCupVisualFillButton:SetTitle(State.fillingWorldCupVisual and "Filling Visual Squad..." or "Fill Visual Squad")
             end
             if type(State.worldCupVisualFillButton.SetDesc) == "function" then
-                State.worldCupVisualFillButton:SetDesc(visualEnabled and "Buka menu Cup dan isi 11 slot sesuai squad selection." or "Visual fill tersedia ketika fase entry terbuka.")
+                State.worldCupVisualFillButton:SetDesc(nil)
             end
             setElementLocked(State.worldCupVisualFillButton, not visualEnabled)
         end
@@ -1190,7 +1163,7 @@ local function updateAutomationButtons()
                 State.spawnedPackPickupButton:SetTitle(State.pickingSpawnedPacks and "Collecting PackDrop..." or "Collect PackDrop")
             end
             if type(State.spawnedPackPickupButton.SetDesc) == "function" then
-                State.spawnedPackPickupButton:SetDesc("Deteksi Workspace.PackDrop di dekat plot sendiri lalu teleport langsung ke part tersebut.")
+                State.spawnedPackPickupButton:SetDesc(nil)
             end
             setElementLocked(State.spawnedPackPickupButton, not pickupEnabled)
         end
@@ -1223,7 +1196,7 @@ local function updateAutomationButtons()
                 State.worldCupJoinButton:SetTitle(buttonTitle)
             end
             if type(State.worldCupJoinButton.SetDesc) == "function" then
-                State.worldCupJoinButton:SetDesc(buttonDesc)
+                State.worldCupJoinButton:SetDesc(nil)
             end
             setElementLocked(State.worldCupJoinButton, not buttonEnabled)
         end
@@ -1302,11 +1275,7 @@ local function updateAutomationButtons()
     if State.backToBaseButton then
         local spawnPart = Runtime.getOwnedPlotSpawn and Runtime.getOwnedPlotSpawn(false) or nil
         if type(State.backToBaseButton.SetDesc) == "function" then
-            State.backToBaseButton:SetDesc(
-                spawnPart
-                    and ("Teleport ke " .. tostring(spawnPart.Parent and spawnPart.Parent.Name or "plot") .. ".Spawn.")
-                    or "Plot milik player atau part Spawn belum ditemukan."
-            )
+            State.backToBaseButton:SetDesc(nil)
         end
         setElementLocked(State.backToBaseButton, spawnPart == nil)
     end
@@ -1314,11 +1283,7 @@ local function updateAutomationButtons()
     if State.teleportConveyorButton then
         local conveyor = Runtime.getConveyorTarget and Runtime.getConveyorTarget() or nil
         if type(State.teleportConveyorButton.SetDesc) == "function" then
-            State.teleportConveyorButton:SetDesc(
-                conveyor
-                    and "Teleport sekali ke part Animed Convoyor terdekat."
-                    or "Part Animed Convoyor belum ditemukan."
-            )
+            State.teleportConveyorButton:SetDesc(nil)
         end
         setElementLocked(State.teleportConveyorButton, conveyor == nil)
     end
@@ -1390,23 +1355,6 @@ local function setAutoOpenPacksEnabled(enabled, announce)
                 and "Auto Open Packs aktif • pack akan dibuka memakai mode AUTO OPEN bawaan game."
                 or "Auto Open Packs dinonaktifkan.",
             State.autoOpenPacks and COLORS.success or COLORS.muted
-        )
-    end
-end
-
-local function setAutoEvolveCardsEnabled(enabled, announce)
-    State.autoEvolveCards = enabled == true
-    PersistentConfig.autoEvolveCards = State.autoEvolveCards
-    State.nextAutoEvolveAt = 0
-    updateAutomationButtons()
-    requestConfigSave()
-
-    if announce ~= false then
-        setStatus(
-            State.autoEvolveCards
-                and "Auto Evolve Cards aktif • duplicate diproses satu per satu dengan CombineCards."
-                or "Auto Evolve Cards dinonaktifkan.",
-            State.autoEvolveCards and COLORS.success or COLORS.muted
         )
     end
 end
@@ -2059,156 +2007,6 @@ local function getUnavailableCardIds()
     return unavailable
 end
 
-local function getEvolutionUnavailableCardIds()
-    local unavailable = {}
-    addActiveIds(unavailable, Runtime.getData("Loans.active"))
-    addActiveIds(unavailable, Runtime.getData("Training.active"))
-
-    local promotion = Runtime.getData("Promotion")
-    if type(promotion) == "table" and promotion.active then
-        addActiveIds(unavailable, promotion.players)
-    end
-
-    return unavailable
-end
-
-local function getCardMaxUpgrade(baseCard)
-    local database = State.playerCardDatabase
-    if not database or type(database.MaxUpgrade) ~= "function" or not baseCard then
-        return 0
-    end
-
-    local success, result = pcall(database.MaxUpgrade, baseCard)
-    if success then
-        return math.max(0, tonumber(result) or 0)
-    end
-
-    return 0
-end
-
-local function buildEvolvableGroups()
-    local database = State.playerCardDatabase
-    local ownedCards = Runtime.getData("Squad.Owned")
-    local storedDupes = Runtime.getData("Squad.Dupes")
-
-    if not database or type(database.GetById) ~= "function" or type(ownedCards) ~= "table" then
-        return {}
-    end
-
-    local unavailable = getEvolutionUnavailableCardIds()
-    local groupsByBaseId = {}
-
-    local function getOrCreateGroup(rawBaseId, baseCard)
-        local baseId = tostring(rawBaseId)
-        local group = groupsByBaseId[baseId]
-        if group then
-            return group
-        end
-
-        local baseRating = tonumber(baseCard.rating) or 0
-        group = {
-            baseId = baseId,
-            baseCard = baseCard,
-            physicalCount = 0,
-            storedDupeCount = 0,
-            bestInstanceId = nil,
-            bestUpgrade = 0,
-            bestRating = baseRating,
-            rarity = getRarity(baseCard, baseRating),
-        }
-        groupsByBaseId[baseId] = group
-        return group
-    end
-
-    -- Kartu instance nyata yang sedang loan/training/promotion tidak boleh
-    -- digunakan sebagai target maupun material evolve.
-    for rawInstanceId, cardData in pairs(ownedCards) do
-        if type(cardData) == "table" and cardData.baseId ~= nil then
-            local instanceId = tostring(rawInstanceId)
-            if not unavailable[instanceId] then
-                local success, baseCard = pcall(database.GetById, cardData.baseId)
-                if success and baseCard then
-                    local group = getOrCreateGroup(cardData.baseId, baseCard)
-                    local upgrade = tonumber(cardData.upgrade) or 0
-                    local rating = (tonumber(baseCard.rating) or 0) + upgrade
-
-                    group.physicalCount += 1
-                    if group.bestInstanceId == nil or rating > group.bestRating then
-                        group.bestRating = rating
-                        group.bestUpgrade = upgrade
-                        group.bestInstanceId = instanceId
-                        group.rarity = getRarity(baseCard, rating)
-                    end
-                end
-            end
-        end
-    end
-
-    -- Squad.Dupes dan copy tambahan di Squad.Owned dapat merepresentasikan
-    -- duplicate yang sama pada snapshot client tertentu. Karena itu keduanya
-    -- tidak dijumlahkan secara mentah. Nilai terbesar dipakai sebagai jumlah
-    -- material yang benar-benar tersedia agar kandidat tidak terdeteksi ganda.
-    if type(storedDupes) == "table" then
-        for rawBaseId, amount in pairs(storedDupes) do
-            local dupeCount = math.max(0, math.floor(tonumber(amount) or 0))
-            if dupeCount > 0 then
-                local success, baseCard = pcall(database.GetById, rawBaseId)
-                if success and baseCard then
-                    local group = getOrCreateGroup(rawBaseId, baseCard)
-                    group.storedDupeCount = math.max(group.storedDupeCount, dupeCount)
-                end
-            end
-        end
-    end
-
-    local result = {}
-    for _, group in pairs(groupsByBaseId) do
-        local maxUpgrade = getCardMaxUpgrade(group.baseCard)
-
-        -- Satu kartu/copy harus disisakan sebagai target evolve.
-        local physicalMaterials = math.max(
-            0,
-            group.physicalCount - (group.bestInstanceId and 1 or 0)
-        )
-        local storedMaterials = group.storedDupeCount
-        if not group.bestInstanceId then
-            storedMaterials = math.max(0, storedMaterials - 1)
-        end
-
-        -- Gunakan sumber material terbesar, bukan penjumlahan kedua sumber.
-        -- Ini memperbaiki false positive seperti 54 kandidat padahal UI game
-        -- hanya memiliki beberapa kartu yang benar-benar dapat di-evolve.
-        local duplicateCount = math.max(physicalMaterials, storedMaterials)
-
-        if group.bestUpgrade < maxUpgrade and duplicateCount >= 2 then
-            group.maxUpgrade = maxUpgrade
-            group.duplicateCount = duplicateCount
-            group.physicalMaterials = physicalMaterials
-            group.storedMaterials = storedMaterials
-            group.count = duplicateCount + 1
-            result[#result + 1] = group
-        end
-    end
-
-    table.sort(result, function(a, b)
-        local aRank = rarityRank(a.rarity)
-        local bRank = rarityRank(b.rarity)
-        if aRank ~= bRank then
-            return aRank > bRank
-        end
-        if a.bestRating ~= b.bestRating then
-            return a.bestRating > b.bestRating
-        end
-        return tostring(a.baseId) < tostring(b.baseId)
-    end)
-
-    return result
-end
-
-Runtime.getEvolvableGroupCount = function()
-    return #buildEvolvableGroups()
-end
-
 Runtime.getSquadEquipSignature = function()
     local parts = {"formation=" .. tostring(Runtime.getData("Squad.Formation") or "")}
     local ownedCards = Runtime.getData("Squad.Owned")
@@ -2669,9 +2467,6 @@ local function applyLoadedConfig(config)
     if config.autoOpenPacks ~= nil then
         State.autoOpenPacks = config.autoOpenPacks == true
     end
-    if config.autoEvolveCards ~= nil then
-        State.autoEvolveCards = config.autoEvolveCards == true
-    end
     if config.autoEquipBest ~= nil then
         State.autoEquipBest = config.autoEquipBest == true
     end
@@ -2705,7 +2500,6 @@ local function applyLoadedConfig(config)
     State.nextAutoCollectAt = 0
     State.nextPrestigeCheckAt = 0
     State.nextAutoOpenPackAt = 0
-    State.nextAutoEvolveAt = 0
     State.nextAutoEquipBestAt = 0
     State.nextWorldCupCheckAt = 0
     State.nextWorldCupRewardCheckAt = 0
@@ -2892,7 +2686,6 @@ refreshUI = function(forceRebuild)
     local actionBusy = State.collecting
         or State.loaning
         or State.prestiging
-        or State.evolvingCards
         or State.equippingBest
         or State.autoMatchTransaction
         or State.joiningWorldCup
@@ -2970,7 +2763,7 @@ local function callNetworkLoose(action, payload)
         return nil, tostring(response.reason or "Request gagal")
     end
 
-    -- Sebagian action UI seperti AutoFillBestEleven/CombineCards bersifat
+    -- Sebagian action UI seperti AutoFillBestEleven bersifat
     -- fire-and-forget dan dapat mengembalikan nil meskipun request diterima.
     return response ~= nil and response or true, nil
 end
@@ -3415,65 +3208,8 @@ local function runWithAutoMatchPaused(actionCallback)
     return actionResponse, actionError
 end
 
-local function evolveCardsNow(isAutomatic)
-    if State.evolvingCards or State.equippingBest or State.collecting or State.loaning or State.prestiging or State.joiningWorldCup then
-        return false, "Automation lain sedang berjalan"
-    end
-
-    local groups = buildEvolvableGroups()
-    local target = groups[1]
-    if not target then
-        return false, "Tidak ada kartu yang dapat di-evolve"
-    end
-
-    local instanceId = target.bestInstanceId
-    if not instanceId or tostring(instanceId) == "" then
-        instanceId = "dupe:" .. tostring(target.baseId)
-    end
-
-    local cardName = target.baseCard and target.baseCard.name
-        or tostring(target.baseId)
-
-    State.evolvingCards = true
-    updateAutomationButtons()
-
-    task.spawn(function()
-        local response, errorMessage = runWithAutoMatchPaused(function()
-            return callNetworkLoose("CombineCards", {
-                instanceId = instanceId,
-                levels = 1,
-            })
-        end)
-
-        State.evolvingCards = false
-        State.nextAutoEvolveAt = os.clock()
-            + (response and AUTO_EVOLVE_INTERVAL or AUTO_EVOLVE_RETRY_DELAY)
-        State.cachedTopCard = nil
-        State.lastEquipBestSignature = nil
-
-        if response then
-            setStatus(
-                string.format(
-                    "Evolve berhasil • %s +1 • %d duplicate digunakan.",
-                    tostring(cardName),
-                    math.min(2, tonumber(target.duplicateCount) or 2)
-                ),
-                COLORS.success
-            )
-            task.wait(0.45)
-            refreshUI(true)
-        elseif not isAutomatic then
-            setStatus("Evolve gagal: " .. tostring(errorMessage), COLORS.danger)
-        end
-
-        updateAutomationButtons()
-    end)
-
-    return true
-end
-
 local function equipBestEleven(isAutomatic)
-    if State.equippingBest or State.evolvingCards or State.collecting or State.loaning or State.prestiging or State.joiningWorldCup then
+    if State.equippingBest or State.collecting or State.loaning or State.prestiging or State.joiningWorldCup then
         return false, "Automation lain sedang berjalan"
     end
     if State.matchPlaybackActive then
@@ -5455,7 +5191,6 @@ function Runtime.joinInternationalCup(isAutomatic)
         or State.collecting
         or State.loaning
         or State.prestiging
-        or State.evolvingCards
         or State.equippingBest
         or State.autoMatchTransaction
     then
@@ -5710,7 +5445,6 @@ function Runtime.collectAllReadyLoans(isAutomatic)
     if State.collecting
         or State.loaning
         or State.prestiging
-        or State.evolvingCards
         or State.equippingBest
         or State.joiningWorldCup
         or State.collectingWorldCupReward
@@ -5971,7 +5705,6 @@ function Runtime.runAutomationTick()
     if State.collecting
         or State.loaning
         or State.prestiging
-        or State.evolvingCards
         or State.equippingBest
         or State.joiningWorldCup
         or State.collectingWorldCupReward
@@ -6042,16 +5775,6 @@ function Runtime.runAutomationTick()
         Runtime.restoreAutoPlayAfterWorldCup()
     end
 
-    -- Auto Evolve memproses satu grup duplicate per siklus melalui CombineCards.
-    -- Tidak memakai AutoUpgradeAll dan tidak membutuhkan game pass AutoEvolve.
-    if State.autoEvolveCards and now >= State.nextAutoEvolveAt then
-        State.nextAutoEvolveAt = now + AUTO_EVOLVE_RETRY_DELAY
-        if Runtime.getEvolvableGroupCount() > 0 then
-            if evolveCardsNow(true) then
-                return
-            end
-        end
-    end
 
     -- Equip Best mendapat prioritas sebelum Auto Play recovery. Saat ada kartu,
     -- upgrade, loan/training state, atau lineup yang berubah, Auto Play tetap ON
@@ -6189,6 +5912,8 @@ function Runtime.getElementBaseFrame(element)
 end
 
 function Runtime.compactElement(element, titleSize, descSize)
+    -- Keep WindUI's native layout and padding. Only normalize typography so
+    -- cards, toggles, and dropdowns stay readable without clipping.
     local frame = Runtime.getElementBaseFrame(element)
     local ui = frame and frame.UIElements
 
@@ -6204,45 +5929,7 @@ function Runtime.compactElement(element, titleSize, descSize)
         ui.Desc.TextSize = descSize or 13
     end
 
-    local container = ui.Container
-    if container then
-        local containerLayout = container:FindFirstChildOfClass("UIListLayout")
-        if containerLayout then
-            containerLayout.Padding = UDim.new(0, 6)
-        end
-
-        local titleFrame = container:FindFirstChild("TitleFrame")
-        if titleFrame then
-            local inner = titleFrame:FindFirstChild("TitleFrame")
-            if inner then
-                local innerPadding = inner:FindFirstChildOfClass("UIPadding")
-                if innerPadding then
-                    innerPadding.PaddingTop = UDim.new(0, 2)
-                    innerPadding.PaddingBottom = UDim.new(0, 2)
-                    innerPadding.PaddingLeft = UDim.new(0, 2)
-                    innerPadding.PaddingRight = UDim.new(0, 2)
-                end
-
-                local innerLayout = inner:FindFirstChildOfClass("UIListLayout")
-                if innerLayout then
-                    innerLayout.Padding = UDim.new(0, 3)
-                end
-            end
-        end
-    end
-
     return element
-end
-
-function Runtime.compactButton(button)
-    Runtime.compactElement(button, 15, 13)
-
-    local icon = button and button.UIElements and button.UIElements.ButtonIcon
-    if icon then
-        icon.Size = UDim2.fromOffset(17, 17)
-    end
-
-    return button
 end
 
 function Runtime.compactDropdown(dropdown)
@@ -6250,7 +5937,7 @@ function Runtime.compactDropdown(dropdown)
 
     local control = dropdown and dropdown.UIElements and dropdown.UIElements.Dropdown
     if control then
-        control.Size = UDim2.new(0, 142, 0, 32)
+        control.Size = UDim2.new(0, 184, 0, 36)
 
         local frame = control:FindFirstChild("Frame")
         local inner = frame and frame:FindFirstChild("Frame")
@@ -6315,8 +6002,28 @@ end
 
 function Runtime.uiButton(container, options)
     options = options or {}
-    options.Size = options.Size or "Small"
-    return Runtime.compactButton(container:Button(options))
+
+    local callback = options.Callback or function() end
+    local actionButton
+
+    options.Size = options.Size or "Default"
+    options.Desc = nil
+    options.Color = options.Color or COLORS.primary
+    options.Justify = options.Justify or "Center"
+    options.IconAlign = options.IconAlign or "Left"
+    options.Icon = options.Icon or "mouse-pointer-click"
+    options.Callback = function()
+        if actionButton and actionButton.FriendlyLocked then
+            return
+        end
+        callback()
+    end
+
+    actionButton = container:Button(options)
+    actionButton.__friendlyAction = true
+    actionButton.FriendlyLocked = options.Locked == true
+
+    return actionButton
 end
 
 function Runtime.uiToggle(tab, options)
@@ -6345,7 +6052,6 @@ function Runtime.createHomeTab(Window)
     local actions = tab:Group({})
     State.loanButton = Runtime.uiButton(actions, {
         Title = "Loan Best",
-        Desc = "Kirim kartu terbaik.",
         Icon = "send",
         Callback = function()
             if State.loanButtonEnabled then
@@ -6354,10 +6060,8 @@ function Runtime.createHomeTab(Window)
         end,
     })
 
-    actions:Space()
     State.collectButton = Runtime.uiButton(actions, {
         Title = "Collect Loans",
-        Desc = "Ambil loan selesai.",
         Icon = "package-check",
         Callback = function()
             if State.collectButtonEnabled then
@@ -6405,7 +6109,7 @@ function Runtime.createLoansTab(Window)
 
     State.durationDropdown = Runtime.uiDropdown(tab, {
         Title = "Duration",
-        Desc = "Dipakai oleh Loan Best dan Auto Loan.",
+        Desc = "Durasi loan otomatis.",
         Values = durationValues,
         Value = Runtime.getDurationLabel(State.selectedDuration),
         SearchBarEnabled = false,
@@ -6439,7 +6143,7 @@ function Runtime.createLoansTab(Window)
 
     State.rarityDropdown = Runtime.uiDropdown(tab, {
         Title = "Rarity",
-        Desc = "Pilih rarity untuk Auto Loan.",
+        Desc = "Kartu yang boleh dipinjamkan.",
         Values = rarityValues,
         Value = getSelectedRarityLabels(),
         Multi = true,
@@ -6490,10 +6194,9 @@ function Runtime.createLoansTab(Window)
         end,
     })
 
-    rarityActions:Space()
     Runtime.uiButton(rarityActions, {
         Title = "Clear",
-        Icon = "list-x",
+        Icon = "eraser",
         Callback = function()
             for _, rarity in ipairs(State.rarityOptions) do
                 State.rarityWhitelist[rarity] = false
@@ -6560,14 +6263,6 @@ function Runtime.createAutomationTab(Window)
         Callback = setAutoOpenPacksEnabled,
     })
 
-    State.autoEvolveCardsToggle = Runtime.uiToggle(tab, {
-        Title = "Auto Evolve",
-        Desc = "Evolve duplicate satu per satu.",
-        Icon = "sparkles",
-        IconSize = 18,
-        Value = State.autoEvolveCards,
-        Callback = setAutoEvolveCardsEnabled,
-    })
 
     State.autoEquipBestToggle = Runtime.uiToggle(tab, {
         Title = "Auto Equip Best",
@@ -6619,16 +6314,12 @@ function Runtime.createPrestigeTab(Window)
             end
 
             State.prestigeGateParagraphs[#State.prestigeGateParagraphs + 1] = gateParagraph
-            if columnIndex == 1 then
-                gateGroup:Space()
-            end
         end
     end
 
     local actions = tab:Group({})
     Runtime.uiButton(actions, {
         Title = "Check",
-        Desc = "Refresh requirements.",
         Icon = "refresh-cw",
         Callback = function()
             local info, errorMessage = Runtime.fetchPrestigeInfo()
@@ -6641,10 +6332,8 @@ function Runtime.createPrestigeTab(Window)
         end,
     })
 
-    actions:Space()
     State.prestigeButton = Runtime.uiButton(actions, {
         Title = "Prestige Now",
-        Desc = "Jalankan prestige.",
         Icon = "sparkles",
         Callback = function()
             Runtime.performPrestige(false)
@@ -6678,7 +6367,7 @@ function Runtime.createWorldCupTab(Window)
 
     State.worldCupSquadDropdown = Runtime.uiDropdown(tab, {
         Title = "Squad Mode",
-        Desc = "Pilih tim terakhir atau kartu terbaik.",
+        Desc = "Sumber squad untuk Cup.",
         Values = {"Last Team", "Best Rarity / OVR"},
         Value = worldCupSquadModeLabel(State.worldCupSquadMode),
         SearchBarEnabled = false,
@@ -6702,7 +6391,7 @@ function Runtime.createWorldCupTab(Window)
 
     State.fillWorldCupVisualToggle = Runtime.uiToggle(tab, {
         Title = "Fill Visual Squad",
-        Desc = "Isi slot menu sebelum join.",
+        Desc = "Tampilkan squad di menu Cup.",
         Icon = "users",
         IconSize = 18,
         Value = State.fillWorldCupVisualBeforeJoin,
@@ -6720,15 +6409,15 @@ function Runtime.createWorldCupTab(Window)
 
     State.autoPickupSpawnedPacksToggle = Runtime.uiToggle(tab, {
         Title = "Auto Collect PackDrop",
-        Desc = "Ambil Workspace.PackDrop.",
+        Desc = "Ambil hadiah PackDrop.",
         Icon = "package-check",
         IconSize = 18,
         Value = State.autoPickupSpawnedPacks,
         Callback = setAutoPickupSpawnedPacksEnabled,
     })
 
-    local primaryActions = tab:Group({})
-    State.worldCupCheckButton = Runtime.uiButton(primaryActions, {
+    local cupPrimaryActions = tab:Group({})
+    State.worldCupCheckButton = Runtime.uiButton(cupPrimaryActions, {
         Title = "Check Status",
         Icon = "refresh-cw",
         Callback = function()
@@ -6742,8 +6431,7 @@ function Runtime.createWorldCupTab(Window)
         end,
     })
 
-    primaryActions:Space()
-    State.worldCupJoinButton = Runtime.uiButton(primaryActions, {
+    State.worldCupJoinButton = Runtime.uiButton(cupPrimaryActions, {
         Title = "Join Cup",
         Icon = "trophy",
         Callback = function()
@@ -6751,9 +6439,9 @@ function Runtime.createWorldCupTab(Window)
         end,
     })
 
-    local secondaryActions = tab:Group({})
-    State.worldCupVisualFillButton = Runtime.uiButton(secondaryActions, {
-        Title = "Fill Squad",
+    local cupSecondaryActions = tab:Group({})
+    State.worldCupVisualFillButton = Runtime.uiButton(cupSecondaryActions, {
+        Title = "Fill Visual Squad",
         Icon = "users",
         Callback = function()
             task.spawn(function()
@@ -6768,9 +6456,8 @@ function Runtime.createWorldCupTab(Window)
         end,
     })
 
-    secondaryActions:Space()
-    State.worldCupCollectButton = Runtime.uiButton(secondaryActions, {
-        Title = "Collect Reward",
+    State.worldCupCollectButton = Runtime.uiButton(cupSecondaryActions, {
+        Title = "Collect Cup Reward",
         Icon = "gift",
         Callback = function()
             Runtime.collectWorldCupReward(false)
@@ -6779,7 +6466,6 @@ function Runtime.createWorldCupTab(Window)
 
     State.spawnedPackPickupButton = Runtime.uiButton(tab, {
         Title = "Collect PackDrop",
-        Desc = "Teleport ke PackDrop milik base.",
         Icon = "package-check",
         Callback = function()
             Runtime.pickupSpawnedPacks(false)
@@ -6831,7 +6517,6 @@ function Runtime.createMovementTab(Window)
         end,
     })
 
-    actions:Space()
     State.teleportConveyorButton = Runtime.uiButton(actions, {
         Title = "Go to Conveyor",
         Icon = "navigation",
@@ -6860,7 +6545,7 @@ function Runtime.createSettingsTab(Window)
 
     State.windowKeybindControl = Runtime.compactElement(tab:Keybind({
         Title = "Window Keybind",
-        Desc = "Buka atau tutup window.",
+        Desc = "Tombol buka/tutup UI.",
         Value = State.windowKeybind,
         Callback = function(keyName)
             local normalized = normalizeKeybindName(keyName)
@@ -6921,7 +6606,6 @@ function Runtime.createSettingsTab(Window)
         end,
     })
 
-    configActions:Space()
     State.loadConfigButton = Runtime.uiButton(configActions, {
         Title = "Load",
         Icon = "folder-down",
@@ -6942,7 +6626,6 @@ function Runtime.createSettingsTab(Window)
         Callback = Runtime.rejoinCurrentServer,
     })
 
-    utilityActions:Space()
     Runtime.uiButton(utilityActions, {
         Title = "Refresh Data",
         Icon = "refresh-cw",
@@ -6986,9 +6669,9 @@ function Runtime.buildGui()
         Icon = "handshake",
         Theme = "Indigo",
         ToggleKey = Enum.KeyCode[State.windowKeybind] or Enum.KeyCode.G,
-        Size = UDim2.fromOffset(760, 550),
-        MinSize = Vector2.new(620, 430),
-        MaxSize = Vector2.new(980, 720),
+        Size = UDim2.fromOffset(820, 590),
+        MinSize = Vector2.new(700, 480),
+        MaxSize = Vector2.new(1040, 760),
         Resizable = true,
         AutoScale = true,
         NewElements = true,
@@ -7019,10 +6702,10 @@ function Runtime.buildGui()
     State.window = Window
     Environment.LoanOutGUIWindWindow = Window
 
-    Window.Gap = 5
+    Window.Gap = 10
     if Window.ElementConfig then
-        Window.ElementConfig.UIPadding = 9
-        Window.ElementConfig.UICorner = 7
+        Window.ElementConfig.UIPadding = 11
+        Window.ElementConfig.UICorner = 8
     end
 
     Window:Tag({
@@ -7254,9 +6937,6 @@ function API.ToggleAutoOpenPacks()
     setAutoOpenPacksEnabled(not State.autoOpenPacks)
 end
 
-function API.ToggleAutoEvolveCards()
-    setAutoEvolveCardsEnabled(not State.autoEvolveCards)
-end
 
 function API.ToggleAutoEquipBest()
     setAutoEquipBestEnabled(not State.autoEquipBest)
@@ -7307,9 +6987,6 @@ function API.SetAutoOpenPacks(enabled)
     setAutoOpenPacksEnabled(enabled)
 end
 
-function API.SetAutoEvolveCards(enabled)
-    setAutoEvolveCardsEnabled(enabled)
-end
 
 function API.SetAutoEquipBest(enabled)
     setAutoEquipBestEnabled(enabled)
@@ -7359,9 +7036,6 @@ function API.OpenPacksNow()
     return openOwnedPacksAutomatically(false)
 end
 
-function API.EvolveCardsNow()
-    return evolveCardsNow(false)
-end
 
 function API.EquipBestNow()
     return equipBestEleven(false)
@@ -7477,20 +7151,6 @@ function API.GetAutoJoinWorldCupState()
     }
 end
 
-function API.GetAutoEvolveState()
-    local groups = buildEvolvableGroups()
-    local nextGroup = groups[1]
-    return {
-        enabled = State.autoEvolveCards,
-        running = State.evolvingCards,
-        mode = "CombineCards",
-        oneByOne = true,
-        evolvableGroups = #groups,
-        nextBaseId = nextGroup and nextGroup.baseId or nil,
-        nextCardName = nextGroup and nextGroup.baseCard and nextGroup.baseCard.name or nil,
-        nextAttemptAt = State.nextAutoEvolveAt,
-    }
-end
 
 function API.GetAutoEquipBestState()
     return {
@@ -7559,7 +7219,6 @@ function API.GetAutomationState()
         autoPlay = State.autoMatch,
         autoMatch = State.autoMatch, -- compatibility
         autoOpenPacks = State.autoOpenPacks,
-        autoEvolveCards = State.autoEvolveCards,
         autoEquipBest = State.autoEquipBest,
         autoJoinWorldCup = State.autoJoinWorldCup,
         autoCollectWorldCupRewards = State.autoCollectWorldCupRewards,
@@ -7573,7 +7232,6 @@ function API.GetAutomationState()
         fillingWorldCupVisual = State.fillingWorldCupVisual,
         pickingSpawnedPacks = State.pickingSpawnedPacks,
         openingPacks = State.openingPacks,
-        evolvingCards = State.evolvingCards,
         equippingBest = State.equippingBest,
         ownedPacks = Runtime.getOwnedPackCount(),
         settingAutoMatch = State.settingAutoMatch,
@@ -7635,7 +7293,6 @@ function API.Stop()
     State.autoCollect = false
     State.autoPrestige = false
     State.autoOpenPacks = false
-    State.autoEvolveCards = false
     State.autoEquipBest = false
     State.autoJoinWorldCup = false
     State.autoCollectWorldCupRewards = false
@@ -7645,7 +7302,6 @@ function API.Stop()
     State.antiAfk = false
     State.fillWorldCupVisualBeforeJoin = false
     State.openingPacks = false
-    State.evolvingCards = false
     State.equippingBest = false
     State.joiningWorldCup = false
     State.collectingWorldCupReward = false
