@@ -7,7 +7,7 @@
       - Menampilkan seluruh pemain yang sedang loan out.
       - Collect All untuk seluruh loan yang sudah selesai.
       - Loan Top berdasarkan whitelist rarity dan durasi yang dipilih.
-      - Toggle Auto Loan, Auto Collect, Auto Match, Auto Open Packs, Auto Evolve satu-per-satu, Auto Equip Best, Auto Join International Cup, dan Auto Prestige.
+      - Toggle Auto Loan, Auto Collect, Auto Play, Auto Open Packs, Auto Evolve satu-per-satu, Auto Equip Best, Auto Join International Cup, dan Auto Prestige.
       - Loan Duration dan Rarity Whitelist berada tepat di atas toggle Auto Loan.
       - Pilihan durasi diambil dari LoanConfig.Durations.
       - Dashboard sesi Auto Loan: terkirim, masih berputar, selesai, dan income.
@@ -93,7 +93,7 @@ end
 local GAME_NAME = getCurrentGameName()
 local HUB_TITLE = "xSansHUB - " .. GAME_NAME
 
-local CONFIG_VERSION = 6
+local CONFIG_VERSION = 7
 local CONFIG_ROOT = "xSansHUB"
 local CONFIG_FOLDER = CONFIG_ROOT .. "/LoanOutManager"
 local CONFIG_FILE = CONFIG_FOLDER .. "/" .. tostring(game.PlaceId) .. ".json"
@@ -181,7 +181,13 @@ local function mergeRawConfig(target, source)
     if source.autoPrestige ~= nil then
         target.autoPrestige = source.autoPrestige == true
     end
-    if source.autoMatch ~= nil then
+    -- autoPlay adalah nama config baru. autoMatch tetap dibaca untuk migrasi
+    -- dari config versi lama.
+    if source.autoPlay ~= nil then
+        target.autoPlay = source.autoPlay == true
+        target.autoMatch = source.autoPlay == true
+    elseif source.autoMatch ~= nil then
+        target.autoPlay = source.autoMatch == true
         target.autoMatch = source.autoMatch == true
     end
     if source.autoOpenPacks ~= nil then
@@ -230,6 +236,7 @@ local PRESTIGE_CHECK_INTERVAL = 2
 local PRESTIGE_RETRY_DELAY = 8
 local PRESTIGE_SUCCESS_DELAY = 3
 local AUTO_MATCH_RETRY_DELAY = 5
+local AUTO_PLAY_ENSURE_DELAY = 8
 local AUTO_PACK_RETRY_DELAY = 8
 local AUTO_EVOLVE_INTERVAL = 2
 local AUTO_EVOLVE_RETRY_DELAY = 6
@@ -336,6 +343,12 @@ end
 PersistentConfig.windowKeybind = normalizeKeybindName(PersistentConfig.windowKeybind)
 PersistentConfig.worldCupSquadMode = normalizeWorldCupSquadMode(PersistentConfig.worldCupSquadMode)
 
+-- Migrasi config lama: field autoMatch sebelumnya hanya mengatur tombol STOP.
+-- Field baru autoPlay menjalankan AttemptSendOut + SetAutoMatch + playback background.
+if PersistentConfig.autoPlay == nil and PersistentConfig.autoMatch ~= nil then
+    PersistentConfig.autoPlay = PersistentConfig.autoMatch == true
+end
+
 local Dashboard = Environment.LoanOutGUIDashboard
 if type(Dashboard) ~= "table" then
     Dashboard = {
@@ -369,7 +382,7 @@ local State = {
     autoLoan = PersistentConfig.autoLoan == true,
     autoCollect = PersistentConfig.autoCollect == true,
     autoPrestige = PersistentConfig.autoPrestige == true,
-    autoMatch = PersistentConfig.autoMatch == true,
+    autoMatch = (PersistentConfig.autoPlay ~= nil and PersistentConfig.autoPlay or PersistentConfig.autoMatch) == true,
     autoOpenPacks = PersistentConfig.autoOpenPacks == true,
     autoEvolveCards = PersistentConfig.autoEvolveCards == true,
     autoEquipBest = PersistentConfig.autoEquipBest == true,
@@ -384,9 +397,10 @@ local State = {
     autoMatchTransaction = false,
     matchPlaybackActive = false,
     matchEventListenersConnected = false,
-    autoMatchPendingSync = PersistentConfig.autoMatch ~= nil and StartupConfigLoaded,
+    autoMatchPendingSync = (PersistentConfig.autoPlay ~= nil or PersistentConfig.autoMatch ~= nil) and StartupConfigLoaded,
     autoMatchSyncIgnoreUntil = 0,
     nextAutoMatchSyncAt = 0,
+    nextAutoPlayEnsureAt = 0,
     nextAutoOpenPackAt = 0,
     lastObservedPackCount = 0,
     lastPackOpenAt = 0,
@@ -515,7 +529,8 @@ local function syncPersistentConfig()
     PersistentConfig.autoLoan = State.autoLoan == true
     PersistentConfig.autoCollect = State.autoCollect == true
     PersistentConfig.autoPrestige = State.autoPrestige == true
-    PersistentConfig.autoMatch = State.autoMatch == true
+    PersistentConfig.autoPlay = State.autoMatch == true
+    PersistentConfig.autoMatch = State.autoMatch == true -- compatibility untuk config lama
     PersistentConfig.autoOpenPacks = State.autoOpenPacks == true
     PersistentConfig.autoEvolveCards = State.autoEvolveCards == true
     PersistentConfig.autoEquipBest = State.autoEquipBest == true
@@ -542,7 +557,8 @@ local function buildConfigSnapshot()
         autoLoan = State.autoLoan == true,
         autoCollect = State.autoCollect == true,
         autoPrestige = State.autoPrestige == true,
-        autoMatch = State.autoMatch == true,
+        autoPlay = State.autoMatch == true,
+        autoMatch = State.autoMatch == true, -- compatibility untuk versi lama
         autoOpenPacks = State.autoOpenPacks == true,
         autoEvolveCards = State.autoEvolveCards == true,
         autoEquipBest = State.autoEquipBest == true,
@@ -825,15 +841,15 @@ local function updateAutomationButtons()
 
         local autoMatchDesc
         if State.autoMatchTransaction then
-            autoMatchDesc = "PAUSED TEMPORARILY • menjalankan squad automation lalu Auto Match dipulihkan."
+            autoMatchDesc = "PAUSED TEMPORARILY • menjalankan squad automation lalu Auto Play dimulai kembali."
         elseif State.settingAutoMatch then
-            autoMatchDesc = "SYNCING • mengirim pengaturan Auto Match ke server."
+            autoMatchDesc = "STARTING • menjalankan AttemptSendOut dan mengaktifkan match berantai."
         elseif State.autoMatchPendingSync then
-            autoMatchDesc = "PENDING • menunggu Networker untuk menerapkan config Auto Match."
+            autoMatchDesc = "PENDING • menunggu Networker/EventBus untuk memulai Auto Play."
         elseif State.autoMatch then
-            autoMatchDesc = "ACTIVE • game akan menjalankan match berikutnya secara otomatis."
+            autoMatchDesc = "ACTIVE • Auto Play berjalan di background dan lanjut ke match berikutnya."
         else
-            autoMatchDesc = "Game tidak akan memulai match berikutnya secara otomatis."
+            autoMatchDesc = "Tekan toggle untuk memulai match pertama dan melanjutkan match berikutnya otomatis."
         end
         State.autoMatchToggle:SetDesc(autoMatchDesc)
     end
@@ -887,7 +903,7 @@ local function updateAutomationButtons()
         elseif State.matchPlaybackActive then
             equipDesc = "WAITING • match sedang berlangsung; akan dicoba setelah playback selesai."
         elseif State.autoEquipBest and State.autoMatch then
-            equipDesc = "ACTIVE • Auto Match akan dipause sementara, Equip Best dijalankan, lalu diaktifkan kembali."
+            equipDesc = "ACTIVE • Auto Play dipause sementara, Equip Best dijalankan, lalu dimulai kembali."
         elseif State.autoEquipBest then
             equipDesc = "ACTIVE • Starting Eleven diperbarui saat koleksi kartu berubah."
         else
@@ -1078,7 +1094,7 @@ local function setAutoEquipBestEnabled(enabled, announce)
     if announce ~= false then
         setStatus(
             State.autoEquipBest
-                and "Auto Equip Best aktif • Auto Match dipause sementara saat lineup perlu diperbarui."
+                and "Auto Equip Best aktif • Auto Play dipause sementara saat lineup perlu diperbarui."
                 or "Auto Equip Best dinonaktifkan.",
             State.autoEquipBest and COLORS.success or COLORS.muted
         )
@@ -2199,7 +2215,10 @@ local function applyLoadedConfig(config)
     if config.autoPrestige ~= nil then
         State.autoPrestige = config.autoPrestige == true
     end
-    if config.autoMatch ~= nil then
+    if config.autoPlay ~= nil then
+        State.autoMatch = config.autoPlay == true
+        State.autoMatchPendingSync = true
+    elseif config.autoMatch ~= nil then
         State.autoMatch = config.autoMatch == true
         State.autoMatchPendingSync = true
     end
@@ -2347,7 +2366,7 @@ refreshUI = function(forceRebuild)
         return
     end
 
-    -- Settings.AutoMatch adalah source of truth dari game. Saat config belum
+    -- Settings.AutoMatch tetap menjadi status backend Auto Play dari game. Saat config belum
     -- menunggu sinkronisasi dan request tidak sedang berjalan, ikuti perubahan
     -- dari menu/indicator bawaan game (misalnya tombol STOP).
     if not State.settingAutoMatch
@@ -2484,16 +2503,140 @@ local function callNetworkLoose(action, payload)
     return response ~= nil and response or true, nil
 end
 
-local function setAutoMatchEnabled(enabled, announce, forceRequest)
+local function getPlaybackEventBus()
+    local eventBus = State.eventBus
+    if eventBus ~= nil and type(eventBus.Fire) == "function" then
+        return eventBus
+    end
+
+    local dataService, networker, discoveredEventBus = findFrameworkFromGC()
+    if isDataService(dataService) then
+        State.dataService = dataService
+    end
+    if isNetworker(networker) then
+        State.networker = networker
+    end
+    if discoveredEventBus ~= nil and type(discoveredEventBus.Fire) == "function" then
+        State.eventBus = discoveredEventBus
+        return discoveredEventBus
+    end
+
+    return nil
+end
+
+local function fireMatchPlaybackRequested(matchResponse)
+    local eventBus = getPlaybackEventBus()
+    if not eventBus then
+        return false, "EventBus belum ditemukan"
+    end
+
+    local payload = matchResponse
+    if type(matchResponse) == "table" then
+        payload = table.clone(matchResponse)
+        payload.view = "background"
+    end
+
+    local success, result = pcall(
+        eventBus.Fire,
+        eventBus,
+        "MatchPlaybackRequested",
+        payload
+    )
+    if not success then
+        return false, tostring(result)
+    end
+
+    -- Listener Signal akan menyinkronkan nilai ini juga. Set langsung agar
+    -- automation lain tidak sempat mengirim request squad saat playback dimulai.
+    State.matchPlaybackActive = true
+    State.uiRefreshRequested = true
+
+    return true, result
+end
+
+local function requestAutoPlayStart()
+    if not isNetworker(State.networker) then
+        if type(tryRediscoverNetworker) == "function" then
+            tryRediscoverNetworker()
+        end
+    end
+    if not isNetworker(State.networker) then
+        return false, "Networker belum ditemukan"
+    end
+
+    local serverAutoMatch = getData("Settings.AutoMatch") == true
+
+    -- Jika match sedang berjalan, jangan AttemptSendOut lagi. Cukup aktifkan
+    -- SetAutoMatch agar match berikutnya dilanjutkan secara otomatis.
+    if State.matchPlaybackActive then
+        if not serverAutoMatch then
+            local enabledResponse, enabledError = callNetworkLoose(
+                "SetAutoMatch",
+                {enabled = true}
+            )
+            if not enabledResponse then
+                return false, enabledError
+            end
+        end
+        return true
+    end
+
+    -- Selalu coba AttemptSendOut bila tidak ada playback yang terdeteksi.
+    -- Ini juga memperbaiki state lama ketika SetAutoMatch sudah true tetapi
+    -- match pertama belum pernah dikirim.
+    local matchResponse, matchError = callNetwork("AttemptSendOut")
+    if not matchResponse then
+        return false, matchError or "AttemptSendOut gagal"
+    end
+    if type(matchResponse) == "table" and matchResponse.success ~= true then
+        local reason = tostring(matchResponse.reason or matchError or "AttemptSendOut ditolak")
+        local normalizedReason = string.lower(reason)
+        local likelyAlreadyRunning = serverAutoMatch
+            and (
+                string.find(normalizedReason, "progress", 1, true)
+                or string.find(normalizedReason, "already", 1, true)
+                or string.find(normalizedReason, "active", 1, true)
+                or string.find(normalizedReason, "running", 1, true)
+            )
+
+        if likelyAlreadyRunning then
+            return true, reason
+        end
+
+        return false, reason
+    end
+
+    local enabledResponse, enabledError = callNetworkLoose(
+        "SetAutoMatch",
+        {enabled = true}
+    )
+    if not enabledResponse then
+        return false, "Match terkirim, tetapi SetAutoMatch gagal: "
+            .. tostring(enabledError)
+    end
+
+    local playbackStarted, playbackError = fireMatchPlaybackRequested(matchResponse)
+    if not playbackStarted then
+        -- Match dan setting AutoMatch sudah diterima server. Pertahankan status ON,
+        -- tetapi laporkan bahwa tampilan background tidak berhasil dibuka.
+        return true, "Match dimulai, tetapi playback background gagal: "
+            .. tostring(playbackError)
+    end
+
+    return true
+end
+
+local function setAutoPlayEnabled(enabled, announce, forceRequest)
     enabled = enabled == true
 
     if State.settingAutoMatch or State.autoMatchTransaction then
-        return false, "Pengaturan Auto Match sedang diproses"
+        return false, "Pengaturan Auto Play sedang diproses"
     end
 
     local previousValue = State.autoMatch
     State.autoMatch = enabled
-    PersistentConfig.autoMatch = enabled
+    PersistentConfig.autoPlay = enabled
+    PersistentConfig.autoMatch = enabled -- compatibility untuk config lama
     State.autoMatchPendingSync = true
     State.nextAutoMatchSyncAt = 0
     updateAutomationButtons()
@@ -2509,7 +2652,7 @@ local function setAutoMatchEnabled(enabled, announce, forceRequest)
 
     if not isNetworker(State.networker) then
         if announce ~= false then
-            setStatus("Auto Match menunggu Networker ditemukan.", COLORS.warning)
+            setStatus("Auto Play menunggu Networker ditemukan.", COLORS.warning)
         end
         return false, "Networker belum ditemukan"
     end
@@ -2519,33 +2662,48 @@ local function setAutoMatchEnabled(enabled, announce, forceRequest)
     updateAutomationButtons()
 
     task.spawn(function()
-        local networker = State.networker
-        local success, response = pcall(networker.Call, networker, "SetAutoMatch", {
-            enabled = enabled,
-        })
+        local accepted = false
+        local warningMessage = nil
+        local errorMessage = nil
 
-        local accepted = success
-        local errorMessage = success and nil or tostring(response)
-        if success and type(response) == "table" and response.success == false then
-            accepted = false
-            errorMessage = tostring(response.reason or "Request SetAutoMatch ditolak")
+        if enabled then
+            accepted, warningMessage = requestAutoPlayStart()
+            if not accepted then
+                errorMessage = warningMessage
+                warningMessage = nil
+            end
+        else
+            local response, requestError = callNetworkLoose(
+                "SetAutoMatch",
+                {enabled = false}
+            )
+            accepted = response ~= nil
+            errorMessage = requestError
         end
 
         State.settingAutoMatch = false
 
         if accepted then
             State.autoMatch = enabled
+            PersistentConfig.autoPlay = enabled
             PersistentConfig.autoMatch = enabled
             State.autoMatchSyncIgnoreUntil = os.clock() + 5
             State.nextAutoMatchSyncAt = 0
+            State.nextAutoPlayEnsureAt = os.clock() + AUTO_PLAY_ENSURE_DELAY
             State.autoMatchPendingSync = false
             requestConfigSave()
 
             if announce ~= false then
-                setStatus(
-                    enabled and "Auto Match diaktifkan." or "Auto Match dinonaktifkan.",
-                    enabled and COLORS.success or COLORS.muted
-                )
+                if warningMessage then
+                    setStatus(warningMessage, COLORS.warning)
+                else
+                    setStatus(
+                        enabled
+                            and "Auto Play dimulai di background."
+                            or "Auto Play dihentikan; match yang sedang berjalan tidak dipaksa berhenti.",
+                        enabled and COLORS.success or COLORS.muted
+                    )
+                end
             end
         else
             local serverValue = getData("Settings.AutoMatch")
@@ -2554,12 +2712,13 @@ local function setAutoMatchEnabled(enabled, announce, forceRequest)
             else
                 State.autoMatch = previousValue
             end
+            PersistentConfig.autoPlay = State.autoMatch
             PersistentConfig.autoMatch = State.autoMatch
             State.autoMatchPendingSync = forceRequest == true
             State.nextAutoMatchSyncAt = os.clock() + AUTO_MATCH_RETRY_DELAY
 
             if announce ~= false then
-                setStatus("Auto Match gagal: " .. tostring(errorMessage), COLORS.danger)
+                setStatus("Auto Play gagal: " .. tostring(errorMessage), COLORS.danger)
             end
         end
 
@@ -2685,6 +2844,7 @@ local function ensureMatchPlaybackListeners()
         -- Callback Signal game dapat berjalan pada free thread. Hanya ubah state Lua;
         -- jangan memanggil WindUI/Instance dari callback ini.
         State.matchPlaybackActive = true
+        State.nextAutoPlayEnsureAt = os.clock() + AUTO_PLAY_ENSURE_DELAY
         State.uiRefreshRequested = true
     end)
     if successRequested and requestedConnection then
@@ -2694,6 +2854,7 @@ local function ensureMatchPlaybackListeners()
 
     local successEnded, endedConnection = pcall(eventBus.Connect, eventBus, "MatchPlaybackEnded", function()
         State.matchPlaybackActive = false
+        State.nextAutoPlayEnsureAt = os.clock() + 1
         State.nextAutoEquipBestAt = 0
         State.uiRefreshRequested = true
     end)
@@ -2721,7 +2882,7 @@ end
 
 local function runWithAutoMatchPaused(actionCallback)
     if State.autoMatchTransaction or State.settingAutoMatch then
-        return nil, "Auto Match sedang diproses"
+        return nil, "Auto Play sedang diproses"
     end
     if State.matchPlaybackActive then
         return nil, "Match sedang berlangsung"
@@ -2739,7 +2900,7 @@ local function runWithAutoMatchPaused(actionCallback)
         if not pauseResponse then
             State.autoMatchTransaction = false
             updateAutomationButtons()
-            return nil, "Gagal pause Auto Match: " .. tostring(pauseError)
+            return nil, "Gagal pause Auto Play: " .. tostring(pauseError)
         end
         paused = true
         waitForAutoMatchValue(false, AUTO_MATCH_PAUSE_TIMEOUT)
@@ -2749,13 +2910,16 @@ local function runWithAutoMatchPaused(actionCallback)
 
     local restoreError = nil
     if paused then
-        local restoreResponse
-        restoreResponse, restoreError = callNetworkLoose("SetAutoMatch", {enabled = true})
-        if restoreResponse then
+        local restored, restoreWarning = requestAutoPlayStart()
+        if restored then
             State.autoMatch = true
+            PersistentConfig.autoPlay = true
             PersistentConfig.autoMatch = true
             State.autoMatchPendingSync = false
             State.autoMatchSyncIgnoreUntil = os.clock() + 5
+            restoreError = restoreWarning
+        else
+            restoreError = restoreWarning
         end
     end
 
@@ -2763,9 +2927,16 @@ local function runWithAutoMatchPaused(actionCallback)
     updateAutomationButtons()
 
     if restoreError then
-        State.autoMatchPendingSync = true
-        State.nextAutoMatchSyncAt = os.clock() + AUTO_MATCH_RETRY_DELAY
-        return actionResponse, actionError or ("Action selesai, tetapi gagal mengaktifkan kembali Auto Match: " .. tostring(restoreError))
+        -- Playback warning tidak membatalkan action, tetapi tampilkan agar mudah
+        -- didiagnosis. Retry hanya diperlukan bila setting server belum aktif.
+        local serverEnabled = getData("Settings.AutoMatch") == true
+        if not serverEnabled then
+            State.autoMatchPendingSync = true
+            State.nextAutoMatchSyncAt = os.clock() + AUTO_MATCH_RETRY_DELAY
+            return actionResponse, actionError
+                or ("Action selesai, tetapi gagal memulai kembali Auto Play: "
+                    .. tostring(restoreError))
+        end
     end
 
     return actionResponse, actionError
@@ -3696,7 +3867,7 @@ local function runAutomationTick()
         and os.clock() >= State.nextAutoMatchSyncAt
     then
         if tryRediscoverNetworker() then
-            setAutoMatchEnabled(State.autoMatch, false, true)
+            setAutoPlayEnabled(State.autoMatch, false, true)
         else
             State.nextAutoMatchSyncAt = os.clock() + AUTO_MATCH_RETRY_DELAY
         end
@@ -3738,6 +3909,21 @@ local function runAutomationTick()
 
     ensureMatchPlaybackListeners()
 
+    -- Recovery Auto Play: bila setting masih ON tetapi tidak ada playback yang
+    -- terdeteksi, coba alur AUTO PLAY asli lagi. AttemptSendOut akan ditolak
+    -- secara aman oleh server apabila sebuah match sebenarnya masih aktif.
+    if State.autoMatch
+        and not State.matchPlaybackActive
+        and not State.settingAutoMatch
+        and now >= State.nextAutoPlayEnsureAt
+    then
+        State.nextAutoPlayEnsureAt = now + AUTO_PLAY_ENSURE_DELAY
+        local started = requestAutoPlayStart()
+        if started and State.matchPlaybackActive then
+            return
+        end
+    end
+
     -- Auto Evolve memproses satu grup duplicate per siklus melalui CombineCards.
     -- Tidak memakai AutoUpgradeAll dan tidak membutuhkan game pass AutoEvolve.
     if State.autoEvolveCards and now >= State.nextAutoEvolveAt then
@@ -3750,8 +3936,8 @@ local function runAutomationTick()
     end
 
     -- Equip Best hanya dijalankan saat koleksi/availability kartu berubah.
-    -- Bila Auto Match aktif, setting tersebut dipause sementara melalui remote
-    -- resmi game, AutoFillBestEleven dipanggil, lalu Auto Match dipulihkan.
+    -- Bila Auto Play aktif, setting backend SetAutoMatch dipause sementara
+    -- resmi game, AutoFillBestEleven dipanggil, lalu Auto Play dimulai kembali.
     if State.autoEquipBest and now >= State.nextAutoEquipBestAt then
         local currentSignature = getSquadEquipSignature()
         if currentSignature ~= State.lastEquipBestSignature then
@@ -4293,13 +4479,13 @@ local function buildGui()
     compactElement(State.autoCollectToggle, 15, 13)
 
     State.autoMatchToggle = AutomationTab:Toggle({
-        Title = "Auto Match",
-        Desc = "Mulai match berikutnya secara otomatis menggunakan setting bawaan game.",
+        Title = "Auto Play",
+        Desc = "Mulai match pertama melalui AttemptSendOut, lalu lanjut otomatis di background.",
         Icon = "play",
         IconSize = 18,
         Value = State.autoMatch,
         Callback = function(enabled)
-            setAutoMatchEnabled(enabled)
+            setAutoPlayEnabled(enabled)
         end,
     })
     compactElement(State.autoMatchToggle, 15, 13)
@@ -4330,7 +4516,7 @@ local function buildGui()
 
     State.autoEquipBestToggle = AutomationTab:Toggle({
         Title = "Auto Equip Best",
-        Desc = "Susun Starting Eleven terbaik saat koleksi berubah; Auto Match dipause lalu dipulihkan.",
+        Desc = "Susun Starting Eleven terbaik saat koleksi berubah; Auto Play dipause lalu dimulai kembali.",
         Icon = "users",
         IconSize = 18,
         Value = State.autoEquipBest,
@@ -4842,8 +5028,13 @@ function API.ToggleAutoJoinWorldCup()
     setAutoJoinWorldCupEnabled(not State.autoJoinWorldCup)
 end
 
+function API.ToggleAutoPlay()
+    return setAutoPlayEnabled(not State.autoMatch)
+end
+
+-- Alias lama agar loader/config eksternal tidak rusak.
 function API.ToggleAutoMatch()
-    return setAutoMatchEnabled(not State.autoMatch)
+    return API.ToggleAutoPlay()
 end
 
 function API.SetAutoLoan(enabled)
@@ -4878,8 +5069,20 @@ function API.SetWorldCupSquadMode(mode)
     return setWorldCupSquadMode(mode)
 end
 
+function API.SetAutoPlay(enabled)
+    return setAutoPlayEnabled(enabled)
+end
+
 function API.SetAutoMatch(enabled)
-    return setAutoMatchEnabled(enabled)
+    return API.SetAutoPlay(enabled)
+end
+
+function API.StartAutoPlayNow()
+    return setAutoPlayEnabled(true)
+end
+
+function API.StopAutoPlay()
+    return setAutoPlayEnabled(false)
 end
 
 function API.OpenPacksNow()
@@ -4956,13 +5159,19 @@ function API.GetAutoOpenPacksState()
     }
 end
 
-function API.GetAutoMatchState()
+function API.GetAutoPlayState()
     return {
         enabled = State.autoMatch,
         syncing = State.settingAutoMatch,
         pending = State.autoMatchPendingSync,
         serverValue = getData("Settings.AutoMatch"),
+        playbackActive = State.matchPlaybackActive,
+        flow = "AttemptSendOut -> SetAutoMatch -> MatchPlaybackRequested(background)",
     }
+end
+
+function API.GetAutoMatchState()
+    return API.GetAutoPlayState()
 end
 
 function API.PrestigeNow()
@@ -4990,7 +5199,8 @@ function API.GetAutomationState()
         autoLoan = State.autoLoan,
         autoCollect = State.autoCollect,
         autoPrestige = State.autoPrestige,
-        autoMatch = State.autoMatch,
+        autoPlay = State.autoMatch,
+        autoMatch = State.autoMatch, -- compatibility
         autoOpenPacks = State.autoOpenPacks,
         autoEvolveCards = State.autoEvolveCards,
         autoEquipBest = State.autoEquipBest,
@@ -5038,6 +5248,7 @@ function API.GetConfigState()
         startupLoaded = State.startupConfigLoaded,
         startupError = State.startupConfigError,
         windowKeybind = State.windowKeybind,
+        autoPlay = State.autoMatch,
         autoJoinWorldCup = State.autoJoinWorldCup,
         worldCupSquadMode = State.worldCupSquadMode,
     }
@@ -5101,10 +5312,10 @@ task.spawn(function()
         return
     end
 
-    -- Terapkan Auto Match dari config setelah Networker tersedia. Jika tidak
+    -- Terapkan Auto Play dari config setelah Networker tersedia. Jika tidak
     -- ada nilai config, refreshUI akan mengikuti Settings.AutoMatch milik game.
     if State.autoMatchPendingSync then
-        setAutoMatchEnabled(State.autoMatch, false, true)
+        setAutoPlayEnabled(State.autoMatch, false, true)
     end
 
     ensureMatchPlaybackListeners()
