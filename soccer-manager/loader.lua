@@ -6307,168 +6307,105 @@ updateConfigManagerUI = function()
     setElementLocked(State.autoLoadToggle, not State.configSupported)
 end
 
-function Runtime.buildGui()
-    local WindUI = Runtime.loadWindUI()
-    State.windUI = WindUI
+function Runtime.uiCard(tab, options)
+    options = options or {}
+    options.Size = options.Size or "Small"
+    return Runtime.compactElement(tab:Paragraph(options), 14, 12)
+end
 
-    local Window = WindUI:CreateWindow({
-        Title = HUB_TITLE,
-        Author = "xSansHUB",
-        Folder = "xSansHUB_LoanOutManager",
-        Icon = "handshake",
-        Theme = "Indigo",
-        ToggleKey = Enum.KeyCode[State.windowKeybind] or Enum.KeyCode.G,
-        Size = UDim2.fromOffset(740, 560),
-        MinSize = Vector2.new(590, 420),
-        MaxSize = Vector2.new(920, 700),
-        Resizable = true,
-        AutoScale = true,
-        NewElements = true,
-        Radius = 10,
-        ElementsRadius = 9,
-        IconSize = 18,
-        TopBarButtonIconSize = 10,
-        SideBarWidth = 170,
-        HideSearchBar = true,
-        ScrollBarEnabled = false,
-        OpenButton = {
-            Title = HUB_TITLE,
-            Icon = "handshake",
-            Enabled = true,
-            Draggable = true,
-            OnlyMobile = false,
-        },
-        Topbar = {
-            Height = 40,
-            ButtonsType = "Mac",
-        },
-        User = {
-            Enabled = false,
-            Anonymous = false,
-        },
-    })
+function Runtime.uiButton(container, options)
+    options = options or {}
+    options.Size = options.Size or "Small"
+    return Runtime.compactButton(container:Button(options))
+end
 
-    if not Window then
-        error("WindUI gagal membuat window. Hancurkan window WindUI lama lalu jalankan ulang script.")
-    end
+function Runtime.uiToggle(tab, options)
+    return Runtime.compactElement(tab:Toggle(options), 14, 12)
+end
 
-    State.window = Window
-    Environment.LoanOutGUIWindWindow = Window
+function Runtime.uiDropdown(tab, options)
+    return Runtime.compactDropdown(tab:Dropdown(options))
+end
 
-    -- Compact visual scale. These values are read when tab elements are created.
-    Window.Gap = 4
-    Window.ElementConfig.UIPadding = 8
-    Window.ElementConfig.UICorner = 9
-
-    Window:Tag({
-        Title = "G to Toggle",
-        Icon = "keyboard",
-        Border = true,
-    })
-
-    Window:OnOpen(function()
-        State.visible = true
-        task.defer(function()
-            Runtime.selectDashboardTab()
-            refreshUI(false)
-        end)
-    end)
-
-    Window:OnClose(function()
-        State.visible = false
-    end)
-
-    local DashboardTab = Window:Tab({
-        Title = "Dashboard",
-        Icon = "layout-dashboard",
+function Runtime.createHomeTab(Window)
+    local tab = Window:Tab({
+        Title = "Home",
+        Icon = "house",
         IconSize = 16,
     })
-    State.dashboardTab = DashboardTab
+    State.dashboardTab = tab
 
-    State.summaryParagraph = Runtime.compactElement(DashboardTab:Paragraph({
-        Title = "Loan Summary",
-        Desc = "Loading loan data...",
-        Image = "handshake",
-        ImageSize = 21,
-        Size = "Small",
-    }))
+    State.summaryParagraph = Runtime.uiCard(tab, {
+        Title = "Overview",
+        Desc = "Loading...",
+        Image = "layout-dashboard",
+        ImageSize = 20,
+    })
 
-    local actionGroup = DashboardTab:Group({})
-    State.loanButton = Runtime.compactButton(actionGroup:Button({
-        Title = "Loan Top",
-        Desc = "Kirim kandidat terbaik sesuai konfigurasi.",
+    local actions = tab:Group({})
+    State.loanButton = Runtime.uiButton(actions, {
+        Title = "Loan Best",
+        Desc = "Kirim kartu terbaik.",
         Icon = "send",
-        Size = "Small",
         Callback = function()
             if State.loanButtonEnabled then
                 Runtime.loanOutTopRarity(false)
             end
         end,
-    }))
+    })
 
-    actionGroup:Space()
-
-    State.collectButton = Runtime.compactButton(actionGroup:Button({
-        Title = "Collect All",
-        Desc = "Ambil seluruh loan yang sudah selesai.",
+    actions:Space()
+    State.collectButton = Runtime.uiButton(actions, {
+        Title = "Collect Loans",
+        Desc = "Ambil loan selesai.",
         Icon = "package-check",
-        Size = "Small",
         Callback = function()
             if State.collectButtonEnabled then
                 Runtime.collectAllReadyLoans(false)
             end
         end,
-    }))
+    })
 
-    DashboardTab:Space()
-    State.dashboardParagraph = Runtime.compactElement(DashboardTab:Paragraph({
-        Title = "Auto Loan Dashboard",
-        Desc = "No automation activity yet",
-        Image = "chart-no-axes-combined",
-        ImageSize = 21,
-        Size = "Small",
-    }))
-
-    State.loanListParagraph = Runtime.compactElement(DashboardTab:Paragraph({
-        Title = "Active Loans",
-        Desc = "Tidak ada pemain yang sedang loan out.",
-        Image = "list",
-        ImageSize = 20,
-        Size = "Small",
-    }))
-
-    State.statusParagraph = Runtime.compactElement(DashboardTab:Paragraph({
-        Title = "Activity Status",
-        Desc = "[WARNING] Connecting...",
+    State.statusParagraph = Runtime.uiCard(tab, {
+        Title = "Status",
+        Desc = "Connecting...",
         Image = "activity",
-        ImageSize = 20,
-        Size = "Small",
-    }))
+        ImageSize = 19,
+    })
 
-    local AutomationTab = Window:Tab({
-        Title = "Automation",
-        Icon = "bot",
+    State.dashboardParagraph = Runtime.uiCard(tab, {
+        Title = "Session",
+        Desc = "No activity yet",
+        Image = "chart-no-axes-combined",
+        ImageSize = 19,
+    })
+
+    return tab
+end
+
+function Runtime.createLoansTab(Window)
+    local tab = Window:Tab({
+        Title = "Loans",
+        Icon = "handshake",
         IconSize = 16,
     })
-    State.automationTab = AutomationTab
-    State.configurationTab = AutomationTab
+    State.configurationTab = tab
 
-    State.configurationParagraph = Runtime.compactElement(AutomationTab:Paragraph({
-        Title = "Auto Loan Configuration",
-        Desc = "Loading configuration...",
+    State.configurationParagraph = Runtime.uiCard(tab, {
+        Title = "Loan Setup",
+        Desc = "Loading...",
         Image = "sliders-horizontal",
-        ImageSize = 20,
-        Size = "Small",
-    }))
+        ImageSize = 19,
+    })
 
     local durationValues = {}
     for _, minutes in ipairs(State.durationOptions) do
         durationValues[#durationValues + 1] = Runtime.getDurationLabel(minutes)
     end
 
-    State.durationDropdown = Runtime.compactDropdown(AutomationTab:Dropdown({
-        Title = "Loan Duration",
-        Desc = "Duration untuk tombol Loan Top dan Auto Loan.",
+    State.durationDropdown = Runtime.uiDropdown(tab, {
+        Title = "Duration",
+        Desc = "Dipakai oleh Loan Best dan Auto Loan.",
         Values = durationValues,
         Value = Runtime.getDurationLabel(State.selectedDuration),
         SearchBarEnabled = false,
@@ -6493,16 +6430,16 @@ function Runtime.buildGui()
                 end
             end
         end,
-    }))
+    })
 
     local rarityValues = {}
     for _, rarity in ipairs(State.rarityOptions) do
         rarityValues[#rarityValues + 1] = tostring(rarity):gsub("WorldClass", "World Class")
     end
 
-    State.rarityDropdown = Runtime.compactDropdown(AutomationTab:Dropdown({
-        Title = "Rarity Whitelist",
-        Desc = "Auto Loan hanya memilih rarity yang aktif.",
+    State.rarityDropdown = Runtime.uiDropdown(tab, {
+        Title = "Rarity",
+        Desc = "Pilih rarity untuk Auto Loan.",
         Values = rarityValues,
         Value = getSelectedRarityLabels(),
         Multi = true,
@@ -6535,13 +6472,12 @@ function Runtime.buildGui()
             refreshUI(true)
             requestConfigSave()
         end,
-    }))
+    })
 
-    local whitelistGroup = AutomationTab:Group({})
-    Runtime.compactButton(whitelistGroup:Button({
-        Title = "Enable All Rarities",
+    local rarityActions = tab:Group({})
+    Runtime.uiButton(rarityActions, {
+        Title = "Select All",
         Icon = "list-checks",
-        Size = "Small",
         Callback = function()
             for _, rarity in ipairs(State.rarityOptions) do
                 State.rarityWhitelist[rarity] = true
@@ -6552,13 +6488,12 @@ function Runtime.buildGui()
             refreshUI(true)
             requestConfigSave()
         end,
-    }))
+    })
 
-    whitelistGroup:Space()
-    Runtime.compactButton(whitelistGroup:Button({
-        Title = "Clear Whitelist",
+    rarityActions:Space()
+    Runtime.uiButton(rarityActions, {
+        Title = "Clear",
         Icon = "list-x",
-        Size = "Small",
         Callback = function()
             for _, rarity in ipairs(State.rarityOptions) do
                 State.rarityWhitelist[rarity] = false
@@ -6569,135 +6504,132 @@ function Runtime.buildGui()
             refreshUI(true)
             requestConfigSave()
         end,
-    }))
+    })
 
-    AutomationTab:Space()
+    State.loanListParagraph = Runtime.uiCard(tab, {
+        Title = "Active Loans",
+        Desc = "No active loans.",
+        Image = "list",
+        ImageSize = 19,
+    })
 
-    State.autoLoanToggle = AutomationTab:Toggle({
+    return tab
+end
+
+function Runtime.createAutomationTab(Window)
+    local tab = Window:Tab({
+        Title = "Automation",
+        Icon = "bot",
+        IconSize = 16,
+    })
+    State.automationTab = tab
+
+    State.autoLoanToggle = Runtime.uiToggle(tab, {
         Title = "Auto Loan",
-        Desc = "Isi slot kosong menggunakan rarity whitelist dan duration terpilih.",
+        Desc = "Isi slot loan otomatis.",
         Icon = "send",
         IconSize = 18,
         Value = State.autoLoan,
-        Callback = function(enabled)
-            setAutoLoanEnabled(enabled)
-        end,
+        Callback = setAutoLoanEnabled,
     })
-    Runtime.compactElement(State.autoLoanToggle, 15, 13)
 
-    State.autoCollectToggle = AutomationTab:Toggle({
+    State.autoCollectToggle = Runtime.uiToggle(tab, {
         Title = "Auto Collect",
-        Desc = "Collect loan selesai sebelum Auto Loan mengisi slot kembali.",
+        Desc = "Collect loan yang selesai.",
         Icon = "package-check",
         IconSize = 18,
         Value = State.autoCollect,
-        Callback = function(enabled)
-            setAutoCollectEnabled(enabled)
-        end,
+        Callback = setAutoCollectEnabled,
     })
-    Runtime.compactElement(State.autoCollectToggle, 15, 13)
 
-    State.autoMatchToggle = AutomationTab:Toggle({
+    State.autoMatchToggle = Runtime.uiToggle(tab, {
         Title = "Auto Play",
-        Desc = "Mulai match pertama melalui AttemptSendOut, lalu lanjut otomatis di background.",
+        Desc = "Main match otomatis di background.",
         Icon = "play",
         IconSize = 18,
         Value = State.autoMatch,
-        Callback = function(enabled)
-            setAutoPlayEnabled(enabled)
-        end,
+        Callback = setAutoPlayEnabled,
     })
-    Runtime.compactElement(State.autoMatchToggle, 15, 13)
 
-    State.autoOpenPacksToggle = AutomationTab:Toggle({
+    State.autoOpenPacksToggle = Runtime.uiToggle(tab, {
         Title = "Auto Open Packs",
-        Desc = "Buka seluruh pack yang tersedia menggunakan mode AUTO OPEN bawaan game.",
+        Desc = "Buka pack yang tersedia.",
         Icon = "package",
         IconSize = 18,
         Value = State.autoOpenPacks,
-        Callback = function(enabled)
-            setAutoOpenPacksEnabled(enabled)
-        end,
+        Callback = setAutoOpenPacksEnabled,
     })
-    Runtime.compactElement(State.autoOpenPacksToggle, 15, 13)
 
-    State.autoEvolveCardsToggle = AutomationTab:Toggle({
-        Title = "Auto Evolve Cards",
-        Desc = "Evolve duplicate satu per satu menggunakan CombineCards; tidak memerlukan game pass AutoEvolve.",
+    State.autoEvolveCardsToggle = Runtime.uiToggle(tab, {
+        Title = "Auto Evolve",
+        Desc = "Evolve duplicate satu per satu.",
         Icon = "sparkles",
         IconSize = 18,
         Value = State.autoEvolveCards,
-        Callback = function(enabled)
-            setAutoEvolveCardsEnabled(enabled)
-        end,
+        Callback = setAutoEvolveCardsEnabled,
     })
-    Runtime.compactElement(State.autoEvolveCardsToggle, 15, 13)
 
-    State.autoEquipBestToggle = AutomationTab:Toggle({
+    State.autoEquipBestToggle = Runtime.uiToggle(tab, {
         Title = "Auto Equip Best",
-        Desc = "Susun Starting Eleven terbaik saat koleksi berubah; Auto Play dipause lalu dimulai kembali.",
+        Desc = "Update Starting Eleven saat perlu.",
         Icon = "users",
         IconSize = 18,
         Value = State.autoEquipBest,
-        Callback = function(enabled)
-            setAutoEquipBestEnabled(enabled)
-        end,
+        Callback = setAutoEquipBestEnabled,
     })
-    Runtime.compactElement(State.autoEquipBestToggle, 15, 13)
 
-    State.autoPrestigeToggle = AutomationTab:Toggle({
+    State.autoPrestigeToggle = Runtime.uiToggle(tab, {
         Title = "Auto Prestige",
-        Desc = "Prestige otomatis saat eligible. Division dan Coins akan di-reset.",
-        -- `badge-star` tidak tersedia pada icon set WindUI yang sedang dimuat.
+        Desc = "Prestige saat semua syarat terpenuhi.",
         Icon = "trophy",
         IconSize = 18,
         Value = State.autoPrestige,
-        Callback = function(enabled)
-            setAutoPrestigeEnabled(enabled)
-        end,
+        Callback = setAutoPrestigeEnabled,
     })
-    Runtime.compactElement(State.autoPrestigeToggle, 15, 13)
 
-    AutomationTab:Space()
-    State.prestigeParagraph = Runtime.compactElement(AutomationTab:Paragraph({
-        Title = "Prestige Status",
-        Desc = "Belum ada data. Tekan Check Prestige untuk memuat status terbaru.",
+    return tab
+end
+
+function Runtime.createPrestigeTab(Window)
+    local tab = Window:Tab({
+        Title = "Prestige",
+        Icon = "trophy",
+        IconSize = 16,
+    })
+    State.prestigeTab = tab
+
+    State.prestigeParagraph = Runtime.uiCard(tab, {
+        Title = "Prestige",
+        Desc = "Check status to continue.",
         Image = "trophy",
         ImageSize = 20,
-        Size = "Small",
-    }))
+    })
 
-    -- Requirement dibuat menjadi kartu 2 kolom agar tidak menumpuk dalam satu paragraph.
     State.prestigeGateParagraphs = {}
     for rowIndex = 1, 3 do
-        local gateGroup = AutomationTab:Group({})
-
+        local gateGroup = tab:Group({})
         for columnIndex = 1, 2 do
-            local gateParagraph = Runtime.compactElement(gateGroup:Paragraph({
+            local gateParagraph = Runtime.uiCard(gateGroup, {
                 Title = "Requirement",
-                Desc = "Menunggu data...",
-                Size = "Small",
-            }))
+                Desc = "Waiting...",
+            })
 
             if gateParagraph.ElementFrame then
                 gateParagraph.ElementFrame.Visible = false
             end
 
             State.prestigeGateParagraphs[#State.prestigeGateParagraphs + 1] = gateParagraph
-
             if columnIndex == 1 then
                 gateGroup:Space()
             end
         end
     end
 
-    AutomationTab:Space()
-    local prestigeGroup = AutomationTab:Group({})
-    Runtime.compactButton(prestigeGroup:Button({
-        Title = "Check Prestige",
-        Desc = "Refresh eligibility dan seluruh requirement prestige.",
+    local actions = tab:Group({})
+    Runtime.uiButton(actions, {
+        Title = "Check",
+        Desc = "Refresh requirements.",
         Icon = "refresh-cw",
-        Size = "Small",
         Callback = function()
             local info, errorMessage = Runtime.fetchPrestigeInfo()
             if info then
@@ -6707,45 +6639,46 @@ function Runtime.buildGui()
                 setStatus("Gagal mengecek prestige: " .. tostring(errorMessage), COLORS.danger)
             end
         end,
-    }))
+    })
 
-    prestigeGroup:Space()
-    State.prestigeButton = Runtime.compactButton(prestigeGroup:Button({
+    actions:Space()
+    State.prestigeButton = Runtime.uiButton(actions, {
         Title = "Prestige Now",
-        Desc = "Menjalankan prestige jika seluruh requirement sudah terpenuhi.",
+        Desc = "Jalankan prestige.",
         Icon = "sparkles",
-        Size = "Small",
         Callback = function()
             Runtime.performPrestige(false)
         end,
-    }))
+    })
 
-    local WorldCupTab = Window:Tab({
-        Title = "International Cup",
+    return tab
+end
+
+function Runtime.createWorldCupTab(Window)
+    local tab = Window:Tab({
+        Title = "Cup",
         Icon = "trophy",
         IconSize = 16,
     })
-    State.worldCupTab = WorldCupTab
+    State.worldCupTab = tab
 
-    State.worldCupParagraph = Runtime.compactElement(WorldCupTab:Paragraph({
+    State.worldCupParagraph = Runtime.uiCard(tab, {
         Title = "International Cup",
-        Desc = "Tekan Check Cup Status untuk memuat fase dan status entry terbaru.",
+        Desc = "Check status to continue.",
         Image = "trophy",
         ImageSize = 20,
-        Size = "Small",
-    }))
+    })
 
-    State.worldCupPreviewParagraph = Runtime.compactElement(WorldCupTab:Paragraph({
-        Title = "Selected Cup Squad",
-        Desc = "Squad preview akan muncul setelah data pemain tersedia.",
+    State.worldCupPreviewParagraph = Runtime.uiCard(tab, {
+        Title = "Cup Squad",
+        Desc = "Squad preview unavailable.",
         Image = "users",
-        ImageSize = 18,
-        Size = "Small",
-    }))
+        ImageSize = 19,
+    })
 
-    State.worldCupSquadDropdown = Runtime.compactDropdown(WorldCupTab:Dropdown({
-        Title = "Cup Squad Selection",
-        Desc = "Last Team memakai tim Cup sebelumnya; Best memilih rarity lalu OVR tertinggi.",
+    State.worldCupSquadDropdown = Runtime.uiDropdown(tab, {
+        Title = "Squad Mode",
+        Desc = "Pilih tim terakhir atau kartu terbaik.",
         Values = {"Last Team", "Best Rarity / OVR"},
         Value = worldCupSquadModeLabel(State.worldCupSquadMode),
         SearchBarEnabled = false,
@@ -6753,67 +6686,51 @@ function Runtime.buildGui()
             if State.syncingConfiguration then
                 return
             end
-
             local selectedText = type(selected) == "table" and selected.Title or selected
             setWorldCupSquadMode(selectedText)
         end,
-    }))
-
-    State.fillWorldCupVisualToggle = WorldCupTab:Toggle({
-        Title = "Fill Visual Before Join",
-        Desc = "Isi 11 slot menu International Cup sebelum request EnterWorldCup.",
-        Icon = "users",
-        IconSize = 18,
-        Value = State.fillWorldCupVisualBeforeJoin,
-        Callback = function(enabled)
-            setFillWorldCupVisualEnabled(enabled)
-        end,
     })
-    Runtime.compactElement(State.fillWorldCupVisualToggle, 15, 13)
 
-    State.autoCollectWorldCupRewardsToggle = WorldCupTab:Toggle({
-        Title = "Auto Collect Cup Rewards",
-        Desc = "Klaim reward Cup otomatis saat canCollect tersedia.",
-        Icon = "gift",
-        IconSize = 18,
-        Value = State.autoCollectWorldCupRewards,
-        Callback = function(enabled)
-            setAutoCollectWorldCupRewardsEnabled(enabled)
-        end,
-    })
-    Runtime.compactElement(State.autoCollectWorldCupRewardsToggle, 15, 13)
-
-    State.autoPickupSpawnedPacksToggle = WorldCupTab:Toggle({
-        Title = "Auto Collect PackDrop",
-        Desc = "Deteksi Workspace.PackDrop di dekat plot sendiri lalu teleport langsung untuk mengambilnya.",
-        Icon = "package-check",
-        IconSize = 18,
-        Value = State.autoPickupSpawnedPacks,
-        Callback = function(enabled)
-            setAutoPickupSpawnedPacksEnabled(enabled)
-        end,
-    })
-    Runtime.compactElement(State.autoPickupSpawnedPacksToggle, 15, 13)
-
-    State.autoJoinWorldCupToggle = WorldCupTab:Toggle({
-        Title = "Auto Join International Cup",
-        Desc = "Join otomatis ketika entry terbuka; reward dikontrol oleh Auto Collect Cup Rewards.",
+    State.autoJoinWorldCupToggle = Runtime.uiToggle(tab, {
+        Title = "Auto Join",
+        Desc = "Join saat entry terbuka.",
         Icon = "trophy",
         IconSize = 18,
         Value = State.autoJoinWorldCup,
-        Callback = function(enabled)
-            setAutoJoinWorldCupEnabled(enabled)
-        end,
+        Callback = setAutoJoinWorldCupEnabled,
     })
-    Runtime.compactElement(State.autoJoinWorldCupToggle, 15, 13)
 
-    WorldCupTab:Space()
-    local worldCupActionGroup = WorldCupTab:Group({})
-    State.worldCupCheckButton = Runtime.compactButton(worldCupActionGroup:Button({
-        Title = "Check Cup Status",
-        Desc = "Refresh phase, reward, dan status entry International Cup.",
+    State.fillWorldCupVisualToggle = Runtime.uiToggle(tab, {
+        Title = "Fill Visual Squad",
+        Desc = "Isi slot menu sebelum join.",
+        Icon = "users",
+        IconSize = 18,
+        Value = State.fillWorldCupVisualBeforeJoin,
+        Callback = setFillWorldCupVisualEnabled,
+    })
+
+    State.autoCollectWorldCupRewardsToggle = Runtime.uiToggle(tab, {
+        Title = "Auto Collect Reward",
+        Desc = "Claim reward saat siap.",
+        Icon = "gift",
+        IconSize = 18,
+        Value = State.autoCollectWorldCupRewards,
+        Callback = setAutoCollectWorldCupRewardsEnabled,
+    })
+
+    State.autoPickupSpawnedPacksToggle = Runtime.uiToggle(tab, {
+        Title = "Auto Collect PackDrop",
+        Desc = "Ambil Workspace.PackDrop.",
+        Icon = "package-check",
+        IconSize = 18,
+        Value = State.autoPickupSpawnedPacks,
+        Callback = setAutoPickupSpawnedPacksEnabled,
+    })
+
+    local primaryActions = tab:Group({})
+    State.worldCupCheckButton = Runtime.uiButton(primaryActions, {
+        Title = "Check Status",
         Icon = "refresh-cw",
-        Size = "Small",
         Callback = function()
             local status, errorMessage = Runtime.fetchWorldCupStatus()
             if status then
@@ -6823,14 +6740,21 @@ function Runtime.buildGui()
                 setStatus("Gagal mengecek International Cup: " .. tostring(errorMessage), COLORS.danger)
             end
         end,
-    }))
+    })
 
-    worldCupActionGroup:Space()
-    State.worldCupVisualFillButton = Runtime.compactButton(worldCupActionGroup:Button({
-        Title = "Fill Visual Squad",
-        Desc = "Buka menu Cup dan pilih 11 pemain pada slot visual.",
+    primaryActions:Space()
+    State.worldCupJoinButton = Runtime.uiButton(primaryActions, {
+        Title = "Join Cup",
+        Icon = "trophy",
+        Callback = function()
+            Runtime.joinInternationalCup(false)
+        end,
+    })
+
+    local secondaryActions = tab:Group({})
+    State.worldCupVisualFillButton = Runtime.uiButton(secondaryActions, {
+        Title = "Fill Squad",
         Icon = "users",
-        Size = "Small",
         Callback = function()
             task.spawn(function()
                 local status = State.worldCupStatus or Runtime.fetchWorldCupStatus()
@@ -6842,122 +6766,101 @@ function Runtime.buildGui()
                 Runtime.fillWorldCupVisualSquad(team, false)
             end)
         end,
-    }))
+    })
 
-    worldCupActionGroup:Space()
-    State.worldCupCollectButton = Runtime.compactButton(worldCupActionGroup:Button({
-        Title = "Collect Cup Reward",
-        Desc = "Klaim reward International Cup yang sudah siap.",
+    secondaryActions:Space()
+    State.worldCupCollectButton = Runtime.uiButton(secondaryActions, {
+        Title = "Collect Reward",
         Icon = "gift",
-        Size = "Small",
         Callback = function()
             Runtime.collectWorldCupReward(false)
         end,
-    }))
+    })
 
-    worldCupActionGroup:Space()
-    State.spawnedPackPickupButton = Runtime.compactButton(worldCupActionGroup:Button({
+    State.spawnedPackPickupButton = Runtime.uiButton(tab, {
         Title = "Collect PackDrop",
-        Desc = "Cari Workspace.PackDrop di dekat base lalu teleport langsung ke part tersebut.",
+        Desc = "Teleport ke PackDrop milik base.",
         Icon = "package-check",
-        Size = "Small",
         Callback = function()
             Runtime.pickupSpawnedPacks(false)
         end,
-    }))
+    })
 
-    worldCupActionGroup:Space()
-    State.worldCupJoinButton = Runtime.compactButton(worldCupActionGroup:Button({
-        Title = "Join International Cup",
-        Desc = "Join menggunakan squad mode yang dipilih.",
-        Icon = "trophy",
-        Size = "Small",
-        Callback = function()
-            Runtime.joinInternationalCup(false)
-        end,
-    }))
+    return tab
+end
 
-    local MovementTab = Window:Tab({
+function Runtime.createMovementTab(Window)
+    local tab = Window:Tab({
         Title = "Movement",
-        Icon = "settings",
+        Icon = "navigation",
         IconSize = 16,
     })
-    State.movementTab = MovementTab
+    State.movementTab = tab
 
-    State.movementParagraph = Runtime.compactElement(MovementTab:Paragraph({
-        Title = "Movement & Base",
-        Desc = "Mendeteksi plot, Spawn, dan Conveyor...",
-        Image = "settings",
-        ImageSize = 20,
-        Size = "Small",
-    }))
+    State.movementParagraph = Runtime.uiCard(tab, {
+        Title = "Movement",
+        Desc = "Detecting base and conveyor...",
+        Image = "navigation",
+        ImageSize = 19,
+    })
 
-    State.lockPositionToggle = MovementTab:Toggle({
+    State.lockPositionToggle = Runtime.uiToggle(tab, {
         Title = "Anti Player Collision",
-        Desc = "Mencegah karakter player lain mendorongmu tanpa mengunci movement.",
-        Icon = "settings",
+        Desc = "Cegah player lain mendorong karakter.",
+        Icon = "shield",
         IconSize = 18,
         Value = State.lockPosition,
-        Callback = function(enabled)
-            Runtime.setLockPositionEnabled(enabled)
-        end,
+        Callback = Runtime.setLockPositionEnabled,
     })
-    Runtime.compactElement(State.lockPositionToggle, 15, 13)
 
-    State.autoConveyorToggle = MovementTab:Toggle({
+    State.autoConveyorToggle = Runtime.uiToggle(tab, {
         Title = "Auto Conveyor",
-        Desc = "Teleport ke Animed Convoyor; jika keluar dari seluruh conveyor, teleport kembali.",
+        Desc = "Kembali saat keluar dari conveyor.",
         Icon = "refresh-cw",
         IconSize = 18,
         Value = State.autoConveyor,
-        Callback = function(enabled)
-            Runtime.setAutoConveyorEnabled(enabled)
-        end,
+        Callback = Runtime.setAutoConveyorEnabled,
     })
-    Runtime.compactElement(State.autoConveyorToggle, 15, 13)
 
-    MovementTab:Space()
-    local movementActionGroup = MovementTab:Group({})
-
-    State.backToBaseButton = Runtime.compactButton(movementActionGroup:Button({
+    local actions = tab:Group({})
+    State.backToBaseButton = Runtime.uiButton(actions, {
         Title = "Back to Base",
-        Desc = "Teleport ke Spawn pada plot yang OwnerName-nya sama dengan username player.",
-        Icon = "users",
-        Size = "Small",
+        Icon = "house",
         Callback = function()
             Runtime.teleportBackToBase(false)
         end,
-    }))
+    })
 
-    movementActionGroup:Space()
-    State.teleportConveyorButton = Runtime.compactButton(movementActionGroup:Button({
-        Title = "Teleport to Conveyor",
-        Desc = "Teleport sekali ke part Animed Convoyor terdekat.",
-        Icon = "refresh-cw",
-        Size = "Small",
+    actions:Space()
+    State.teleportConveyorButton = Runtime.uiButton(actions, {
+        Title = "Go to Conveyor",
+        Icon = "navigation",
         Callback = function()
             Runtime.teleportToConveyor(false)
         end,
-    }))
+    })
 
-    local SettingsTab = Window:Tab({
+    return tab
+end
+
+function Runtime.createSettingsTab(Window)
+    local tab = Window:Tab({
         Title = "Settings",
         Icon = "settings",
         IconSize = 16,
     })
-    State.settingsTab = SettingsTab
+    State.settingsTab = tab
 
-    State.configParagraph = Runtime.compactElement(SettingsTab:Paragraph({
-        Title = "Configuration Manager",
-        Desc = "Memeriksa dukungan file config...",
+    State.configParagraph = Runtime.uiCard(tab, {
+        Title = "Config",
+        Desc = "Checking file support...",
         Image = "save",
-        ImageSize = 20,
-        Size = "Small",
-    }))
+        ImageSize = 19,
+    })
 
-    State.windowKeybindControl = SettingsTab:Keybind({
+    State.windowKeybindControl = Runtime.compactElement(tab:Keybind({
         Title = "Window Keybind",
-        Desc = "Key untuk membuka dan menutup WindUI.",
+        Desc = "Buka atau tutup window.",
         Value = State.windowKeybind,
         Callback = function(keyName)
             local normalized = normalizeKeybindName(keyName)
@@ -6969,59 +6872,45 @@ function Runtime.buildGui()
                 setStatus("Window keybind diubah menjadi " .. normalized, COLORS.success)
             end
         end,
-    })
-    Runtime.compactElement(State.windowKeybindControl, 15, 13)
+    }), 14, 12)
 
-    State.autoSaveToggle = SettingsTab:Toggle({
-        Title = "Auto Save Config",
-        Desc = "Simpan perubahan konfigurasi secara otomatis.",
+    State.autoSaveToggle = Runtime.uiToggle(tab, {
+        Title = "Auto Save",
+        Desc = "Simpan config saat berubah.",
         Icon = "save",
         IconSize = 18,
         Value = State.autoSave,
         Callback = function(enabled)
             setAutoSaveEnabled(enabled)
-            setStatus(
-                enabled and "Auto Save Config diaktifkan." or "Auto Save Config dinonaktifkan.",
-                enabled and COLORS.success or COLORS.muted
-            )
+            setStatus(enabled and "Auto Save diaktifkan." or "Auto Save dinonaktifkan.", enabled and COLORS.success or COLORS.muted)
         end,
     })
-    Runtime.compactElement(State.autoSaveToggle, 15, 13)
 
-    State.autoLoadToggle = SettingsTab:Toggle({
-        Title = "Auto Load Config",
-        Desc = "Terapkan config tersimpan secara otomatis saat script dijalankan.",
+    State.autoLoadToggle = Runtime.uiToggle(tab, {
+        Title = "Auto Load",
+        Desc = "Muat config saat startup.",
         Icon = "folder-down",
         IconSize = 18,
         Value = State.autoLoad,
         Callback = function(enabled)
             setAutoLoadEnabled(enabled)
-            setStatus(
-                enabled and "Auto Load Config diaktifkan." or "Auto Load Config dinonaktifkan.",
-                enabled and COLORS.success or COLORS.muted
-            )
+            setStatus(enabled and "Auto Load diaktifkan." or "Auto Load dinonaktifkan.", enabled and COLORS.success or COLORS.muted)
         end,
     })
-    Runtime.compactElement(State.autoLoadToggle, 15, 13)
 
-    State.antiAfkToggle = SettingsTab:Toggle({
+    State.antiAfkToggle = Runtime.uiToggle(tab, {
         Title = "Anti AFK",
-        Desc = "Mencegah idle kick Roblox agar tidak perlu reconnect karena AFK.",
+        Desc = "Cegah idle kick.",
         Icon = "keyboard",
         IconSize = 18,
         Value = State.antiAfk,
-        Callback = function(enabled)
-            Runtime.setAntiAfkEnabled(enabled)
-        end,
+        Callback = Runtime.setAntiAfkEnabled,
     })
-    Runtime.compactElement(State.antiAfkToggle, 15, 13)
 
-    local configActionGroup = SettingsTab:Group({})
-    State.saveConfigButton = Runtime.compactButton(configActionGroup:Button({
-        Title = "Save Config",
-        Desc = "Simpan seluruh pengaturan saat ini ke file.",
+    local configActions = tab:Group({})
+    State.saveConfigButton = Runtime.uiButton(configActions, {
+        Title = "Save",
         Icon = "save",
-        Size = "Small",
         Callback = function()
             local success, errorMessage = saveConfigToDisk()
             if success then
@@ -7030,14 +6919,12 @@ function Runtime.buildGui()
                 setStatus("Gagal menyimpan config: " .. tostring(errorMessage), COLORS.danger)
             end
         end,
-    }))
+    })
 
-    configActionGroup:Space()
-    State.loadConfigButton = Runtime.compactButton(configActionGroup:Button({
-        Title = "Load Config",
-        Desc = "Muat dan terapkan file config yang tersimpan.",
+    configActions:Space()
+    State.loadConfigButton = Runtime.uiButton(configActions, {
+        Title = "Load",
         Icon = "folder-down",
-        Size = "Small",
         Callback = function()
             local success, errorMessage = loadConfigFromDisk()
             if success then
@@ -7046,24 +6933,31 @@ function Runtime.buildGui()
                 setStatus("Gagal memuat config: " .. tostring(errorMessage), COLORS.danger)
             end
         end,
-    }))
+    })
 
-    SettingsTab:Space()
-    State.rejoinButton = Runtime.compactButton(SettingsTab:Button({
-        Title = "Rejoin Server",
-        Desc = "Masuk kembali ke server saat ini; fallback ke place yang sama jika JobId tidak tersedia.",
+    local utilityActions = tab:Group({})
+    State.rejoinButton = Runtime.uiButton(utilityActions, {
+        Title = "Rejoin",
         Icon = "refresh-cw",
-        Size = "Small",
-        Callback = function()
-            Runtime.rejoinCurrentServer()
-        end,
-    }))
+        Callback = Runtime.rejoinCurrentServer,
+    })
 
-    Runtime.compactButton(SettingsTab:Button({
-        Title = "Reset Dashboard",
-        Desc = "Reset statistik Auto Loan pada sesi ini.",
+    utilityActions:Space()
+    Runtime.uiButton(utilityActions, {
+        Title = "Refresh Data",
+        Icon = "refresh-cw",
+        Callback = function()
+            State.cachedTopCard = nil
+            Runtime.fetchPrestigeInfo()
+            refreshUI(true)
+            setStatus("Data berhasil di-refresh.", COLORS.success)
+        end,
+    })
+
+    Runtime.uiButton(tab, {
+        Title = "Reset Session Stats",
+        Desc = "Reset statistik Auto Loan.",
         Icon = "rotate-ccw",
-        Size = "Small",
         Callback = function()
             State.stats.autoSent = 0
             State.stats.autoCollected = 0
@@ -7074,25 +6968,91 @@ function Runtime.buildGui()
             State.stats.startedAt = os.time()
             table.clear(State.autoLoanedIds)
             updateDashboardUI()
-            setStatus("Dashboard automation di-reset.", COLORS.success)
+            setStatus("Statistik sesi di-reset.", COLORS.success)
         end,
-    }))
+    })
 
-    Runtime.compactButton(SettingsTab:Button({
-        Title = "Refresh All Data",
-        Desc = "Refresh loan, dashboard, candidate, dan prestige info.",
-        Icon = "refresh-cw",
-        Size = "Small",
-        Callback = function()
-            State.cachedTopCard = nil
-            Runtime.fetchPrestigeInfo()
-            refreshUI(true)
-            setStatus("Seluruh data berhasil di-refresh.", COLORS.success)
-        end,
-    }))
+    return tab
+end
 
-    setCollectButton("Collect All", false)
-    setLoanButton("Loan Top", false)
+function Runtime.buildGui()
+    local WindUI = Runtime.loadWindUI()
+    State.windUI = WindUI
+
+    local Window = WindUI:CreateWindow({
+        Title = HUB_TITLE,
+        Author = "xSansHUB",
+        Folder = "xSansHUB_LoanOutManager",
+        Icon = "handshake",
+        Theme = "Indigo",
+        ToggleKey = Enum.KeyCode[State.windowKeybind] or Enum.KeyCode.G,
+        Size = UDim2.fromOffset(760, 550),
+        MinSize = Vector2.new(620, 430),
+        MaxSize = Vector2.new(980, 720),
+        Resizable = true,
+        AutoScale = true,
+        NewElements = true,
+        Radius = 8,
+        ElementsRadius = 7,
+        IconSize = 17,
+        TopBarButtonIconSize = 11,
+        SideBarWidth = 155,
+        HideSearchBar = true,
+        ScrollBarEnabled = true,
+        OpenButton = {
+            Title = HUB_TITLE,
+            Icon = "handshake",
+            Enabled = true,
+            Draggable = true,
+            OnlyMobile = false,
+        },
+        User = {
+            Enabled = false,
+            Anonymous = false,
+        },
+    })
+
+    if not Window then
+        error("WindUI gagal membuat window. Hancurkan window lama lalu jalankan ulang script.")
+    end
+
+    State.window = Window
+    Environment.LoanOutGUIWindWindow = Window
+
+    Window.Gap = 5
+    if Window.ElementConfig then
+        Window.ElementConfig.UIPadding = 9
+        Window.ElementConfig.UICorner = 7
+    end
+
+    Window:Tag({
+        Title = "Toggle: " .. tostring(State.windowKeybind),
+        Icon = "keyboard",
+        Border = true,
+    })
+
+    Window:OnOpen(function()
+        State.visible = true
+        task.defer(function()
+            Runtime.selectDashboardTab()
+            refreshUI(false)
+        end)
+    end)
+
+    Window:OnClose(function()
+        State.visible = false
+    end)
+
+    Runtime.createHomeTab(Window)
+    Runtime.createLoansTab(Window)
+    Runtime.createAutomationTab(Window)
+    Runtime.createPrestigeTab(Window)
+    Runtime.createWorldCupTab(Window)
+    Runtime.createMovementTab(Window)
+    Runtime.createSettingsTab(Window)
+
+    setCollectButton("Collect Loans", false)
+    setLoanButton("Loan Best", false)
     updateAutomationButtons()
     updateConfigurationVisuals()
     updateDashboardUI()
@@ -7104,17 +7064,15 @@ function Runtime.buildGui()
     end
 
     if State.startupConfigLoaded then
-        setStatus("Auto Load: config berhasil diterapkan saat startup.", COLORS.success)
+        setStatus("Auto Load: config berhasil diterapkan.", COLORS.success)
     elseif State.startupConfigError then
-        setStatus("Config startup gagal dibaca: " .. tostring(State.startupConfigError), COLORS.danger)
+        setStatus("Config startup gagal: " .. tostring(State.startupConfigError), COLORS.danger)
     elseif not State.configSupported then
-        setStatus("File config tidak didukung executor ini; pengaturan hanya tersimpan selama sesi.", COLORS.warning)
+        setStatus("File config tidak didukung executor ini.", COLORS.warning)
     else
         setStatus(State.lastStatusText, COLORS.warning)
     end
 
-    -- WindUI does not always select the first tab automatically.
-    -- Select Dashboard now and every time the window is reopened.
     task.defer(function()
         Runtime.selectDashboardTab()
         refreshUI(true)
@@ -7122,11 +7080,12 @@ function Runtime.buildGui()
 
     WindUI:Notify({
         Title = HUB_TITLE,
-        Content = "WindUI loaded. Tekan G atau klik floating icon untuk membuka/menutup window.",
+        Content = "Loaded • " .. tostring(State.windowKeybind) .. " to toggle",
         Icon = "handshake",
-        Duration = 5,
+        Duration = 4,
     })
 end
+
 
 -- DataChanged sengaja tidak dihubungkan. Signal internal game menjalankan
 -- callback pada free thread yang tidak memiliki capability untuk mengubah
