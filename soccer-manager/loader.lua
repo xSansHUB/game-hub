@@ -11,6 +11,7 @@
       - Loan Duration dan Rarity Whitelist berada tepat di atas toggle Auto Loan.
       - Pilihan durasi diambil dari LoanConfig.Durations.
       - Dashboard sesi Auto Loan: terkirim, masih berputar, selesai, dan income.
+      - Config file: Save, Load, Auto Save, dan Auto Load per PlaceId.
       - Tidak mengubah atau membutuhkan ClubManager.
 
     API manual:
@@ -28,6 +29,10 @@
       LoanOutGUI.ToggleAutoCollect()
       LoanOutGUI.ToggleAutoPrestige()
       LoanOutGUI.PrestigeNow()
+      LoanOutGUI.SaveConfig()
+      LoanOutGUI.LoadConfig()
+      LoanOutGUI.SetAutoSave(true/false)
+      LoanOutGUI.SetAutoLoad(true/false)
       LoanOutGUI.Stop()
 ]]
 
@@ -37,6 +42,7 @@ local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local MarketplaceService = game:GetService("MarketplaceService")
 local CoreGui = game:GetService("CoreGui")
+local HttpService = game:GetService("HttpService")
 
 local LocalPlayer = Players.LocalPlayer
 local Environment = if type(getgenv) == "function" then getgenv() else _G
@@ -65,6 +71,91 @@ end
 
 local GAME_NAME = getCurrentGameName()
 local HUB_TITLE = "xSansHUB - " .. GAME_NAME
+
+local CONFIG_VERSION = 1
+local CONFIG_ROOT = "xSansHUB"
+local CONFIG_FOLDER = CONFIG_ROOT .. "/LoanOutManager"
+local CONFIG_FILE = CONFIG_FOLDER .. "/" .. tostring(game.PlaceId) .. ".json"
+local CONFIG_FILE_SUPPORTED = type(readfile) == "function" and type(writefile) == "function"
+
+local function normalizeKeybindName(value)
+    local keyName = tostring(value or "G")
+    if Enum.KeyCode[keyName] then
+        return keyName
+    end
+    return "G"
+end
+
+local function configFileExists()
+    if not CONFIG_FILE_SUPPORTED then
+        return false
+    end
+
+    if type(isfile) == "function" then
+        local success, exists = pcall(isfile, CONFIG_FILE)
+        return success and exists == true
+    end
+
+    return pcall(readfile, CONFIG_FILE)
+end
+
+local function readRawConfigFile()
+    if not CONFIG_FILE_SUPPORTED then
+        return nil, "Executor tidak mendukung readfile/writefile"
+    end
+
+    if not configFileExists() then
+        return nil, "Config belum tersimpan"
+    end
+
+    local readSuccess, content = pcall(readfile, CONFIG_FILE)
+    if not readSuccess then
+        return nil, tostring(content)
+    end
+
+    local decodeSuccess, decoded = pcall(function()
+        return HttpService:JSONDecode(content)
+    end)
+    if not decodeSuccess or type(decoded) ~= "table" then
+        return nil, decodeSuccess and "Format config tidak valid" or tostring(decoded)
+    end
+
+    return decoded
+end
+
+local function mergeRawConfig(target, source)
+    if type(target) ~= "table" or type(source) ~= "table" then
+        return
+    end
+
+    if source.autoLoan ~= nil then
+        target.autoLoan = source.autoLoan == true
+    end
+    if source.autoCollect ~= nil then
+        target.autoCollect = source.autoCollect == true
+    end
+    if source.autoPrestige ~= nil then
+        target.autoPrestige = source.autoPrestige == true
+    end
+    if tonumber(source.duration) then
+        target.duration = tonumber(source.duration)
+    end
+    if type(source.rarityWhitelist) == "table" then
+        target.rarityWhitelist = {}
+        for rarity, enabled in pairs(source.rarityWhitelist) do
+            target.rarityWhitelist[tostring(rarity)] = enabled == true
+        end
+    end
+    if source.autoSave ~= nil then
+        target.autoSave = source.autoSave == true
+    end
+    if source.autoLoad ~= nil then
+        target.autoLoad = source.autoLoad == true
+    end
+    if source.windowKeybind ~= nil then
+        target.windowKeybind = normalizeKeybindName(source.windowKeybind)
+    end
+end
 
 local GUI_NAME = "StandaloneLoanOutGUI"
 local POLL_INTERVAL = 1
@@ -128,9 +219,43 @@ if type(PersistentConfig) ~= "table" then
     Environment.LoanOutGUIConfig = PersistentConfig
 end
 
+local StartupConfigLoaded = false
+local StartupConfigError = nil
+local StartupDiskConfig = nil
+
+if CONFIG_FILE_SUPPORTED then
+    local loadedConfig, loadError = readRawConfigFile()
+    if loadedConfig then
+        StartupDiskConfig = loadedConfig
+
+        -- Auto Save/Auto Load selalu dibaca sebagai metadata. Isi konfigurasi lain
+        -- hanya diterapkan otomatis ketika Auto Load aktif.
+        if loadedConfig.autoSave ~= nil then
+            PersistentConfig.autoSave = loadedConfig.autoSave == true
+        end
+        if loadedConfig.autoLoad ~= nil then
+            PersistentConfig.autoLoad = loadedConfig.autoLoad == true
+        end
+
+        if loadedConfig.autoLoad ~= false then
+            mergeRawConfig(PersistentConfig, loadedConfig)
+            StartupConfigLoaded = true
+        end
+    elseif loadError ~= "Config belum tersimpan" then
+        StartupConfigError = loadError
+    end
+end
+
 if type(PersistentConfig.rarityWhitelist) ~= "table" then
     PersistentConfig.rarityWhitelist = {}
 end
+if PersistentConfig.autoSave == nil then
+    PersistentConfig.autoSave = true
+end
+if PersistentConfig.autoLoad == nil then
+    PersistentConfig.autoLoad = true
+end
+PersistentConfig.windowKeybind = normalizeKeybindName(PersistentConfig.windowKeybind)
 
 local Dashboard = Environment.LoanOutGUIDashboard
 if type(Dashboard) ~= "table" then
@@ -165,6 +290,9 @@ local State = {
     autoLoan = PersistentConfig.autoLoan == true,
     autoCollect = PersistentConfig.autoCollect == true,
     autoPrestige = PersistentConfig.autoPrestige == true,
+    autoSave = PersistentConfig.autoSave ~= false,
+    autoLoad = PersistentConfig.autoLoad ~= false,
+    windowKeybind = normalizeKeybindName(PersistentConfig.windowKeybind),
     selectedDuration = tonumber(PersistentConfig.duration) or 5,
     rarityWhitelist = PersistentConfig.rarityWhitelist,
     durationOptions = {},
@@ -206,6 +334,20 @@ local State = {
     autoPrestigeToggle = nil,
     durationDropdown = nil,
     rarityDropdown = nil,
+    configParagraph = nil,
+    autoSaveToggle = nil,
+    autoLoadToggle = nil,
+    windowKeybindControl = nil,
+    saveConfigButton = nil,
+    loadConfigButton = nil,
+
+    configSupported = CONFIG_FILE_SUPPORTED,
+    configLoading = false,
+    configDirty = false,
+    configSaveToken = 0,
+    configLastSavedAt = nil,
+    startupConfigLoaded = StartupConfigLoaded,
+    startupConfigError = StartupConfigError,
 
     collectButtonEnabled = false,
     loanButtonEnabled = false,
@@ -222,6 +364,182 @@ local State = {
     nextAutoCollectAt = 0,
     nextPrestigeCheckAt = 0,
 }
+
+local updateConfigManagerUI
+
+local function copyWhitelistForConfig()
+    local result = {}
+
+    if #State.rarityOptions > 0 then
+        for _, rarity in ipairs(State.rarityOptions) do
+            result[tostring(rarity)] = State.rarityWhitelist[rarity] ~= false
+        end
+    else
+        for rarity, enabled in pairs(State.rarityWhitelist) do
+            result[tostring(rarity)] = enabled == true
+        end
+    end
+
+    return result
+end
+
+local function syncPersistentConfig()
+    PersistentConfig.autoLoan = State.autoLoan == true
+    PersistentConfig.autoCollect = State.autoCollect == true
+    PersistentConfig.autoPrestige = State.autoPrestige == true
+    PersistentConfig.autoSave = State.autoSave == true
+    PersistentConfig.autoLoad = State.autoLoad == true
+    PersistentConfig.windowKeybind = normalizeKeybindName(State.windowKeybind)
+    PersistentConfig.duration = tonumber(State.selectedDuration) or 5
+    PersistentConfig.rarityWhitelist = copyWhitelistForConfig()
+end
+
+local function buildConfigSnapshot()
+    syncPersistentConfig()
+
+    return {
+        version = CONFIG_VERSION,
+        placeId = game.PlaceId,
+        gameName = GAME_NAME,
+        savedAt = os.time(),
+        autoSave = State.autoSave == true,
+        autoLoad = State.autoLoad == true,
+        windowKeybind = normalizeKeybindName(State.windowKeybind),
+        autoLoan = State.autoLoan == true,
+        autoCollect = State.autoCollect == true,
+        autoPrestige = State.autoPrestige == true,
+        duration = tonumber(State.selectedDuration) or 5,
+        rarityWhitelist = copyWhitelistForConfig(),
+    }
+end
+
+local function ensureConfigFolders()
+    if not State.configSupported then
+        return false, "Executor tidak mendukung file config"
+    end
+
+    if type(makefolder) ~= "function" then
+        return true
+    end
+
+    local folders = {CONFIG_ROOT, CONFIG_FOLDER}
+    for _, folder in ipairs(folders) do
+        local exists = false
+        if type(isfolder) == "function" then
+            local success, result = pcall(isfolder, folder)
+            exists = success and result == true
+        end
+
+        if not exists then
+            local success, errorMessage = pcall(makefolder, folder)
+            if not success then
+                -- Sebagian executor melempar error bila folder sudah ada.
+                if type(isfolder) == "function" then
+                    local checkSuccess, result = pcall(isfolder, folder)
+                    if not (checkSuccess and result == true) then
+                        return false, tostring(errorMessage)
+                    end
+                end
+            end
+        end
+    end
+
+    return true
+end
+
+local function saveConfigToDisk()
+    syncPersistentConfig()
+
+    if not State.configSupported then
+        return false, "Executor tidak mendukung readfile/writefile"
+    end
+
+    local folderSuccess, folderError = ensureConfigFolders()
+    if not folderSuccess then
+        return false, folderError
+    end
+
+    local encodeSuccess, encoded = pcall(function()
+        return HttpService:JSONEncode(buildConfigSnapshot())
+    end)
+    if not encodeSuccess then
+        return false, tostring(encoded)
+    end
+
+    local writeSuccess, writeError = pcall(writefile, CONFIG_FILE, encoded)
+    if not writeSuccess then
+        return false, tostring(writeError)
+    end
+
+    State.configDirty = false
+    State.configLastSavedAt = os.time()
+    if updateConfigManagerUI then
+        updateConfigManagerUI()
+    end
+    return true
+end
+
+local function requestConfigSave()
+    syncPersistentConfig()
+    State.configDirty = true
+
+    if updateConfigManagerUI then
+        updateConfigManagerUI()
+    end
+
+    if State.configLoading or not State.autoSave or not State.configSupported then
+        return
+    end
+
+    State.configSaveToken += 1
+    local token = State.configSaveToken
+
+    task.delay(0.4, function()
+        if not State.running
+            or State.configLoading
+            or not State.autoSave
+            or token ~= State.configSaveToken
+        then
+            return
+        end
+
+        saveConfigToDisk()
+    end)
+end
+
+local function setAutoSaveEnabled(enabled)
+    State.autoSave = enabled == true
+    PersistentConfig.autoSave = State.autoSave
+
+    -- Simpan sekali saat toggle berubah agar pilihan Auto Save sendiri tetap persisten,
+    -- termasuk saat pengguna baru saja mematikannya.
+    if State.configSupported then
+        saveConfigToDisk()
+    else
+        syncPersistentConfig()
+    end
+
+    if updateConfigManagerUI then
+        updateConfigManagerUI()
+    end
+end
+
+local function setAutoLoadEnabled(enabled)
+    State.autoLoad = enabled == true
+    PersistentConfig.autoLoad = State.autoLoad
+
+    -- Metadata Auto Load harus disimpan langsung; jika tidak, startup berikutnya
+    -- tidak dapat mengetahui bahwa Auto Load telah dinonaktifkan.
+    if State.configSupported then
+        saveConfigToDisk()
+    else
+        syncPersistentConfig()
+    end
+
+    if updateConfigManagerUI then
+        updateConfigManagerUI()
+    end
+end
 
 local function disconnectAll()
     for _, connection in ipairs(State.connections) do
@@ -375,6 +693,7 @@ local function setAutoLoanEnabled(enabled, announce)
     State.nextAutoLoanAt = 0
     State.cachedTopCard = nil
     updateAutomationButtons()
+    requestConfigSave()
 
     if announce ~= false then
         setStatus(
@@ -394,6 +713,7 @@ local function setAutoCollectEnabled(enabled, announce)
     PersistentConfig.autoCollect = State.autoCollect
     State.nextAutoCollectAt = 0
     updateAutomationButtons()
+    requestConfigSave()
 
     if announce ~= false then
         setStatus(
@@ -411,6 +731,7 @@ local function setAutoPrestigeEnabled(enabled, announce)
     State.nextPrestigeCheckAt = 0
     -- Pertahankan hasil Check Prestige terakhir saat toggle berubah.
     updateAutomationButtons()
+    requestConfigSave()
 
     if announce ~= false then
         setStatus(
@@ -1177,6 +1498,113 @@ local function updateConfigurationVisuals()
     State.configurationFromUI = false
 end
 
+local refreshUI
+
+local function isValidDuration(minutes)
+    minutes = tonumber(minutes)
+    if not minutes then
+        return false
+    end
+
+    for _, option in ipairs(State.durationOptions) do
+        if option == minutes then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function applyLoadedConfig(config)
+    if type(config) ~= "table" then
+        return false, "Format config tidak valid"
+    end
+
+    State.configLoading = true
+    State.syncingConfiguration = true
+
+    if config.autoSave ~= nil then
+        State.autoSave = config.autoSave == true
+    end
+    if config.autoLoad ~= nil then
+        State.autoLoad = config.autoLoad == true
+    end
+
+    local keyName = normalizeKeybindName(config.windowKeybind or State.windowKeybind)
+    State.windowKeybind = keyName
+    if State.window and type(State.window.SetToggleKey) == "function" then
+        State.window:SetToggleKey(Enum.KeyCode[keyName])
+    end
+    if State.windowKeybindControl then
+        pcall(function()
+            if type(State.windowKeybindControl.Set) == "function" then
+                State.windowKeybindControl:Set(keyName, false)
+            elseif type(State.windowKeybindControl.SetValue) == "function" then
+                State.windowKeybindControl:SetValue(keyName)
+            end
+        end)
+    end
+
+    local loadedDuration = tonumber(config.duration)
+    if isValidDuration(loadedDuration) then
+        State.selectedDuration = loadedDuration
+    end
+
+    if type(config.rarityWhitelist) == "table" then
+        for _, rarity in ipairs(State.rarityOptions) do
+            local configured = config.rarityWhitelist[rarity]
+            if configured ~= nil then
+                State.rarityWhitelist[rarity] = configured == true
+            end
+        end
+    end
+
+    if config.autoLoan ~= nil then
+        State.autoLoan = config.autoLoan == true
+    end
+    if config.autoCollect ~= nil then
+        State.autoCollect = config.autoCollect == true
+    end
+    if config.autoPrestige ~= nil then
+        State.autoPrestige = config.autoPrestige == true
+    end
+
+    State.nextAutoLoanAt = 0
+    State.nextAutoCollectAt = 0
+    State.nextPrestigeCheckAt = 0
+    State.cachedTopCard = nil
+    State.configDirty = false
+
+    syncPersistentConfig()
+
+    State.syncingConfiguration = false
+    State.configLoading = false
+
+    syncConfigurationControls()
+    updateAutomationButtons()
+    updateConfigurationVisuals()
+    if updateConfigManagerUI then
+        updateConfigManagerUI()
+    end
+    refreshUI(true)
+
+    return true
+end
+
+local function loadConfigFromDisk()
+    local config, loadError = readRawConfigFile()
+    if not config then
+        return false, loadError
+    end
+
+    local success, applyError = applyLoadedConfig(config)
+    if not success then
+        return false, applyError
+    end
+
+    return true
+end
+
 local function updatePrestigeParagraph()
     local paragraph = State.prestigeParagraph
     if not paragraph or type(paragraph.SetDesc) ~= "function" then
@@ -1258,7 +1686,7 @@ local function updatePrestigeParagraph()
     end
 end
 
-local function refreshUI(forceRebuild)
+refreshUI = function(forceRebuild)
     if not State.running or not State.window then
         return
     end
@@ -1889,6 +2317,41 @@ local function selectDashboardTab()
     end
 end
 
+updateConfigManagerUI = function()
+    local supportText = State.configSupported and "SUPPORTED" or "UNSUPPORTED"
+    local fileState = configFileExists() and "tersimpan" or "belum ada"
+    local dirtyText = State.configDirty and " • perubahan belum disimpan" or ""
+
+    if State.configParagraph and type(State.configParagraph.SetDesc) == "function" then
+        State.configParagraph:SetDesc(string.format(
+            "%s • File %s • Auto Save %s • Auto Load %s%s\n%s",
+            supportText,
+            fileState,
+            State.autoSave and "ON" or "OFF",
+            State.autoLoad and "ON" or "OFF",
+            dirtyText,
+            CONFIG_FILE
+        ))
+    end
+
+    if State.autoSaveToggle and type(State.autoSaveToggle.Set) == "function"
+        and State.autoSaveToggle.Value ~= State.autoSave
+    then
+        State.autoSaveToggle:Set(State.autoSave, false)
+    end
+
+    if State.autoLoadToggle and type(State.autoLoadToggle.Set) == "function"
+        and State.autoLoadToggle.Value ~= State.autoLoad
+    then
+        State.autoLoadToggle:Set(State.autoLoad, false)
+    end
+
+    setElementLocked(State.saveConfigButton, not State.configSupported)
+    setElementLocked(State.loadConfigButton, not State.configSupported or not configFileExists())
+    setElementLocked(State.autoSaveToggle, not State.configSupported)
+    setElementLocked(State.autoLoadToggle, not State.configSupported)
+end
+
 local function buildGui()
     local WindUI = loadWindUI()
     State.windUI = WindUI
@@ -1899,7 +2362,7 @@ local function buildGui()
         Folder = "xSansHUB_LoanOutManager",
         Icon = "handshake",
         Theme = "Indigo",
-        ToggleKey = Enum.KeyCode.G,
+        ToggleKey = Enum.KeyCode[State.windowKeybind] or Enum.KeyCode.G,
         Size = UDim2.fromOffset(740, 560),
         MinSize = Vector2.new(590, 420),
         MaxSize = Vector2.new(920, 700),
@@ -2069,6 +2532,7 @@ local function buildGui()
                     State.configurationFromUI = true
                     updateConfigurationVisuals()
                     refreshUI(false)
+                    requestConfigSave()
                     setStatus("Durasi Auto Loan: " .. getDurationLabel(minutes), COLORS.success)
                     break
                 end
@@ -2114,6 +2578,7 @@ local function buildGui()
             State.configurationFromUI = true
             updateConfigurationVisuals()
             refreshUI(true)
+            requestConfigSave()
         end,
     }))
 
@@ -2130,6 +2595,7 @@ local function buildGui()
             State.cachedTopCard = nil
             updateConfigurationVisuals()
             refreshUI(true)
+            requestConfigSave()
         end,
     }))
 
@@ -2146,6 +2612,7 @@ local function buildGui()
             State.cachedTopCard = nil
             updateConfigurationVisuals()
             refreshUI(true)
+            requestConfigSave()
         end,
     }))
 
@@ -2257,20 +2724,96 @@ local function buildGui()
     })
     State.settingsTab = SettingsTab
 
-    local windowKeybind = SettingsTab:Keybind({
+    State.configParagraph = compactElement(SettingsTab:Paragraph({
+        Title = "Configuration Manager",
+        Desc = "Memeriksa dukungan file config...",
+        Image = "save",
+        ImageSize = 20,
+        Size = "Small",
+    }))
+
+    State.windowKeybindControl = SettingsTab:Keybind({
         Title = "Window Keybind",
         Desc = "Key untuk membuka dan menutup WindUI.",
-        Value = "G",
+        Value = State.windowKeybind,
         Callback = function(keyName)
-            local keyCode = Enum.KeyCode[tostring(keyName)]
+            local normalized = normalizeKeybindName(keyName)
+            local keyCode = Enum.KeyCode[normalized]
             if keyCode then
+                State.windowKeybind = normalized
                 Window:SetToggleKey(keyCode)
-                setStatus("Window keybind diubah menjadi " .. tostring(keyName), COLORS.success)
+                requestConfigSave()
+                setStatus("Window keybind diubah menjadi " .. normalized, COLORS.success)
             end
         end,
     })
-    compactElement(windowKeybind, 15, 13)
+    compactElement(State.windowKeybindControl, 15, 13)
 
+    State.autoSaveToggle = SettingsTab:Toggle({
+        Title = "Auto Save Config",
+        Desc = "Simpan perubahan konfigurasi secara otomatis.",
+        Icon = "save",
+        IconSize = 18,
+        Value = State.autoSave,
+        Callback = function(enabled)
+            setAutoSaveEnabled(enabled)
+            setStatus(
+                enabled and "Auto Save Config diaktifkan." or "Auto Save Config dinonaktifkan.",
+                enabled and COLORS.success or COLORS.muted
+            )
+        end,
+    })
+    compactElement(State.autoSaveToggle, 15, 13)
+
+    State.autoLoadToggle = SettingsTab:Toggle({
+        Title = "Auto Load Config",
+        Desc = "Terapkan config tersimpan secara otomatis saat script dijalankan.",
+        Icon = "folder-down",
+        IconSize = 18,
+        Value = State.autoLoad,
+        Callback = function(enabled)
+            setAutoLoadEnabled(enabled)
+            setStatus(
+                enabled and "Auto Load Config diaktifkan." or "Auto Load Config dinonaktifkan.",
+                enabled and COLORS.success or COLORS.muted
+            )
+        end,
+    })
+    compactElement(State.autoLoadToggle, 15, 13)
+
+    local configActionGroup = SettingsTab:Group({})
+    State.saveConfigButton = compactButton(configActionGroup:Button({
+        Title = "Save Config",
+        Desc = "Simpan seluruh pengaturan saat ini ke file.",
+        Icon = "save",
+        Size = "Small",
+        Callback = function()
+            local success, errorMessage = saveConfigToDisk()
+            if success then
+                setStatus("Config berhasil disimpan.", COLORS.success)
+            else
+                setStatus("Gagal menyimpan config: " .. tostring(errorMessage), COLORS.danger)
+            end
+        end,
+    }))
+
+    configActionGroup:Space()
+    State.loadConfigButton = compactButton(configActionGroup:Button({
+        Title = "Load Config",
+        Desc = "Muat dan terapkan file config yang tersimpan.",
+        Icon = "folder-down",
+        Size = "Small",
+        Callback = function()
+            local success, errorMessage = loadConfigFromDisk()
+            if success then
+                setStatus("Config berhasil dimuat dan diterapkan.", COLORS.success)
+            else
+                setStatus("Gagal memuat config: " .. tostring(errorMessage), COLORS.danger)
+            end
+        end,
+    }))
+
+    SettingsTab:Space()
     compactButton(SettingsTab:Button({
         Title = "Reset Dashboard",
         Desc = "Reset statistik Auto Loan pada sesi ini.",
@@ -2309,7 +2852,21 @@ local function buildGui()
     updateConfigurationVisuals()
     updateDashboardUI()
     updatePrestigeParagraph()
-    setStatus(State.lastStatusText, COLORS.warning)
+    updateConfigManagerUI()
+
+    if State.autoSave and State.configSupported and not configFileExists() then
+        saveConfigToDisk()
+    end
+
+    if State.startupConfigLoaded then
+        setStatus("Auto Load: config berhasil diterapkan saat startup.", COLORS.success)
+    elseif State.startupConfigError then
+        setStatus("Config startup gagal dibaca: " .. tostring(State.startupConfigError), COLORS.danger)
+    elseif not State.configSupported then
+        setStatus("File config tidak didukung executor ini; pengaturan hanya tersimpan selama sesi.", COLORS.warning)
+    else
+        setStatus(State.lastStatusText, COLORS.warning)
+    end
 
     -- WindUI does not always select the first tab automatically.
     -- Select Dashboard now and every time the window is reopened.
@@ -2427,6 +2984,7 @@ function API.SetDuration(minutes)
     State.nextAutoLoanAt = 0
     updateConfigurationVisuals()
     refreshUI(false)
+    requestConfigSave()
     return true
 end
 
@@ -2454,6 +3012,7 @@ function API.SetRarityEnabled(rarity, enabled)
     State.nextAutoLoanAt = 0
     updateConfigurationVisuals()
     refreshUI(true)
+    requestConfigSave()
     return true
 end
 
@@ -2478,6 +3037,7 @@ function API.SetWhitelist(whitelist)
     State.nextAutoLoanAt = 0
     updateConfigurationVisuals()
     refreshUI(true)
+    requestConfigSave()
     return true
 end
 
@@ -2566,6 +3126,39 @@ function API.GetAutomationState()
         prestiging = State.prestiging,
         duration = State.selectedDuration,
         whitelist = API.GetWhitelist(),
+    }
+end
+
+function API.SaveConfig()
+    return saveConfigToDisk()
+end
+
+function API.LoadConfig()
+    return loadConfigFromDisk()
+end
+
+function API.SetAutoSave(enabled)
+    setAutoSaveEnabled(enabled)
+    return State.autoSave
+end
+
+function API.SetAutoLoad(enabled)
+    setAutoLoadEnabled(enabled)
+    return State.autoLoad
+end
+
+function API.GetConfigState()
+    return {
+        supported = State.configSupported,
+        path = CONFIG_FILE,
+        exists = configFileExists(),
+        autoSave = State.autoSave,
+        autoLoad = State.autoLoad,
+        dirty = State.configDirty,
+        lastSavedAt = State.configLastSavedAt,
+        startupLoaded = State.startupConfigLoaded,
+        startupError = State.startupConfigError,
+        windowKeybind = State.windowKeybind,
     }
 end
 
