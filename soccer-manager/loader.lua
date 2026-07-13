@@ -7,11 +7,12 @@
       - Menampilkan seluruh pemain yang sedang loan out.
       - Collect All untuk seluruh loan yang sudah selesai.
       - Loan Top berdasarkan whitelist rarity dan durasi yang dipilih.
-      - Toggle Auto Loan, Auto Collect, dan Auto Prestige.
+      - Toggle Auto Loan, Auto Collect, Auto Match, dan Auto Prestige.
       - Loan Duration dan Rarity Whitelist berada tepat di atas toggle Auto Loan.
       - Pilihan durasi diambil dari LoanConfig.Durations.
       - Dashboard sesi Auto Loan: terkirim, masih berputar, selesai, dan income.
       - Config file: Save, Load, Auto Save, dan Auto Load per PlaceId.
+      - Polling-only UI refresh; tidak memakai callback DataChanged game.
       - Tidak mengubah atau membutuhkan ClubManager.
 
     API manual:
@@ -28,6 +29,7 @@
       LoanOutGUI.ToggleAutoLoan()
       LoanOutGUI.ToggleAutoCollect()
       LoanOutGUI.ToggleAutoPrestige()
+      LoanOutGUI.ToggleAutoMatch()
       LoanOutGUI.PrestigeNow()
       LoanOutGUI.SaveConfig()
       LoanOutGUI.LoadConfig()
@@ -46,6 +48,18 @@ local HttpService = game:GetService("HttpService")
 
 local LocalPlayer = Players.LocalPlayer
 local Environment = if type(getgenv) == "function" then getgenv() else _G
+
+-- Hentikan build sebelumnya seawal mungkin. Build lama memasang callback
+-- DataChanged pada free-thread Signal game, sehingga callback tersebut dapat
+-- terus memanggil WindUI walau build baru sedang dibuat.
+do
+    local previous = Environment.LoanOutGUI
+    if type(previous) == "table" and type(previous.Stop) == "function" then
+        pcall(function()
+            previous.Stop()
+        end)
+    end
+end
 
 local function getCurrentGameName()
     local fallbackName = tostring(game.Name or "Unknown Game")
@@ -72,7 +86,7 @@ end
 local GAME_NAME = getCurrentGameName()
 local HUB_TITLE = "xSansHUB - " .. GAME_NAME
 
-local CONFIG_VERSION = 1
+local CONFIG_VERSION = 2
 local CONFIG_ROOT = "xSansHUB"
 local CONFIG_FOLDER = CONFIG_ROOT .. "/LoanOutManager"
 local CONFIG_FILE = CONFIG_FOLDER .. "/" .. tostring(game.PlaceId) .. ".json"
@@ -137,6 +151,9 @@ local function mergeRawConfig(target, source)
     if source.autoPrestige ~= nil then
         target.autoPrestige = source.autoPrestige == true
     end
+    if source.autoMatch ~= nil then
+        target.autoMatch = source.autoMatch == true
+    end
     if tonumber(source.duration) then
         target.duration = tonumber(source.duration)
     end
@@ -167,6 +184,7 @@ local AUTO_RETRY_DELAY = 2
 local PRESTIGE_CHECK_INTERVAL = 2
 local PRESTIGE_RETRY_DELAY = 8
 local PRESTIGE_SUCCESS_DELAY = 3
+local AUTO_MATCH_RETRY_DELAY = 5
 local TRACKED_LOAN_GRACE = 5
 
 local FALLBACK_DURATIONS = {5, 15, 30, 60}
@@ -290,6 +308,11 @@ local State = {
     autoLoan = PersistentConfig.autoLoan == true,
     autoCollect = PersistentConfig.autoCollect == true,
     autoPrestige = PersistentConfig.autoPrestige == true,
+    autoMatch = PersistentConfig.autoMatch == true,
+    settingAutoMatch = false,
+    autoMatchPendingSync = PersistentConfig.autoMatch ~= nil and StartupConfigLoaded,
+    autoMatchSyncIgnoreUntil = 0,
+    nextAutoMatchSyncAt = 0,
     autoSave = PersistentConfig.autoSave ~= false,
     autoLoad = PersistentConfig.autoLoad ~= false,
     windowKeybind = normalizeKeybindName(PersistentConfig.windowKeybind),
@@ -331,6 +354,7 @@ local State = {
     prestigeButton = nil,
     autoLoanToggle = nil,
     autoCollectToggle = nil,
+    autoMatchToggle = nil,
     autoPrestigeToggle = nil,
     durationDropdown = nil,
     rarityDropdown = nil,
@@ -392,6 +416,7 @@ local function syncPersistentConfig()
     PersistentConfig.autoLoan = State.autoLoan == true
     PersistentConfig.autoCollect = State.autoCollect == true
     PersistentConfig.autoPrestige = State.autoPrestige == true
+    PersistentConfig.autoMatch = State.autoMatch == true
     PersistentConfig.autoSave = State.autoSave == true
     PersistentConfig.autoLoad = State.autoLoad == true
     PersistentConfig.windowKeybind = normalizeKeybindName(State.windowKeybind)
@@ -413,6 +438,7 @@ local function buildConfigSnapshot()
         autoLoan = State.autoLoan == true,
         autoCollect = State.autoCollect == true,
         autoPrestige = State.autoPrestige == true,
+        autoMatch = State.autoMatch == true,
         duration = tonumber(State.selectedDuration) or 5,
         rarityWhitelist = copyWhitelistForConfig(),
     }
@@ -675,6 +701,24 @@ local function updateAutomationButtons()
             State.autoCollectToggle:Set(State.autoCollect, false)
         end
         State.autoCollectToggle:SetDesc("Collect seluruh loan yang selesai sebelum Auto Loan mengisi slot kembali.")
+    end
+
+    if State.autoMatchToggle and type(State.autoMatchToggle.Set) == "function" then
+        if State.autoMatchToggle.Value ~= State.autoMatch then
+            State.autoMatchToggle:Set(State.autoMatch, false)
+        end
+
+        local autoMatchDesc
+        if State.settingAutoMatch then
+            autoMatchDesc = "SYNCING • mengirim pengaturan Auto Match ke server."
+        elseif State.autoMatchPendingSync then
+            autoMatchDesc = "PENDING • menunggu Networker untuk menerapkan config Auto Match."
+        elseif State.autoMatch then
+            autoMatchDesc = "ACTIVE • game akan menjalankan match berikutnya secara otomatis."
+        else
+            autoMatchDesc = "Game tidak akan memulai match berikutnya secara otomatis."
+        end
+        State.autoMatchToggle:SetDesc(autoMatchDesc)
     end
 
     if State.autoPrestigeToggle and type(State.autoPrestigeToggle.Set) == "function" then
@@ -1573,6 +1617,10 @@ local function applyLoadedConfig(config)
     if config.autoPrestige ~= nil then
         State.autoPrestige = config.autoPrestige == true
     end
+    if config.autoMatch ~= nil then
+        State.autoMatch = config.autoMatch == true
+        State.autoMatchPendingSync = true
+    end
 
     State.nextAutoLoanAt = 0
     State.nextAutoCollectAt = 0
@@ -1696,6 +1744,21 @@ refreshUI = function(forceRebuild)
         return
     end
 
+    -- Settings.AutoMatch adalah source of truth dari game. Saat config belum
+    -- menunggu sinkronisasi dan request tidak sedang berjalan, ikuti perubahan
+    -- dari menu/indicator bawaan game (misalnya tombol STOP).
+    if not State.settingAutoMatch
+        and not State.autoMatchPendingSync
+        and os.clock() >= State.autoMatchSyncIgnoreUntil
+    then
+        local serverAutoMatch = getData("Settings.AutoMatch")
+        if type(serverAutoMatch) == "boolean" and serverAutoMatch ~= State.autoMatch then
+            State.autoMatch = serverAutoMatch
+            PersistentConfig.autoMatch = serverAutoMatch
+            requestConfigSave()
+        end
+    end
+
     local rows = buildRows()
     reconcileTrackedAutoLoans(rows)
     local topCard = getTopAvailableCard(forceRebuild)
@@ -1758,6 +1821,8 @@ refreshUI = function(forceRebuild)
     end
 end
 
+local tryRediscoverNetworker
+
 local function callNetwork(action, payload)
     local networker = State.networker
     if not isNetworker(networker) then
@@ -1785,7 +1850,93 @@ local function callNetwork(action, payload)
     return response, nil
 end
 
-local function tryRediscoverNetworker()
+local function setAutoMatchEnabled(enabled, announce, forceRequest)
+    enabled = enabled == true
+
+    if State.settingAutoMatch then
+        return false, "Pengaturan Auto Match sedang diproses"
+    end
+
+    local previousValue = State.autoMatch
+    State.autoMatch = enabled
+    PersistentConfig.autoMatch = enabled
+    State.autoMatchPendingSync = true
+    State.nextAutoMatchSyncAt = 0
+    updateAutomationButtons()
+    requestConfigSave()
+
+    if type(tryRediscoverNetworker) ~= "function" then
+        return false, "Networker discovery belum siap"
+    end
+
+    if not isNetworker(State.networker) then
+        tryRediscoverNetworker()
+    end
+
+    if not isNetworker(State.networker) then
+        if announce ~= false then
+            setStatus("Auto Match menunggu Networker ditemukan.", COLORS.warning)
+        end
+        return false, "Networker belum ditemukan"
+    end
+
+    State.settingAutoMatch = true
+    State.autoMatchPendingSync = false
+    updateAutomationButtons()
+
+    task.spawn(function()
+        local networker = State.networker
+        local success, response = pcall(networker.Call, networker, "SetAutoMatch", {
+            enabled = enabled,
+        })
+
+        local accepted = success
+        local errorMessage = success and nil or tostring(response)
+        if success and type(response) == "table" and response.success == false then
+            accepted = false
+            errorMessage = tostring(response.reason or "Request SetAutoMatch ditolak")
+        end
+
+        State.settingAutoMatch = false
+
+        if accepted then
+            State.autoMatch = enabled
+            PersistentConfig.autoMatch = enabled
+            State.autoMatchSyncIgnoreUntil = os.clock() + 5
+            State.nextAutoMatchSyncAt = 0
+            State.autoMatchPendingSync = false
+            requestConfigSave()
+
+            if announce ~= false then
+                setStatus(
+                    enabled and "Auto Match diaktifkan." or "Auto Match dinonaktifkan.",
+                    enabled and COLORS.success or COLORS.muted
+                )
+            end
+        else
+            local serverValue = getData("Settings.AutoMatch")
+            if type(serverValue) == "boolean" then
+                State.autoMatch = serverValue
+            else
+                State.autoMatch = previousValue
+            end
+            PersistentConfig.autoMatch = State.autoMatch
+            State.autoMatchPendingSync = forceRequest == true
+            State.nextAutoMatchSyncAt = os.clock() + AUTO_MATCH_RETRY_DELAY
+
+            if announce ~= false then
+                setStatus("Auto Match gagal: " .. tostring(errorMessage), COLORS.danger)
+            end
+        end
+
+        updateAutomationButtons()
+        refreshUI(false)
+    end)
+
+    return true
+end
+
+tryRediscoverNetworker = function()
     if isNetworker(State.networker) then
         return true
     end
@@ -2152,7 +2303,22 @@ local function getReadyLoanCount()
 end
 
 local function runAutomationTick()
-    if not State.running or State.collecting or State.loaning or State.prestiging then
+    if not State.running then
+        return
+    end
+
+    if State.autoMatchPendingSync
+        and not State.settingAutoMatch
+        and os.clock() >= State.nextAutoMatchSyncAt
+    then
+        if tryRediscoverNetworker() then
+            setAutoMatchEnabled(State.autoMatch, false, true)
+        else
+            State.nextAutoMatchSyncAt = os.clock() + AUTO_MATCH_RETRY_DELAY
+        end
+    end
+
+    if State.collecting or State.loaning or State.prestiging then
         return
     end
 
@@ -2363,7 +2529,7 @@ local function buildGui()
 
     local Window = WindUI:CreateWindow({
         Title = HUB_TITLE,
-        Author = "Auto Loan • Auto Collect • Auto Prestige",
+        Author = "Auto Loan • Auto Collect • Auto Match • Auto Prestige",
         Folder = "xSansHUB_LoanOutManager",
         Icon = "handshake",
         Theme = "Indigo",
@@ -2647,6 +2813,18 @@ local function buildGui()
     })
     compactElement(State.autoCollectToggle, 15, 13)
 
+    State.autoMatchToggle = AutomationTab:Toggle({
+        Title = "Auto Match",
+        Desc = "Mulai match berikutnya secara otomatis menggunakan setting bawaan game.",
+        Icon = "play",
+        IconSize = 18,
+        Value = State.autoMatch,
+        Callback = function(enabled)
+            setAutoMatchEnabled(enabled)
+        end,
+    })
+    compactElement(State.autoMatchToggle, 15, 13)
+
     State.autoPrestigeToggle = AutomationTab:Toggle({
         Title = "Auto Prestige",
         Desc = "Prestige otomatis saat eligible. Division dan Coins akan di-reset.",
@@ -2888,53 +3066,9 @@ local function buildGui()
     })
 end
 
-local function connectDataChanged()
-    local eventBus = State.eventBus
-    if eventBus == nil or type(eventBus.Connect) ~= "function" then
-        return
-    end
-
-    local success, connection = pcall(function()
-        return eventBus:Connect("DataChanged", function(change)
-            local path = change and change.path
-            if type(path) ~= "string" then
-                return
-            end
-
-            local loanRelevant = string.find(path, "Loans", 1, true) == 1
-                or string.find(path, "Squad.Owned", 1, true) == 1
-                or string.find(path, "Squad.StartingEleven", 1, true) == 1
-                or string.find(path, "Training", 1, true) == 1
-                or string.find(path, "Promotion", 1, true) == 1
-
-            local prestigeRelevant = path == "Coins"
-                or path == "Progression.TotalWins"
-                or path == "Division.Current"
-                or string.find(path, "Squad", 1, true) == 1
-
-            -- PENTING: callback DataChanged berjalan dari ReplicatedStorage.Packages.Signal
-            -- menggunakan free thread milik game. Thread itu tidak memiliki capability
-            -- untuk mengakses Instance yang dibuat executor/WindUI. Karena itu callback
-            -- ini hanya menandai refresh; seluruh perubahan UI dilakukan oleh main loop.
-            if loanRelevant then
-                State.cachedTopCard = nil
-                State.uiRefreshRequested = true
-                State.forceUIRefreshRequested = true
-            end
-
-            if prestigeRelevant then
-                -- Pertahankan hasil Check Prestige sampai hasil refresh baru tersedia.
-                State.nextPrestigeCheckAt = 0
-                State.uiRefreshRequested = true
-            end
-        end)
-    end)
-
-    if success and connection then
-        addConnection(connection)
-    end
-end
-
+-- DataChanged sengaja tidak dihubungkan. Signal internal game menjalankan
+-- callback pada free thread yang tidak memiliki capability untuk mengubah
+-- Instance milik executor/WindUI. Refresh dilakukan melalui polling.
 local API = {}
 
 function API.Toggle()
@@ -3095,6 +3229,10 @@ function API.ToggleAutoPrestige()
     setAutoPrestigeEnabled(not State.autoPrestige)
 end
 
+function API.ToggleAutoMatch()
+    return setAutoMatchEnabled(not State.autoMatch)
+end
+
 function API.SetAutoLoan(enabled)
     setAutoLoanEnabled(enabled)
 end
@@ -3105,6 +3243,19 @@ end
 
 function API.SetAutoPrestige(enabled)
     setAutoPrestigeEnabled(enabled)
+end
+
+function API.SetAutoMatch(enabled)
+    return setAutoMatchEnabled(enabled)
+end
+
+function API.GetAutoMatchState()
+    return {
+        enabled = State.autoMatch,
+        syncing = State.settingAutoMatch,
+        pending = State.autoMatchPendingSync,
+        serverValue = getData("Settings.AutoMatch"),
+    }
 end
 
 function API.PrestigeNow()
@@ -3132,6 +3283,8 @@ function API.GetAutomationState()
         autoLoan = State.autoLoan,
         autoCollect = State.autoCollect,
         autoPrestige = State.autoPrestige,
+        autoMatch = State.autoMatch,
+        settingAutoMatch = State.settingAutoMatch,
         prestiging = State.prestiging,
         duration = State.selectedDuration,
         whitelist = API.GetWhitelist(),
@@ -3180,6 +3333,8 @@ function API.Stop()
     State.autoLoan = false
     State.autoCollect = false
     State.autoPrestige = false
+    State.settingAutoMatch = false
+    State.autoMatchPendingSync = false
     State.prestiging = false
     disconnectAll()
     clearRows()
@@ -3217,19 +3372,24 @@ task.spawn(function()
         return
     end
 
-    connectDataChanged()
+    -- Terapkan Auto Match dari config setelah Networker tersedia. Jika tidak
+    -- ada nilai config, refreshUI akan mengikuti Settings.AutoMatch milik game.
+    if State.autoMatchPendingSync then
+        setAutoMatchEnabled(State.autoMatch, false, true)
+    end
+
+    -- Polling-only mode: jangan hubungkan DataChanged milik game. Callback
+    -- ReplicatedStorage.Packages.Signal berjalan pada free thread yang tidak
+    -- boleh mengakses Instance/WindUI. Semua data dibaca ulang dari loop ini.
     refreshUI(true)
 
     while State.running do
         task.wait(POLL_INTERVAL)
 
-        -- Semua operasi WindUI dijalankan dari thread utama script ini, bukan dari
-        -- callback free-thread DataChanged milik game.
-        local forceRefresh = State.forceUIRefreshRequested == true
-        State.uiRefreshRequested = false
-        State.forceUIRefreshRequested = false
-
-        refreshUI(forceRefresh)
+        -- Polling-only: seluruh pembacaan data dan perubahan WindUI dilakukan
+        -- dari loop milik script ini. Tidak ada callback Signal game yang dapat
+        -- memanggil SetDesc/SetTitle dari thread tanpa capability.
+        refreshUI(false)
         runAutomationTick()
     end
 end)
