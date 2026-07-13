@@ -7,7 +7,7 @@
       - Menampilkan seluruh pemain yang sedang loan out.
       - Collect All untuk seluruh loan yang sudah selesai.
       - Loan Top berdasarkan whitelist rarity dan durasi yang dipilih.
-      - Toggle Auto Loan, Auto Collect, Auto Match, dan Auto Prestige.
+      - Toggle Auto Loan, Auto Collect, Auto Match, Auto Open Packs, dan Auto Prestige.
       - Loan Duration dan Rarity Whitelist berada tepat di atas toggle Auto Loan.
       - Pilihan durasi diambil dari LoanConfig.Durations.
       - Dashboard sesi Auto Loan: terkirim, masih berputar, selesai, dan income.
@@ -30,6 +30,7 @@
       LoanOutGUI.ToggleAutoCollect()
       LoanOutGUI.ToggleAutoPrestige()
       LoanOutGUI.ToggleAutoMatch()
+      LoanOutGUI.ToggleAutoOpenPacks()
       LoanOutGUI.PrestigeNow()
       LoanOutGUI.SaveConfig()
       LoanOutGUI.LoadConfig()
@@ -86,7 +87,7 @@ end
 local GAME_NAME = getCurrentGameName()
 local HUB_TITLE = "xSansHUB - " .. GAME_NAME
 
-local CONFIG_VERSION = 2
+local CONFIG_VERSION = 3
 local CONFIG_ROOT = "xSansHUB"
 local CONFIG_FOLDER = CONFIG_ROOT .. "/LoanOutManager"
 local CONFIG_FILE = CONFIG_FOLDER .. "/" .. tostring(game.PlaceId) .. ".json"
@@ -154,6 +155,9 @@ local function mergeRawConfig(target, source)
     if source.autoMatch ~= nil then
         target.autoMatch = source.autoMatch == true
     end
+    if source.autoOpenPacks ~= nil then
+        target.autoOpenPacks = source.autoOpenPacks == true
+    end
     if tonumber(source.duration) then
         target.duration = tonumber(source.duration)
     end
@@ -185,6 +189,7 @@ local PRESTIGE_CHECK_INTERVAL = 2
 local PRESTIGE_RETRY_DELAY = 8
 local PRESTIGE_SUCCESS_DELAY = 3
 local AUTO_MATCH_RETRY_DELAY = 5
+local AUTO_PACK_RETRY_DELAY = 8
 local TRACKED_LOAN_GRACE = 5
 
 local FALLBACK_DURATIONS = {5, 15, 30, 60}
@@ -309,10 +314,15 @@ local State = {
     autoCollect = PersistentConfig.autoCollect == true,
     autoPrestige = PersistentConfig.autoPrestige == true,
     autoMatch = PersistentConfig.autoMatch == true,
+    autoOpenPacks = PersistentConfig.autoOpenPacks == true,
     settingAutoMatch = false,
+    openingPacks = false,
     autoMatchPendingSync = PersistentConfig.autoMatch ~= nil and StartupConfigLoaded,
     autoMatchSyncIgnoreUntil = 0,
     nextAutoMatchSyncAt = 0,
+    nextAutoOpenPackAt = 0,
+    lastObservedPackCount = 0,
+    lastPackOpenAt = 0,
     autoSave = PersistentConfig.autoSave ~= false,
     autoLoad = PersistentConfig.autoLoad ~= false,
     windowKeybind = normalizeKeybindName(PersistentConfig.windowKeybind),
@@ -355,6 +365,7 @@ local State = {
     autoLoanToggle = nil,
     autoCollectToggle = nil,
     autoMatchToggle = nil,
+    autoOpenPacksToggle = nil,
     autoPrestigeToggle = nil,
     durationDropdown = nil,
     rarityDropdown = nil,
@@ -417,6 +428,7 @@ local function syncPersistentConfig()
     PersistentConfig.autoCollect = State.autoCollect == true
     PersistentConfig.autoPrestige = State.autoPrestige == true
     PersistentConfig.autoMatch = State.autoMatch == true
+    PersistentConfig.autoOpenPacks = State.autoOpenPacks == true
     PersistentConfig.autoSave = State.autoSave == true
     PersistentConfig.autoLoad = State.autoLoad == true
     PersistentConfig.windowKeybind = normalizeKeybindName(State.windowKeybind)
@@ -439,6 +451,7 @@ local function buildConfigSnapshot()
         autoCollect = State.autoCollect == true,
         autoPrestige = State.autoPrestige == true,
         autoMatch = State.autoMatch == true,
+        autoOpenPacks = State.autoOpenPacks == true,
         duration = tonumber(State.selectedDuration) or 5,
         rarityWhitelist = copyWhitelistForConfig(),
     }
@@ -614,6 +627,7 @@ end
 
 local getDurationLabel
 local getEnabledRarityCount
+local getOwnedPackCount
 
 local function statusKindFromColor(color)
     if color == COLORS.success then
@@ -721,6 +735,25 @@ local function updateAutomationButtons()
         State.autoMatchToggle:SetDesc(autoMatchDesc)
     end
 
+    if State.autoOpenPacksToggle and type(State.autoOpenPacksToggle.Set) == "function" then
+        if State.autoOpenPacksToggle.Value ~= State.autoOpenPacks then
+            State.autoOpenPacksToggle:Set(State.autoOpenPacks, false)
+        end
+
+        local packCount = getOwnedPackCount and getOwnedPackCount() or 0
+        local packsDesc
+        if State.openingPacks then
+            packsDesc = string.format("OPENING • memulai auto open untuk %d pack.", packCount)
+        elseif State.autoOpenPacks and packCount > 0 then
+            packsDesc = string.format("ACTIVE • %d pack tersedia dan akan dibuka otomatis.", packCount)
+        elseif State.autoOpenPacks then
+            packsDesc = "ACTIVE • menunggu pack baru tersedia."
+        else
+            packsDesc = string.format("Buka pack otomatis saat tersedia • sekarang %d pack.", packCount)
+        end
+        State.autoOpenPacksToggle:SetDesc(packsDesc)
+    end
+
     if State.autoPrestigeToggle and type(State.autoPrestigeToggle.Set) == "function" then
         if State.autoPrestigeToggle.Value ~= State.autoPrestige then
             State.autoPrestigeToggle:Set(State.autoPrestige, false)
@@ -770,6 +803,24 @@ local function setAutoCollectEnabled(enabled, announce)
                 and "Auto Collect aktif • loan selesai akan diambil otomatis."
                 or "Auto Collect dinonaktifkan.",
             State.autoCollect and COLORS.success or COLORS.muted
+        )
+    end
+end
+
+local function setAutoOpenPacksEnabled(enabled, announce)
+    State.autoOpenPacks = enabled == true
+    PersistentConfig.autoOpenPacks = State.autoOpenPacks
+    State.nextAutoOpenPackAt = 0
+    State.lastObservedPackCount = 0
+    updateAutomationButtons()
+    requestConfigSave()
+
+    if announce ~= false then
+        setStatus(
+            State.autoOpenPacks
+                and "Auto Open Packs aktif • pack akan dibuka memakai mode AUTO OPEN bawaan game."
+                or "Auto Open Packs dinonaktifkan.",
+            State.autoOpenPacks and COLORS.success or COLORS.muted
         )
     end
 end
@@ -977,7 +1028,10 @@ local function findFrameworkFromGC()
             if core ~= nil then
                 local dataService = safelyGetModule(core, "DataService")
                 local networker = rawget(core, "Networker")
-                local eventBus = rawget(core, "EventBus")
+                local eventBus = rawget(object, "bus")
+                    or rawget(object, "_bus")
+                    or rawget(core, "EventBus")
+                    or safelyGetModule(core, "EventBus")
 
                 if not foundDataService and isDataService(dataService) then
                     foundDataService = dataService
@@ -991,7 +1045,7 @@ local function findFrameworkFromGC()
                     foundEventBus = eventBus
                 end
 
-                if foundDataService and foundNetworker then
+                if foundDataService and foundNetworker and foundEventBus then
                     return foundDataService, foundNetworker, foundEventBus
                 end
             end
@@ -1129,6 +1183,21 @@ local function getData(path)
     end
 
     return value
+end
+
+
+getOwnedPackCount = function()
+    local ownedPacks = getData("Packs.Owned")
+    if type(ownedPacks) ~= "table" then
+        return 0
+    end
+
+    local total = 0
+    for _, amount in pairs(ownedPacks) do
+        total += math.max(0, tonumber(amount) or 0)
+    end
+
+    return total
 end
 
 local function getRarity(baseCard, rating)
@@ -1621,10 +1690,15 @@ local function applyLoadedConfig(config)
         State.autoMatch = config.autoMatch == true
         State.autoMatchPendingSync = true
     end
+    if config.autoOpenPacks ~= nil then
+        State.autoOpenPacks = config.autoOpenPacks == true
+    end
 
     State.nextAutoLoanAt = 0
     State.nextAutoCollectAt = 0
     State.nextPrestigeCheckAt = 0
+    State.nextAutoOpenPackAt = 0
+    State.lastObservedPackCount = 0
     State.cachedTopCard = nil
     State.configDirty = false
 
@@ -1958,13 +2032,77 @@ tryRediscoverNetworker = function()
     return isNetworker(State.networker)
 end
 
-local function fireBusEvent(eventName, payload)
+local function tryRediscoverEventBus()
     local eventBus = State.eventBus
-    if eventBus == nil or type(eventBus.Fire) ~= "function" then
-        return false
+    if eventBus ~= nil and type(eventBus.Fire) == "function" then
+        return true
     end
 
-    return pcall(eventBus.Fire, eventBus, eventName, payload)
+    local dataService, networker, discoveredEventBus = findFrameworkFromGC()
+    if isDataService(dataService) then
+        State.dataService = dataService
+    end
+    if isNetworker(networker) then
+        State.networker = networker
+    end
+    if discoveredEventBus ~= nil and type(discoveredEventBus.Fire) == "function" then
+        State.eventBus = discoveredEventBus
+    end
+
+    return State.eventBus ~= nil and type(State.eventBus.Fire) == "function"
+end
+
+local function fireBusEvent(eventName, payload)
+    if not tryRediscoverEventBus() then
+        return false, "EventBus belum ditemukan"
+    end
+
+    local eventBus = State.eventBus
+    local success, result = pcall(eventBus.Fire, eventBus, eventName, payload)
+    if not success then
+        return false, tostring(result)
+    end
+
+    return true, result
+end
+
+local function openOwnedPacksAutomatically(isAutomatic)
+    if State.openingPacks then
+        return false, "Auto Open Packs sedang diproses"
+    end
+
+    local packCount = getOwnedPackCount()
+    if packCount <= 0 then
+        return false, "Tidak ada pack untuk dibuka"
+    end
+
+    State.openingPacks = true
+    updateAutomationButtons()
+
+    local success, errorMessage = fireBusEvent("PacksInventoryOpen", {
+        auto = true,
+    })
+
+    State.openingPacks = false
+    State.lastObservedPackCount = packCount
+    State.lastPackOpenAt = os.clock()
+    State.nextAutoOpenPackAt = os.clock() + AUTO_PACK_RETRY_DELAY
+    updateAutomationButtons()
+
+    if success then
+        if not isAutomatic then
+            setStatus(
+                string.format("AUTO OPEN dimulai untuk %d pack.", packCount),
+                COLORS.success
+            )
+        end
+        return true
+    end
+
+    if not isAutomatic then
+        setStatus("Auto Open Packs gagal: " .. tostring(errorMessage), COLORS.danger)
+    end
+    return false, errorMessage
 end
 
 local function fetchPrestigeInfo()
@@ -2322,11 +2460,28 @@ local function runAutomationTick()
         return
     end
 
+    local now = os.clock()
+
+    -- Auto Open Packs memakai EventBus bawaan game dan tidak membutuhkan Networker.
+    -- Trigger diulang dengan cooldown bila pack masih tersisa atau event sebelumnya
+    -- terabaikan karena match/playback sedang berlangsung.
+    if State.autoOpenPacks and now >= State.nextAutoOpenPackAt then
+        local packCount = getOwnedPackCount()
+        if packCount <= 0 then
+            State.lastObservedPackCount = 0
+            State.nextAutoOpenPackAt = now + AUTO_PACK_RETRY_DELAY
+        else
+            local opened = openOwnedPacksAutomatically(true)
+            State.nextAutoOpenPackAt = now + AUTO_PACK_RETRY_DELAY
+            if opened then
+                return
+            end
+        end
+    end
+
     if not tryRediscoverNetworker() then
         return
     end
-
-    local now = os.clock()
 
     -- Prestige memiliki prioritas tertinggi ketika seluruh requirement sudah terpenuhi.
     if State.autoPrestige and now >= State.nextPrestigeCheckAt then
@@ -2529,7 +2684,7 @@ local function buildGui()
 
     local Window = WindUI:CreateWindow({
         Title = HUB_TITLE,
-        Author = "Auto Loan • Auto Collect • Auto Match • Auto Prestige",
+        Author = "Auto Loan • Auto Collect • Auto Match • Auto Packs • Auto Prestige",
         Folder = "xSansHUB_LoanOutManager",
         Icon = "handshake",
         Theme = "Indigo",
@@ -2824,6 +2979,18 @@ local function buildGui()
         end,
     })
     compactElement(State.autoMatchToggle, 15, 13)
+
+    State.autoOpenPacksToggle = AutomationTab:Toggle({
+        Title = "Auto Open Packs",
+        Desc = "Buka seluruh pack yang tersedia menggunakan mode AUTO OPEN bawaan game.",
+        Icon = "package",
+        IconSize = 18,
+        Value = State.autoOpenPacks,
+        Callback = function(enabled)
+            setAutoOpenPacksEnabled(enabled)
+        end,
+    })
+    compactElement(State.autoOpenPacksToggle, 15, 13)
 
     State.autoPrestigeToggle = AutomationTab:Toggle({
         Title = "Auto Prestige",
@@ -3229,6 +3396,10 @@ function API.ToggleAutoPrestige()
     setAutoPrestigeEnabled(not State.autoPrestige)
 end
 
+function API.ToggleAutoOpenPacks()
+    setAutoOpenPacksEnabled(not State.autoOpenPacks)
+end
+
 function API.ToggleAutoMatch()
     return setAutoMatchEnabled(not State.autoMatch)
 end
@@ -3245,8 +3416,26 @@ function API.SetAutoPrestige(enabled)
     setAutoPrestigeEnabled(enabled)
 end
 
+function API.SetAutoOpenPacks(enabled)
+    setAutoOpenPacksEnabled(enabled)
+end
+
 function API.SetAutoMatch(enabled)
     return setAutoMatchEnabled(enabled)
+end
+
+function API.OpenPacksNow()
+    return openOwnedPacksAutomatically(false)
+end
+
+function API.GetAutoOpenPacksState()
+    return {
+        enabled = State.autoOpenPacks,
+        opening = State.openingPacks,
+        owned = getOwnedPackCount(),
+        lastOpenedAt = State.lastPackOpenAt,
+        nextAttemptAt = State.nextAutoOpenPackAt,
+    }
 end
 
 function API.GetAutoMatchState()
@@ -3284,6 +3473,9 @@ function API.GetAutomationState()
         autoCollect = State.autoCollect,
         autoPrestige = State.autoPrestige,
         autoMatch = State.autoMatch,
+        autoOpenPacks = State.autoOpenPacks,
+        openingPacks = State.openingPacks,
+        ownedPacks = getOwnedPackCount(),
         settingAutoMatch = State.settingAutoMatch,
         prestiging = State.prestiging,
         duration = State.selectedDuration,
@@ -3333,6 +3525,8 @@ function API.Stop()
     State.autoLoan = false
     State.autoCollect = false
     State.autoPrestige = false
+    State.autoOpenPacks = false
+    State.openingPacks = false
     State.settingAutoMatch = false
     State.autoMatchPendingSync = false
     State.prestiging = false
