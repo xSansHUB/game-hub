@@ -3,11 +3,12 @@
 
     Fitur:
       - Menggunakan WindUI dengan keybind G dan floating OpenButton.
+      - Semua action button memakai layout vertikal full-width agar tidak overlap atau terpotong.
       - Title menggunakan nama game dan author xSansHUB.
       - Menampilkan seluruh pemain yang sedang loan out.
       - Collect All untuk seluruh loan yang sudah selesai.
       - Loan Top berdasarkan whitelist rarity dan durasi yang dipilih.
-      - Toggle Auto Loan, Auto Collect, Auto Play, Auto Open Packs, Auto Equip Best stabil (pause Auto Play sampai lineup tidak berubah), Auto Join International Cup, Auto Collect Cup Rewards, Auto Collect PackDrop, Auto Conveyor, Anti AFK, Lock Position, dan Auto Prestige.
+      - Toggle Auto Loan, Auto Collect, Auto Play, Auto Open Packs, Auto Claim Playtime Rewards, Auto Equip Best stabil (pause Auto Play sampai lineup tidak berubah), Auto Join International Cup, Auto Collect Cup Rewards, Auto Collect PackDrop, Auto Conveyor, Anti AFK, Lock Position, dan Auto Prestige.
       - Visual Fill International Cup: membuka menu Cup dan mengisi slot React melalui simulasi tombol UI.
       - Movement: anti tabrak sesama player tanpa anchor, Back to Base melalui Workspace.World.Plots, dan recovery Auto Conveyor pada part Animed Convoyor.
       - Loan Duration dan Rarity Whitelist berada tepat di atas toggle Auto Loan.
@@ -33,6 +34,9 @@
       LoanOutGUI.ToggleAutoPrestige()
       LoanOutGUI.ToggleAutoMatch()
       LoanOutGUI.ToggleAutoOpenPacks()
+      LoanOutGUI.SetPackPickMode("best_rarity" / "best_ovr" / "best_rarity_ovr")
+      LoanOutGUI.ToggleAutoClaimPlayTimeRewards()
+      LoanOutGUI.ClaimPlayTimeRewardsNow()
       LoanOutGUI.ToggleAutoEquipBest()
       LoanOutGUI.ToggleAutoJoinWorldCup()
       LoanOutGUI.ToggleAutoCollectWorldCupRewards()
@@ -109,7 +113,7 @@ end
 local GAME_NAME = getCurrentGameName()
 local HUB_TITLE = GAME_NAME
 
-local CONFIG_VERSION = 11
+local CONFIG_VERSION = 13
 local CONFIG_ROOT = "xSansHUB"
 local CONFIG_FOLDER = CONFIG_ROOT .. "/LoanOutManager"
 local CONFIG_FILE = CONFIG_FOLDER .. "/" .. tostring(game.PlaceId) .. ".json"
@@ -144,6 +148,45 @@ local function worldCupSquadModeLabel(value)
         return "Last Team"
     end
     return "Best Rarity / OVR"
+end
+
+local PACK_PICK_MODE_RARITY = "best_rarity"
+local PACK_PICK_MODE_OVR = "best_ovr"
+local PACK_PICK_MODE_RARITY_OVR = "best_rarity_ovr"
+
+local function normalizePackPickMode(value)
+    value = tostring(value or PACK_PICK_MODE_RARITY_OVR)
+
+    if value == PACK_PICK_MODE_RARITY
+        or value == "Best Rarity"
+        or value == "rarity"
+    then
+        return PACK_PICK_MODE_RARITY
+    end
+
+    if value == PACK_PICK_MODE_OVR
+        or value == "Best OVR"
+        or value == "ovr"
+        or value == "rating"
+    then
+        return PACK_PICK_MODE_OVR
+    end
+
+    return PACK_PICK_MODE_RARITY_OVR
+end
+
+local function packPickModeLabel(value)
+    value = normalizePackPickMode(value)
+
+    if value == PACK_PICK_MODE_RARITY then
+        return "Best Rarity"
+    end
+
+    if value == PACK_PICK_MODE_OVR then
+        return "Best OVR"
+    end
+
+    return "Best Rarity + OVR"
 end
 
 local function configFileExists()
@@ -208,6 +251,12 @@ local function mergeRawConfig(target, source)
     end
     if source.autoOpenPacks ~= nil then
         target.autoOpenPacks = source.autoOpenPacks == true
+    end
+    if source.packPickMode ~= nil then
+        target.packPickMode = normalizePackPickMode(source.packPickMode)
+    end
+    if source.autoClaimPlayTimeRewards ~= nil then
+        target.autoClaimPlayTimeRewards = source.autoClaimPlayTimeRewards == true
     end
     if source.autoEquipBest ~= nil then
         target.autoEquipBest = source.autoEquipBest == true
@@ -380,6 +429,7 @@ if PersistentConfig.autoLoad == nil then
 end
 PersistentConfig.windowKeybind = normalizeKeybindName(PersistentConfig.windowKeybind)
 PersistentConfig.worldCupSquadMode = normalizeWorldCupSquadMode(PersistentConfig.worldCupSquadMode)
+PersistentConfig.packPickMode = normalizePackPickMode(PersistentConfig.packPickMode)
 if PersistentConfig.autoCollectWorldCupRewards == nil then
     PersistentConfig.autoCollectWorldCupRewards = true
 end
@@ -397,6 +447,10 @@ if PersistentConfig.autoConveyor == nil then
 end
 if PersistentConfig.antiAfk == nil then
     PersistentConfig.antiAfk = true
+end
+
+if PersistentConfig.autoClaimPlayTimeRewards == nil then
+    PersistentConfig.autoClaimPlayTimeRewards = false
 end
 
 -- Migrasi config lama: field autoMatch sebelumnya hanya mengatur tombol STOP.
@@ -440,6 +494,8 @@ local State = {
     autoPrestige = PersistentConfig.autoPrestige == true,
     autoMatch = (PersistentConfig.autoPlay ~= nil and PersistentConfig.autoPlay or PersistentConfig.autoMatch) == true,
     autoOpenPacks = PersistentConfig.autoOpenPacks == true,
+    packPickMode = normalizePackPickMode(PersistentConfig.packPickMode),
+    autoClaimPlayTimeRewards = PersistentConfig.autoClaimPlayTimeRewards == true,
     autoEquipBest = PersistentConfig.autoEquipBest == true,
     autoJoinWorldCup = PersistentConfig.autoJoinWorldCup == true,
     autoCollectWorldCupRewards = PersistentConfig.autoCollectWorldCupRewards ~= false,
@@ -453,6 +509,7 @@ local State = {
     worldCupSquadMode = normalizeWorldCupSquadMode(PersistentConfig.worldCupSquadMode),
     settingAutoMatch = false,
     openingPacks = false,
+    claimingPlayTimeRewards = false,
     equippingBest = false,
     joiningWorldCup = false,
     collectingWorldCupReward = false,
@@ -468,8 +525,18 @@ local State = {
     nextAutoMatchSyncAt = 0,
     nextAutoPlayEnsureAt = 0,
     nextAutoOpenPackAt = 0,
+    nextPlayTimeClaimAt = 0,
+    lastPlayTimeClaimAt = 0,
+    lastPlayTimeClaimCount = 0,
     lastObservedPackCount = 0,
     lastPackOpenAt = 0,
+    lastPackPickAt = 0,
+    lastPackPickTier = nil,
+    lastPackPickIndex = nil,
+    lastPackPickCard = nil,
+    lastPackOpenCount = 0,
+    lastPackPickCount = 0,
+    lastPackOpenError = nil,
     lastEquipBestSignature = nil,
     lastEquipBestAt = 0,
     lastEquipBestResult = "idle",
@@ -526,6 +593,8 @@ local State = {
     loanConfig = nil,
     skillsConfig = nil,
     worldCupConfig = nil,
+    playTimeConfig = nil,
+    packConfig = nil,
     formationLayout = nil,
     cardResolve = nil,
 
@@ -558,6 +627,8 @@ local State = {
     autoCollectToggle = nil,
     autoMatchToggle = nil,
     autoOpenPacksToggle = nil,
+    packPickModeDropdown = nil,
+    autoClaimPlayTimeRewardsToggle = nil,
     autoEquipBestToggle = nil,
     autoJoinWorldCupToggle = nil,
     autoCollectWorldCupRewardsToggle = nil,
@@ -643,6 +714,8 @@ local function syncPersistentConfig()
     PersistentConfig.autoPlay = State.autoMatch == true
     PersistentConfig.autoMatch = State.autoMatch == true -- compatibility untuk config lama
     PersistentConfig.autoOpenPacks = State.autoOpenPacks == true
+    PersistentConfig.packPickMode = normalizePackPickMode(State.packPickMode)
+    PersistentConfig.autoClaimPlayTimeRewards = State.autoClaimPlayTimeRewards == true
     PersistentConfig.autoEquipBest = State.autoEquipBest == true
     PersistentConfig.autoJoinWorldCup = State.autoJoinWorldCup == true
     PersistentConfig.autoCollectWorldCupRewards = State.autoCollectWorldCupRewards == true
@@ -676,6 +749,8 @@ local function buildConfigSnapshot()
         autoPlay = State.autoMatch == true,
         autoMatch = State.autoMatch == true, -- compatibility untuk versi lama
         autoOpenPacks = State.autoOpenPacks == true,
+        packPickMode = normalizePackPickMode(State.packPickMode),
+        autoClaimPlayTimeRewards = State.autoClaimPlayTimeRewards == true,
         autoEquipBest = State.autoEquipBest == true,
         autoJoinWorldCup = State.autoJoinWorldCup == true,
         autoCollectWorldCupRewards = State.autoCollectWorldCupRewards == true,
@@ -981,19 +1056,68 @@ local function updateAutomationButtons()
         end
 
         local packCount = Runtime.getOwnedPackCount and Runtime.getOwnedPackCount() or 0
+        local pickMode = packPickModeLabel(State.packPickMode)
         local packsDesc
         if State.openingPacks then
-            packsDesc = string.format("OPENING • memulai auto open untuk %d pack.", packCount)
+            packsDesc = string.format(
+                "OPENING • %d pack • Pick Pack: %s.",
+                packCount,
+                pickMode
+            )
         elseif State.autoOpenPacks and packCount > 0 then
-            packsDesc = string.format("ACTIVE • %d pack tersedia dan akan dibuka otomatis.", packCount)
+            packsDesc = string.format(
+                "ACTIVE • %d pack tersedia • Pick Pack: %s.",
+                packCount,
+                pickMode
+            )
         elseif State.autoOpenPacks then
-            packsDesc = "ACTIVE • menunggu pack baru tersedia."
+            packsDesc = string.format("ACTIVE • menunggu pack • Pick Pack: %s.", pickMode)
         else
-            packsDesc = string.format("Buka pack otomatis saat tersedia • sekarang %d pack.", packCount)
+            packsDesc = string.format(
+                "%d pack tersedia • Pick Pack: %s.",
+                packCount,
+                pickMode
+            )
         end
         State.autoOpenPacksToggle:SetDesc(packsDesc)
     end
 
+
+    if State.autoClaimPlayTimeRewardsToggle
+        and type(State.autoClaimPlayTimeRewardsToggle.Set) == "function"
+    then
+        if State.autoClaimPlayTimeRewardsToggle.Value ~= State.autoClaimPlayTimeRewards then
+            State.autoClaimPlayTimeRewardsToggle:Set(State.autoClaimPlayTimeRewards, false)
+        end
+
+        local playTimeState = Runtime.getPlayTimeRewardState
+            and Runtime.getPlayTimeRewardState()
+            or {readyCount = 0}
+        local playTimeDesc
+
+        if State.claimingPlayTimeRewards then
+            playTimeDesc = string.format(
+                "CLAIMING • %d reward siap.",
+                tonumber(playTimeState.readyCount) or 0
+            )
+        elseif State.autoClaimPlayTimeRewards and (tonumber(playTimeState.readyCount) or 0) > 0 then
+            playTimeDesc = string.format(
+                "ACTIVE • %d reward siap diklaim.",
+                tonumber(playTimeState.readyCount) or 0
+            )
+        elseif State.autoClaimPlayTimeRewards and playTimeState.nextIn ~= nil then
+            playTimeDesc = string.format(
+                "ACTIVE • reward berikutnya sekitar %d menit.",
+                math.max(1, math.ceil((tonumber(playTimeState.nextIn) or 0) / 60))
+            )
+        elseif State.autoClaimPlayTimeRewards then
+            playTimeDesc = "ACTIVE • semua reward tersedia sudah diklaim."
+        else
+            playTimeDesc = "Claim reward playtime yang sudah siap."
+        end
+
+        State.autoClaimPlayTimeRewardsToggle:SetDesc(playTimeDesc)
+    end
 
     if State.autoEquipBestToggle and type(State.autoEquipBestToggle.Set) == "function" then
         if State.autoEquipBestToggle.Value ~= State.autoEquipBest then
@@ -1352,9 +1476,44 @@ local function setAutoOpenPacksEnabled(enabled, announce)
     if announce ~= false then
         setStatus(
             State.autoOpenPacks
-                and "Auto Open Packs aktif • pack akan dibuka memakai mode AUTO OPEN bawaan game."
+                and ("Auto Open Packs aktif • Pick Pack: " .. packPickModeLabel(State.packPickMode) .. ".")
                 or "Auto Open Packs dinonaktifkan.",
             State.autoOpenPacks and COLORS.success or COLORS.muted
+        )
+    end
+end
+
+local function setPackPickMode(mode, announce)
+    State.packPickMode = normalizePackPickMode(mode)
+    PersistentConfig.packPickMode = State.packPickMode
+    State.nextAutoOpenPackAt = 0
+    syncConfigurationControls()
+    updateAutomationButtons()
+    requestConfigSave()
+
+    if announce ~= false then
+        setStatus(
+            "Pick Pack selection: " .. packPickModeLabel(State.packPickMode) .. ".",
+            COLORS.success
+        )
+    end
+
+    return State.packPickMode
+end
+
+local function setAutoClaimPlayTimeRewardsEnabled(enabled, announce)
+    State.autoClaimPlayTimeRewards = enabled == true
+    PersistentConfig.autoClaimPlayTimeRewards = State.autoClaimPlayTimeRewards
+    State.nextPlayTimeClaimAt = 0
+    updateAutomationButtons()
+    requestConfigSave()
+
+    if announce ~= false then
+        setStatus(
+            State.autoClaimPlayTimeRewards
+                and "Auto Claim Playtime Rewards aktif."
+                or "Auto Claim Playtime Rewards dinonaktifkan.",
+            State.autoClaimPlayTimeRewards and COLORS.success or COLORS.muted
         )
     end
 end
@@ -1765,6 +1924,8 @@ local function loadGameModules()
     local loanConfigModule = modulesFolder:FindFirstChild("LoanConfig")
     local skillsConfigModule = modulesFolder:FindFirstChild("SkillsConfig")
     local worldCupConfigModule = modulesFolder:FindFirstChild("WorldCupConfig")
+    local playTimeConfigModule = modulesFolder:FindFirstChild("PlayTimeConfig")
+    local packConfigModule = modulesFolder:FindFirstChild("PackConfig")
     local formationLayoutModule = modulesFolder:FindFirstChild("FormationLayout")
     local cardResolveModule = modulesFolder:FindFirstChild("CardResolve")
 
@@ -1800,6 +1961,20 @@ local function loadGameModules()
         local success, result = pcall(require, worldCupConfigModule)
         if success then
             State.worldCupConfig = result
+        end
+    end
+
+    if playTimeConfigModule then
+        local success, result = pcall(require, playTimeConfigModule)
+        if success then
+            State.playTimeConfig = result
+        end
+    end
+
+    if packConfigModule then
+        local success, result = pcall(require, packConfigModule)
+        if success then
+            State.packConfig = result
         end
     end
 
@@ -1862,6 +2037,54 @@ Runtime.getOwnedPackCount = function()
     end
 
     return total
+end
+
+Runtime.getPlayTimeRewardState = function()
+    local playTime = Runtime.getData("PlayTime")
+    local tiers = State.playTimeConfig and State.playTimeConfig.Tiers
+    local seconds = type(playTime) == "table" and (tonumber(playTime.seconds) or 0) or 0
+    local claimed = type(playTime) == "table" and playTime.claimed or nil
+
+    if type(claimed) ~= "table" then
+        claimed = {}
+    end
+
+    local result = {
+        seconds = seconds,
+        totalTiers = type(tiers) == "table" and #tiers or 0,
+        claimedCount = 0,
+        readyCount = 0,
+        readyTiers = {},
+        nextTier = nil,
+        nextIn = nil,
+        configAvailable = type(tiers) == "table",
+    }
+
+    if type(tiers) ~= "table" then
+        return result
+    end
+
+    local nextThreshold
+    for tierIndex, tier in ipairs(tiers) do
+        local isClaimed = claimed[tostring(tierIndex)] == true or claimed[tierIndex] == true
+        local threshold = math.max(0, tonumber(type(tier) == "table" and tier.min) or 0) * 60
+
+        if isClaimed then
+            result.claimedCount += 1
+        elseif seconds >= threshold then
+            result.readyCount += 1
+            result.readyTiers[#result.readyTiers + 1] = tierIndex
+        elseif nextThreshold == nil or threshold < nextThreshold then
+            nextThreshold = threshold
+            result.nextTier = tierIndex
+        end
+    end
+
+    if nextThreshold ~= nil then
+        result.nextIn = math.max(0, nextThreshold - seconds)
+    end
+
+    return result
 end
 
 local function getRarity(baseCard, rating)
@@ -2353,6 +2576,17 @@ local function syncConfigurationControls()
         end)
     end
 
+    if State.packPickModeDropdown then
+        local label = packPickModeLabel(State.packPickMode)
+        pcall(function()
+            if type(State.packPickModeDropdown.Select) == "function" then
+                State.packPickModeDropdown:Select(label)
+            elseif type(State.packPickModeDropdown.SetValue) == "function" then
+                State.packPickModeDropdown:SetValue(label)
+            end
+        end)
+    end
+
     State.syncingConfiguration = false
 end
 
@@ -2467,6 +2701,12 @@ local function applyLoadedConfig(config)
     if config.autoOpenPacks ~= nil then
         State.autoOpenPacks = config.autoOpenPacks == true
     end
+    if config.packPickMode ~= nil then
+        State.packPickMode = normalizePackPickMode(config.packPickMode)
+    end
+    if config.autoClaimPlayTimeRewards ~= nil then
+        State.autoClaimPlayTimeRewards = config.autoClaimPlayTimeRewards == true
+    end
     if config.autoEquipBest ~= nil then
         State.autoEquipBest = config.autoEquipBest == true
     end
@@ -2500,6 +2740,7 @@ local function applyLoadedConfig(config)
     State.nextAutoCollectAt = 0
     State.nextPrestigeCheckAt = 0
     State.nextAutoOpenPackAt = 0
+    State.nextPlayTimeClaimAt = 0
     State.nextAutoEquipBestAt = 0
     State.nextWorldCupCheckAt = 0
     State.nextWorldCupRewardCheckAt = 0
@@ -2692,6 +2933,7 @@ refreshUI = function(forceRebuild)
         or State.collectingWorldCupReward
         or State.fillingWorldCupVisual
         or State.pickingSpawnedPacks
+        or State.claimingPlayTimeRewards
 
     if not State.collecting then
         if readyCount > 0 and networkReady and not actionBusy then
@@ -2766,6 +3008,74 @@ local function callNetworkLoose(action, payload)
     -- Sebagian action UI seperti AutoFillBestEleven bersifat
     -- fire-and-forget dan dapat mengembalikan nil meskipun request diterima.
     return response ~= nil and response or true, nil
+end
+
+function Runtime.claimReadyPlayTimeRewards(isAutomatic)
+    if State.claimingPlayTimeRewards then
+        return false, "Claim playtime sedang diproses"
+    end
+
+    if not tryRediscoverNetworker() then
+        return false, "Networker belum ditemukan"
+    end
+
+    local rewardState = Runtime.getPlayTimeRewardState()
+    if not rewardState.configAvailable then
+        return false, "PlayTimeConfig tidak ditemukan"
+    end
+    if rewardState.readyCount <= 0 then
+        return false, "Belum ada reward playtime yang siap"
+    end
+
+    State.claimingPlayTimeRewards = true
+    updateAutomationButtons()
+
+    task.spawn(function()
+        local claimedCount = 0
+        local lastError
+
+        for _, tierIndex in ipairs(rewardState.readyTiers) do
+            if not State.running
+                or (isAutomatic and not State.autoClaimPlayTimeRewards)
+            then
+                break
+            end
+
+            local response, errorMessage = callNetworkLoose("ClaimPlayTime", {
+                tier = tierIndex,
+            })
+
+            if response then
+                claimedCount += 1
+            else
+                lastError = errorMessage
+            end
+
+            task.wait(0.25)
+        end
+
+        State.claimingPlayTimeRewards = false
+        State.lastPlayTimeClaimAt = os.time()
+        State.lastPlayTimeClaimCount = claimedCount
+        State.nextPlayTimeClaimAt = os.clock() + 5
+        State.nextAutoOpenPackAt = 0
+        updateAutomationButtons()
+        refreshUI(true)
+
+        if claimedCount > 0 then
+            setStatus(
+                string.format("Playtime reward diklaim: %d tier.", claimedCount),
+                COLORS.success
+            )
+        elseif not isAutomatic then
+            setStatus(
+                "Claim Playtime gagal: " .. tostring(lastError or "request ditolak"),
+                COLORS.danger
+            )
+        end
+    end)
+
+    return true
 end
 
 local function getPlaybackEventBus()
@@ -3050,7 +3360,204 @@ local function fireBusEvent(eventName, payload)
     return true, result
 end
 
-local function openOwnedPacksAutomatically(isAutomatic)
+Runtime.getOwnedPacksSnapshot = function()
+    local owned = Runtime.getData("Packs.Owned")
+    local snapshot = {}
+
+    if type(owned) ~= "table" then
+        return snapshot
+    end
+
+    for tier, amount in pairs(owned) do
+        local count = math.max(0, math.floor(tonumber(amount) or 0))
+        if count > 0 then
+            snapshot[tostring(tier)] = count
+        end
+    end
+
+    return snapshot
+end
+
+Runtime.getNextOwnedPackTier = function(owned)
+    if type(owned) ~= "table" then
+        return nil
+    end
+
+    local packConfig = State.packConfig
+    local order = packConfig and packConfig.Order
+    if type(order) == "table" then
+        for index = #order, 1, -1 do
+            local tier = tostring(order[index])
+            if (tonumber(owned[tier]) or 0) > 0 then
+                return tier
+            end
+        end
+    end
+
+    local positionalOrder = packConfig and packConfig.PositionalOrder
+    if type(positionalOrder) == "table" then
+        for _, tierValue in pairs(positionalOrder) do
+            local tier = tostring(tierValue)
+            if (tonumber(owned[tier]) or 0) > 0 then
+                return tier
+            end
+        end
+    end
+
+    for tier, amount in pairs(owned) do
+        if (tonumber(amount) or 0) > 0 then
+            return tostring(tier)
+        end
+    end
+
+    return nil
+end
+
+Runtime.getPackTierConfig = function(tier)
+    local packConfig = State.packConfig
+    if not packConfig or type(packConfig.Get) ~= "function" then
+        return nil
+    end
+
+    local success, result = pcall(packConfig.Get, tier)
+    if success and type(result) == "table" then
+        return result
+    end
+
+    return nil
+end
+
+Runtime.resolvePackChoiceCard = function(card, index)
+    card = type(card) == "table" and card or {}
+
+    local resolved = nil
+    local cardResolve = State.cardResolve
+    if cardResolve and type(cardResolve.Resolve) == "function" then
+        local success, result = pcall(cardResolve.Resolve, card)
+        if success and type(result) == "table" then
+            resolved = result
+        end
+    end
+
+    local baseCard = nil
+    local database = State.playerCardDatabase
+    if card.baseId ~= nil and database and type(database.GetById) == "function" then
+        local success, result = pcall(database.GetById, card.baseId)
+        if success and type(result) == "table" then
+            baseCard = result
+        end
+    end
+
+    local upgrade = tonumber(card.upgrade) or 0
+    local rating = tonumber(resolved and resolved.rating)
+        or tonumber(card.rating)
+        or ((tonumber(baseCard and baseCard.rating) or 0) + upgrade)
+
+    local rarity = resolved and resolved.rarity
+        or card.rarity
+        or (baseCard and getRarity(baseCard, rating))
+        or "Unknown"
+
+    return {
+        index = index,
+        card = card,
+        name = tostring(
+            (resolved and resolved.name)
+                or card.name
+                or (baseCard and baseCard.name)
+                or ("Choice " .. tostring(index))
+        ),
+        rating = tonumber(rating) or 0,
+        rarity = tostring(rarity),
+        rank = rarityRank(rarity),
+    }
+end
+
+Runtime.selectPackChoiceIndex = function(cards)
+    if type(cards) ~= "table" or #cards == 0 then
+        return nil, nil
+    end
+
+    local mode = normalizePackPickMode(State.packPickMode)
+    local best = nil
+
+    for index, card in ipairs(cards) do
+        local candidate = Runtime.resolvePackChoiceCard(card, index)
+        local better = best == nil
+
+        if best ~= nil and mode == PACK_PICK_MODE_RARITY then
+            better = candidate.rank > best.rank
+        elseif best ~= nil and mode == PACK_PICK_MODE_OVR then
+            better = candidate.rating > best.rating
+        elseif best ~= nil then
+            better = candidate.rank > best.rank
+                or (candidate.rank == best.rank and candidate.rating > best.rating)
+        end
+
+        if better then
+            best = candidate
+        end
+    end
+
+    return best and best.index or nil, best
+end
+
+Runtime.openOwnedPackTier = function(tier)
+    local tierConfig = Runtime.getPackTierConfig(tier)
+    local isPickPack = type(tierConfig) == "table" and tierConfig.pick == true
+
+    if not isPickPack then
+        local response, errorMessage = callNetwork("AttemptOpenOwnedPack", {
+            packTier = tier,
+        })
+
+        if not response or errorMessage then
+            return false, errorMessage or "Pack gagal dibuka"
+        end
+
+        return true, {
+            kind = "normal",
+            tier = tier,
+            card = response.card,
+        }
+    end
+
+    local pickResponse, pickError = callNetwork("OpenPickPack", {
+        packTier = tier,
+    })
+
+    if not pickResponse or pickError or type(pickResponse.cards) ~= "table" then
+        return false, pickError or "Pilihan kartu tidak tersedia"
+    end
+
+    local selectedIndex, selectedCard = Runtime.selectPackChoiceIndex(pickResponse.cards)
+    if not selectedIndex then
+        return false, "Tidak ada kartu yang dapat dipilih"
+    end
+
+    local resolvedResponse, resolveError = callNetwork("ResolvePick", {
+        index = selectedIndex,
+    })
+
+    if not resolvedResponse or resolveError then
+        return false, resolveError or "Pilihan kartu gagal dikonfirmasi"
+    end
+
+    State.lastPackPickAt = os.time()
+    State.lastPackPickTier = tier
+    State.lastPackPickIndex = selectedIndex
+    State.lastPackPickCard = selectedCard
+
+    return true, {
+        kind = "pick",
+        tier = tier,
+        index = selectedIndex,
+        selected = selectedCard,
+        card = resolvedResponse.card,
+    }
+end
+
+Runtime.openOwnedPacksAutomatically = function(isAutomatic)
     if State.openingPacks then
         return false, "Auto Open Packs sedang diproses"
     end
@@ -3060,33 +3567,81 @@ local function openOwnedPacksAutomatically(isAutomatic)
         return false, "Tidak ada pack untuk dibuka"
     end
 
+    if not tryRediscoverNetworker() then
+        return false, "Networker belum ditemukan"
+    end
+
     State.openingPacks = true
-    updateAutomationButtons()
-
-    local success, errorMessage = fireBusEvent("PacksInventoryOpen", {
-        auto = true,
-    })
-
-    State.openingPacks = false
+    State.lastPackOpenError = nil
+    State.lastPackOpenCount = 0
+    State.lastPackPickCount = 0
     State.lastObservedPackCount = packCount
-    State.lastPackOpenAt = os.clock()
-    State.nextAutoOpenPackAt = os.clock() + AUTO_PACK_RETRY_DELAY
     updateAutomationButtons()
 
-    if success then
-        if not isAutomatic then
+    task.spawn(function()
+        local owned = Runtime.getOwnedPacksSnapshot()
+        local openedCount = 0
+        local pickCount = 0
+        local lastError = nil
+        local operationLimit = math.min(100, packCount)
+
+        for _ = 1, operationLimit do
+            if not State.running then
+                break
+            end
+
+            local tier = Runtime.getNextOwnedPackTier(owned)
+            if not tier then
+                break
+            end
+
+            local success, resultOrError = Runtime.openOwnedPackTier(tier)
+            if not success then
+                lastError = tostring(resultOrError or "Pack gagal dibuka")
+                break
+            end
+
+            openedCount += 1
+            if type(resultOrError) == "table" and resultOrError.kind == "pick" then
+                pickCount += 1
+            end
+
+            owned[tier] = math.max(0, (tonumber(owned[tier]) or 1) - 1)
+            task.wait(0.2)
+        end
+
+        State.openingPacks = false
+        State.lastPackOpenAt = os.clock()
+        State.lastPackOpenCount = openedCount
+        State.lastPackPickCount = pickCount
+        State.lastPackOpenError = lastError
+        State.nextAutoOpenPackAt = os.clock() + AUTO_PACK_RETRY_DELAY
+        updateAutomationButtons()
+        refreshUI(false)
+
+        if lastError then
             setStatus(
-                string.format("AUTO OPEN dimulai untuk %d pack.", packCount),
+                string.format(
+                    "Auto Open berhenti setelah %d pack: %s",
+                    openedCount,
+                    lastError
+                ),
+                COLORS.warning
+            )
+        elseif not isAutomatic then
+            setStatus(
+                string.format(
+                    "%d pack dibuka • %d Pick Pack dipilih dengan %s.",
+                    openedCount,
+                    pickCount,
+                    packPickModeLabel(State.packPickMode)
+                ),
                 COLORS.success
             )
         end
-        return true
-    end
+    end)
 
-    if not isAutomatic then
-        setStatus("Auto Open Packs gagal: " .. tostring(errorMessage), COLORS.danger)
-    end
-    return false, errorMessage
+    return true
 end
 
 local function ensureMatchPlaybackListeners()
@@ -5450,6 +6005,7 @@ function Runtime.collectAllReadyLoans(isAutomatic)
         or State.collectingWorldCupReward
         or State.fillingWorldCupVisual
         or State.pickingSpawnedPacks
+        or State.claimingPlayTimeRewards
         or State.autoMatchTransaction
     then
         return
@@ -5717,7 +6273,7 @@ function Runtime.runAutomationTick()
 
     local now = os.clock()
 
-    -- Auto Open Packs memakai EventBus bawaan game dan tidak membutuhkan Networker.
+    -- Auto Open Packs memakai Networker agar Pick Pack dapat dipilih otomatis.
     -- Trigger diulang dengan cooldown bila pack masih tersisa atau event sebelumnya
     -- terabaikan karena match/playback sedang berlangsung.
     if State.autoOpenPacks and now >= State.nextAutoOpenPackAt then
@@ -5726,7 +6282,7 @@ function Runtime.runAutomationTick()
             State.lastObservedPackCount = 0
             State.nextAutoOpenPackAt = now + AUTO_PACK_RETRY_DELAY
         else
-            local opened = openOwnedPacksAutomatically(true)
+            local opened = Runtime.openOwnedPacksAutomatically(true)
             State.nextAutoOpenPackAt = now + AUTO_PACK_RETRY_DELAY
             if opened then
                 return
@@ -5747,6 +6303,13 @@ function Runtime.runAutomationTick()
     end
 
     ensureMatchPlaybackListeners()
+
+    if State.autoClaimPlayTimeRewards and now >= State.nextPlayTimeClaimAt then
+        State.nextPlayTimeClaimAt = now + 5
+        if Runtime.claimReadyPlayTimeRewards(true) then
+            return
+        end
+    end
 
     -- Reward Cup diproses terpisah agar tetap dapat diklaim walau Auto Join OFF.
     if State.autoCollectWorldCupRewards and now >= State.nextWorldCupRewardCheckAt then
@@ -6006,7 +6569,7 @@ function Runtime.uiButton(container, options)
     local callback = options.Callback or function() end
     local actionButton
 
-    options.Size = options.Size or "Default"
+    options.Size = options.Size or "Small"
     options.Desc = nil
     options.Color = options.Color or COLORS.primary
     options.Justify = options.Justify or "Center"
@@ -6049,8 +6612,8 @@ function Runtime.createHomeTab(Window)
         ImageSize = 20,
     })
 
-    local actions = tab:Group({})
-    State.loanButton = Runtime.uiButton(actions, {
+    tab:Space()
+    State.loanButton = Runtime.uiButton(tab, {
         Title = "Loan Best",
         Icon = "send",
         Callback = function()
@@ -6060,7 +6623,7 @@ function Runtime.createHomeTab(Window)
         end,
     })
 
-    State.collectButton = Runtime.uiButton(actions, {
+    State.collectButton = Runtime.uiButton(tab, {
         Title = "Collect Loans",
         Icon = "package-check",
         Callback = function()
@@ -6178,8 +6741,8 @@ function Runtime.createLoansTab(Window)
         end,
     })
 
-    local rarityActions = tab:Group({})
-    Runtime.uiButton(rarityActions, {
+    tab:Space()
+    Runtime.uiButton(tab, {
         Title = "Select All",
         Icon = "list-checks",
         Callback = function()
@@ -6194,7 +6757,7 @@ function Runtime.createLoansTab(Window)
         end,
     })
 
-    Runtime.uiButton(rarityActions, {
+    Runtime.uiButton(tab, {
         Title = "Clear",
         Icon = "eraser",
         Callback = function()
@@ -6254,6 +6817,22 @@ function Runtime.createAutomationTab(Window)
         Callback = setAutoPlayEnabled,
     })
 
+    State.packPickModeDropdown = Runtime.uiDropdown(tab, {
+        Title = "Pick Pack Selection",
+        Desc = "Pilih otomatis satu dari tiga kartu.",
+        Values = {"Best Rarity", "Best OVR", "Best Rarity + OVR"},
+        Value = packPickModeLabel(State.packPickMode),
+        SearchBarEnabled = false,
+        Callback = function(selected)
+            if State.syncingConfiguration then
+                return
+            end
+
+            local selectedText = type(selected) == "table" and selected.Title or selected
+            setPackPickMode(selectedText)
+        end,
+    })
+
     State.autoOpenPacksToggle = Runtime.uiToggle(tab, {
         Title = "Auto Open Packs",
         Desc = "Buka pack yang tersedia.",
@@ -6263,6 +6842,15 @@ function Runtime.createAutomationTab(Window)
         Callback = setAutoOpenPacksEnabled,
     })
 
+
+    State.autoClaimPlayTimeRewardsToggle = Runtime.uiToggle(tab, {
+        Title = "Auto Claim Playtime",
+        Desc = "Claim reward playtime yang sudah siap.",
+        Icon = "clock",
+        IconSize = 18,
+        Value = State.autoClaimPlayTimeRewards,
+        Callback = setAutoClaimPlayTimeRewardsEnabled,
+    })
 
     State.autoEquipBestToggle = Runtime.uiToggle(tab, {
         Title = "Auto Equip Best",
@@ -6301,24 +6889,21 @@ function Runtime.createPrestigeTab(Window)
     })
 
     State.prestigeGateParagraphs = {}
-    for rowIndex = 1, 3 do
-        local gateGroup = tab:Group({})
-        for columnIndex = 1, 2 do
-            local gateParagraph = Runtime.uiCard(gateGroup, {
-                Title = "Requirement",
-                Desc = "Waiting...",
-            })
+    for gateIndex = 1, 6 do
+        local gateParagraph = Runtime.uiCard(tab, {
+            Title = "Requirement",
+            Desc = "Waiting...",
+        })
 
-            if gateParagraph.ElementFrame then
-                gateParagraph.ElementFrame.Visible = false
-            end
-
-            State.prestigeGateParagraphs[#State.prestigeGateParagraphs + 1] = gateParagraph
+        if gateParagraph.ElementFrame then
+            gateParagraph.ElementFrame.Visible = false
         end
+
+        State.prestigeGateParagraphs[#State.prestigeGateParagraphs + 1] = gateParagraph
     end
 
-    local actions = tab:Group({})
-    Runtime.uiButton(actions, {
+    tab:Space()
+    Runtime.uiButton(tab, {
         Title = "Check",
         Icon = "refresh-cw",
         Callback = function()
@@ -6332,7 +6917,7 @@ function Runtime.createPrestigeTab(Window)
         end,
     })
 
-    State.prestigeButton = Runtime.uiButton(actions, {
+    State.prestigeButton = Runtime.uiButton(tab, {
         Title = "Prestige Now",
         Icon = "sparkles",
         Callback = function()
@@ -6416,8 +7001,8 @@ function Runtime.createWorldCupTab(Window)
         Callback = setAutoPickupSpawnedPacksEnabled,
     })
 
-    local cupPrimaryActions = tab:Group({})
-    State.worldCupCheckButton = Runtime.uiButton(cupPrimaryActions, {
+    tab:Space()
+    State.worldCupCheckButton = Runtime.uiButton(tab, {
         Title = "Check Status",
         Icon = "refresh-cw",
         Callback = function()
@@ -6431,7 +7016,7 @@ function Runtime.createWorldCupTab(Window)
         end,
     })
 
-    State.worldCupJoinButton = Runtime.uiButton(cupPrimaryActions, {
+    State.worldCupJoinButton = Runtime.uiButton(tab, {
         Title = "Join Cup",
         Icon = "trophy",
         Callback = function()
@@ -6439,8 +7024,7 @@ function Runtime.createWorldCupTab(Window)
         end,
     })
 
-    local cupSecondaryActions = tab:Group({})
-    State.worldCupVisualFillButton = Runtime.uiButton(cupSecondaryActions, {
+    State.worldCupVisualFillButton = Runtime.uiButton(tab, {
         Title = "Fill Visual Squad",
         Icon = "users",
         Callback = function()
@@ -6456,7 +7040,7 @@ function Runtime.createWorldCupTab(Window)
         end,
     })
 
-    State.worldCupCollectButton = Runtime.uiButton(cupSecondaryActions, {
+    State.worldCupCollectButton = Runtime.uiButton(tab, {
         Title = "Collect Cup Reward",
         Icon = "gift",
         Callback = function()
@@ -6508,8 +7092,8 @@ function Runtime.createMovementTab(Window)
         Callback = Runtime.setAutoConveyorEnabled,
     })
 
-    local actions = tab:Group({})
-    State.backToBaseButton = Runtime.uiButton(actions, {
+    tab:Space()
+    State.backToBaseButton = Runtime.uiButton(tab, {
         Title = "Back to Base",
         Icon = "house",
         Callback = function()
@@ -6517,7 +7101,7 @@ function Runtime.createMovementTab(Window)
         end,
     })
 
-    State.teleportConveyorButton = Runtime.uiButton(actions, {
+    State.teleportConveyorButton = Runtime.uiButton(tab, {
         Title = "Go to Conveyor",
         Icon = "navigation",
         Callback = function()
@@ -6592,8 +7176,8 @@ function Runtime.createSettingsTab(Window)
         Callback = Runtime.setAntiAfkEnabled,
     })
 
-    local configActions = tab:Group({})
-    State.saveConfigButton = Runtime.uiButton(configActions, {
+    tab:Space()
+    State.saveConfigButton = Runtime.uiButton(tab, {
         Title = "Save",
         Icon = "save",
         Callback = function()
@@ -6606,7 +7190,7 @@ function Runtime.createSettingsTab(Window)
         end,
     })
 
-    State.loadConfigButton = Runtime.uiButton(configActions, {
+    State.loadConfigButton = Runtime.uiButton(tab, {
         Title = "Load",
         Icon = "folder-down",
         Callback = function()
@@ -6619,14 +7203,14 @@ function Runtime.createSettingsTab(Window)
         end,
     })
 
-    local utilityActions = tab:Group({})
-    State.rejoinButton = Runtime.uiButton(utilityActions, {
+    tab:Space()
+    State.rejoinButton = Runtime.uiButton(tab, {
         Title = "Rejoin",
         Icon = "refresh-cw",
         Callback = Runtime.rejoinCurrentServer,
     })
 
-    Runtime.uiButton(utilityActions, {
+    Runtime.uiButton(tab, {
         Title = "Refresh Data",
         Icon = "refresh-cw",
         Callback = function()
@@ -6669,9 +7253,9 @@ function Runtime.buildGui()
         Icon = "handshake",
         Theme = "Indigo",
         ToggleKey = Enum.KeyCode[State.windowKeybind] or Enum.KeyCode.G,
-        Size = UDim2.fromOffset(820, 590),
-        MinSize = Vector2.new(700, 480),
-        MaxSize = Vector2.new(1040, 760),
+        Size = UDim2.fromOffset(860, 620),
+        MinSize = Vector2.new(720, 500),
+        MaxSize = Vector2.new(1080, 780),
         Resizable = true,
         AutoScale = true,
         NewElements = true,
@@ -6679,7 +7263,7 @@ function Runtime.buildGui()
         ElementsRadius = 7,
         IconSize = 17,
         TopBarButtonIconSize = 11,
-        SideBarWidth = 155,
+        SideBarWidth = 150,
         HideSearchBar = true,
         ScrollBarEnabled = true,
         OpenButton = {
@@ -6702,9 +7286,9 @@ function Runtime.buildGui()
     State.window = Window
     Environment.LoanOutGUIWindWindow = Window
 
-    Window.Gap = 10
+    Window.Gap = 8
     if Window.ElementConfig then
-        Window.ElementConfig.UIPadding = 11
+        Window.ElementConfig.UIPadding = 10
         Window.ElementConfig.UICorner = 8
     end
 
@@ -6938,6 +7522,11 @@ function API.ToggleAutoOpenPacks()
 end
 
 
+function API.ToggleAutoClaimPlayTimeRewards()
+    setAutoClaimPlayTimeRewardsEnabled(not State.autoClaimPlayTimeRewards)
+    return State.autoClaimPlayTimeRewards
+end
+
 function API.ToggleAutoEquipBest()
     setAutoEquipBestEnabled(not State.autoEquipBest)
 end
@@ -6987,6 +7576,19 @@ function API.SetAutoOpenPacks(enabled)
     setAutoOpenPacksEnabled(enabled)
 end
 
+function API.SetPackPickMode(mode)
+    return setPackPickMode(mode)
+end
+
+function API.GetPackPickMode()
+    return State.packPickMode, packPickModeLabel(State.packPickMode)
+end
+
+
+function API.SetAutoClaimPlayTimeRewards(enabled)
+    setAutoClaimPlayTimeRewardsEnabled(enabled)
+    return State.autoClaimPlayTimeRewards
+end
 
 function API.SetAutoEquipBest(enabled)
     setAutoEquipBestEnabled(enabled)
@@ -7033,9 +7635,13 @@ function API.StopAutoPlay()
 end
 
 function API.OpenPacksNow()
-    return openOwnedPacksAutomatically(false)
+    return Runtime.openOwnedPacksAutomatically(false)
 end
 
+
+function API.ClaimPlayTimeRewardsNow()
+    return Runtime.claimReadyPlayTimeRewards(false)
+end
 
 function API.EquipBestNow()
     return equipBestEleven(false)
@@ -7171,9 +7777,28 @@ function API.GetAutoOpenPacksState()
         enabled = State.autoOpenPacks,
         opening = State.openingPacks,
         owned = Runtime.getOwnedPackCount(),
+        pickMode = State.packPickMode,
+        pickModeLabel = packPickModeLabel(State.packPickMode),
         lastOpenedAt = State.lastPackOpenAt,
+        lastOpenedCount = State.lastPackOpenCount,
+        lastPickCount = State.lastPackPickCount,
+        lastPickAt = State.lastPackPickAt,
+        lastPickTier = State.lastPackPickTier,
+        lastPickIndex = State.lastPackPickIndex,
+        lastPickCard = State.lastPackPickCard,
+        lastError = State.lastPackOpenError,
         nextAttemptAt = State.nextAutoOpenPackAt,
     }
+end
+
+function API.GetPlayTimeRewardsState()
+    local rewardState = Runtime.getPlayTimeRewardState()
+    rewardState.enabled = State.autoClaimPlayTimeRewards
+    rewardState.claiming = State.claimingPlayTimeRewards
+    rewardState.lastClaimAt = State.lastPlayTimeClaimAt
+    rewardState.lastClaimCount = State.lastPlayTimeClaimCount
+    rewardState.nextAttemptAt = State.nextPlayTimeClaimAt
+    return rewardState
 end
 
 function API.GetAutoPlayState()
@@ -7219,6 +7844,8 @@ function API.GetAutomationState()
         autoPlay = State.autoMatch,
         autoMatch = State.autoMatch, -- compatibility
         autoOpenPacks = State.autoOpenPacks,
+        packPickMode = State.packPickMode,
+        autoClaimPlayTimeRewards = State.autoClaimPlayTimeRewards,
         autoEquipBest = State.autoEquipBest,
         autoJoinWorldCup = State.autoJoinWorldCup,
         autoCollectWorldCupRewards = State.autoCollectWorldCupRewards,
@@ -7232,6 +7859,8 @@ function API.GetAutomationState()
         fillingWorldCupVisual = State.fillingWorldCupVisual,
         pickingSpawnedPacks = State.pickingSpawnedPacks,
         openingPacks = State.openingPacks,
+        claimingPlayTimeRewards = State.claimingPlayTimeRewards,
+        readyPlayTimeRewards = Runtime.getPlayTimeRewardState().readyCount,
         equippingBest = State.equippingBest,
         ownedPacks = Runtime.getOwnedPackCount(),
         settingAutoMatch = State.settingAutoMatch,
@@ -7293,6 +7922,7 @@ function API.Stop()
     State.autoCollect = false
     State.autoPrestige = false
     State.autoOpenPacks = false
+    State.autoClaimPlayTimeRewards = false
     State.autoEquipBest = false
     State.autoJoinWorldCup = false
     State.autoCollectWorldCupRewards = false
@@ -7302,6 +7932,7 @@ function API.Stop()
     State.antiAfk = false
     State.fillWorldCupVisualBeforeJoin = false
     State.openingPacks = false
+    State.claimingPlayTimeRewards = false
     State.equippingBest = false
     State.joiningWorldCup = false
     State.collectingWorldCupReward = false
