@@ -8,7 +8,7 @@
       - Menampilkan seluruh pemain yang sedang loan out.
       - Collect All untuk seluruh loan yang sudah selesai.
       - Loan Top berdasarkan whitelist rarity dan durasi yang dipilih.
-      - Toggle Auto Loan, Auto Collect, Auto Play, Auto Open Packs, Auto Claim Playtime Rewards, Auto Equip Best stabil (pause Auto Play sampai lineup tidak berubah), Auto Join International Cup, Auto Collect Cup Rewards, Auto Collect PackDrop, Auto Conveyor, Anti AFK, Lock Position, dan Auto Prestige.
+      - Toggle Auto Loan, Auto Collect, Auto Play, Auto Open Packs, Auto Claim Playtime Rewards, Auto Claim Daily Reward, Auto Equip Best stabil (pause Auto Play sampai lineup tidak berubah), Auto Join International Cup, Auto Collect Cup Rewards, Auto Collect PackDrop, Auto Conveyor, Anti AFK, Lock Position, dan Auto Prestige.
       - Visual Fill International Cup: membuka menu Cup dan mengisi slot React melalui simulasi tombol UI.
       - Movement: anti tabrak sesama player tanpa anchor, Back to Base melalui Workspace.World.Plots, dan recovery Auto Conveyor pada part Animed Convoyor.
       - Loan Duration dan Rarity Whitelist berada tepat di atas toggle Auto Loan.
@@ -37,6 +37,8 @@
       LoanOutGUI.SetPackPickMode("best_rarity" / "best_ovr" / "best_rarity_ovr")
       LoanOutGUI.ToggleAutoClaimPlayTimeRewards()
       LoanOutGUI.ClaimPlayTimeRewardsNow()
+      LoanOutGUI.ToggleAutoClaimDailyReward()
+      LoanOutGUI.ClaimDailyRewardNow()
       LoanOutGUI.ToggleAutoEquipBest()
       LoanOutGUI.ToggleAutoJoinWorldCup()
       LoanOutGUI.ToggleAutoCollectWorldCupRewards()
@@ -113,7 +115,7 @@ end
 local GAME_NAME = getCurrentGameName()
 local HUB_TITLE = GAME_NAME
 
-local CONFIG_VERSION = 13
+local CONFIG_VERSION = 14
 local CONFIG_ROOT = "xSansHUB"
 local CONFIG_FOLDER = CONFIG_ROOT .. "/LoanOutManager"
 local CONFIG_FILE = CONFIG_FOLDER .. "/" .. tostring(game.PlaceId) .. ".json"
@@ -257,6 +259,9 @@ local function mergeRawConfig(target, source)
     end
     if source.autoClaimPlayTimeRewards ~= nil then
         target.autoClaimPlayTimeRewards = source.autoClaimPlayTimeRewards == true
+    end
+    if source.autoClaimDailyReward ~= nil then
+        target.autoClaimDailyReward = source.autoClaimDailyReward == true
     end
     if source.autoEquipBest ~= nil then
         target.autoEquipBest = source.autoEquipBest == true
@@ -452,6 +457,9 @@ end
 if PersistentConfig.autoClaimPlayTimeRewards == nil then
     PersistentConfig.autoClaimPlayTimeRewards = false
 end
+if PersistentConfig.autoClaimDailyReward == nil then
+    PersistentConfig.autoClaimDailyReward = false
+end
 
 -- Migrasi config lama: field autoMatch sebelumnya hanya mengatur tombol STOP.
 -- Field baru autoPlay menjalankan AttemptSendOut + SetAutoMatch + playback background.
@@ -496,6 +504,7 @@ local State = {
     autoOpenPacks = PersistentConfig.autoOpenPacks == true,
     packPickMode = normalizePackPickMode(PersistentConfig.packPickMode),
     autoClaimPlayTimeRewards = PersistentConfig.autoClaimPlayTimeRewards == true,
+    autoClaimDailyReward = PersistentConfig.autoClaimDailyReward == true,
     autoEquipBest = PersistentConfig.autoEquipBest == true,
     autoJoinWorldCup = PersistentConfig.autoJoinWorldCup == true,
     autoCollectWorldCupRewards = PersistentConfig.autoCollectWorldCupRewards ~= false,
@@ -510,6 +519,7 @@ local State = {
     settingAutoMatch = false,
     openingPacks = false,
     claimingPlayTimeRewards = false,
+    claimingDailyReward = false,
     equippingBest = false,
     joiningWorldCup = false,
     collectingWorldCupReward = false,
@@ -528,6 +538,11 @@ local State = {
     nextPlayTimeClaimAt = 0,
     lastPlayTimeClaimAt = 0,
     lastPlayTimeClaimCount = 0,
+    nextDailyRewardClaimAt = 0,
+    lastDailyRewardClaimAt = 0,
+    lastDailyRewardClaimDay = nil,
+    lastDailyRewardClaimResponse = nil,
+    lastDailyRewardClaimError = nil,
     lastObservedPackCount = 0,
     lastPackOpenAt = 0,
     lastPackPickAt = 0,
@@ -629,6 +644,7 @@ local State = {
     autoOpenPacksToggle = nil,
     packPickModeDropdown = nil,
     autoClaimPlayTimeRewardsToggle = nil,
+    autoClaimDailyRewardToggle = nil,
     autoEquipBestToggle = nil,
     autoJoinWorldCupToggle = nil,
     autoCollectWorldCupRewardsToggle = nil,
@@ -716,6 +732,7 @@ local function syncPersistentConfig()
     PersistentConfig.autoOpenPacks = State.autoOpenPacks == true
     PersistentConfig.packPickMode = normalizePackPickMode(State.packPickMode)
     PersistentConfig.autoClaimPlayTimeRewards = State.autoClaimPlayTimeRewards == true
+    PersistentConfig.autoClaimDailyReward = State.autoClaimDailyReward == true
     PersistentConfig.autoEquipBest = State.autoEquipBest == true
     PersistentConfig.autoJoinWorldCup = State.autoJoinWorldCup == true
     PersistentConfig.autoCollectWorldCupRewards = State.autoCollectWorldCupRewards == true
@@ -751,6 +768,7 @@ local function buildConfigSnapshot()
         autoOpenPacks = State.autoOpenPacks == true,
         packPickMode = normalizePackPickMode(State.packPickMode),
         autoClaimPlayTimeRewards = State.autoClaimPlayTimeRewards == true,
+        autoClaimDailyReward = State.autoClaimDailyReward == true,
         autoEquipBest = State.autoEquipBest == true,
         autoJoinWorldCup = State.autoJoinWorldCup == true,
         autoCollectWorldCupRewards = State.autoCollectWorldCupRewards == true,
@@ -1117,6 +1135,45 @@ local function updateAutomationButtons()
         end
 
         State.autoClaimPlayTimeRewardsToggle:SetDesc(playTimeDesc)
+    end
+
+    if State.autoClaimDailyRewardToggle
+        and type(State.autoClaimDailyRewardToggle.Set) == "function"
+    then
+        if State.autoClaimDailyRewardToggle.Value ~= State.autoClaimDailyReward then
+            State.autoClaimDailyRewardToggle:Set(State.autoClaimDailyReward, false)
+        end
+
+        local dailyState = Runtime.getDailyRewardState
+            and Runtime.getDailyRewardState()
+            or {available = false, claimDay = 1}
+        local dailyDesc
+
+        if State.claimingDailyReward then
+            dailyDesc = string.format(
+                "CLAIMING • Day %d.",
+                tonumber(dailyState.claimDay) or 1
+            )
+        elseif State.autoClaimDailyReward and dailyState.ready then
+            dailyDesc = string.format(
+                "READY • Day %d akan diklaim otomatis.",
+                tonumber(dailyState.claimDay) or 1
+            )
+        elseif State.autoClaimDailyReward and dailyState.available then
+            dailyDesc = "WAITING • reward tersedia, menunggu onboarding selesai."
+        elseif State.autoClaimDailyReward then
+            dailyDesc = string.format(
+                "ACTIVE • menunggu Daily Reward berikutnya • Day %d.",
+                tonumber(dailyState.claimDay) or 1
+            )
+        else
+            dailyDesc = string.format(
+                "Claim Daily Reward otomatis saat tersedia • Day %d.",
+                tonumber(dailyState.claimDay) or 1
+            )
+        end
+
+        State.autoClaimDailyRewardToggle:SetDesc(dailyDesc)
     end
 
     if State.autoEquipBestToggle and type(State.autoEquipBestToggle.Set) == "function" then
@@ -1516,6 +1573,25 @@ local function setAutoClaimPlayTimeRewardsEnabled(enabled, announce)
             State.autoClaimPlayTimeRewards and COLORS.success or COLORS.muted
         )
     end
+end
+
+Runtime.setAutoClaimDailyRewardEnabled = function(enabled, announce)
+    State.autoClaimDailyReward = enabled == true
+    PersistentConfig.autoClaimDailyReward = State.autoClaimDailyReward
+    State.nextDailyRewardClaimAt = 0
+    updateAutomationButtons()
+    requestConfigSave()
+
+    if announce ~= false then
+        setStatus(
+            State.autoClaimDailyReward
+                and "Auto Claim Daily Reward aktif."
+                or "Auto Claim Daily Reward dinonaktifkan.",
+            State.autoClaimDailyReward and COLORS.success or COLORS.muted
+        )
+    end
+
+    return State.autoClaimDailyReward
 end
 
 local function setAutoEquipBestEnabled(enabled, announce)
@@ -2086,6 +2162,26 @@ Runtime.getPlayTimeRewardState = function()
 
     return result
 end
+
+Runtime.getDailyRewardState = function()
+    local available = Runtime.getData("DailyRewards.Available") == true
+    local claimDay = math.max(
+        1,
+        math.floor(tonumber(Runtime.getData("DailyRewards.ClaimDay")) or 1)
+    )
+    local onboardingComplete = Runtime.getData("Onboarding.Complete") == true
+    local guideStage = Runtime.getData("Onboarding.GuideStage")
+    local guideReady = guideStage == nil or guideStage == "done"
+
+    return {
+        available = available,
+        ready = available and onboardingComplete and guideReady,
+        claimDay = claimDay,
+        onboardingComplete = onboardingComplete,
+        guideStage = guideStage,
+    }
+end
+
 
 local function getRarity(baseCard, rating)
     local variantConfig = State.variantConfig
@@ -2707,6 +2803,9 @@ local function applyLoadedConfig(config)
     if config.autoClaimPlayTimeRewards ~= nil then
         State.autoClaimPlayTimeRewards = config.autoClaimPlayTimeRewards == true
     end
+    if config.autoClaimDailyReward ~= nil then
+        State.autoClaimDailyReward = config.autoClaimDailyReward == true
+    end
     if config.autoEquipBest ~= nil then
         State.autoEquipBest = config.autoEquipBest == true
     end
@@ -2741,6 +2840,7 @@ local function applyLoadedConfig(config)
     State.nextPrestigeCheckAt = 0
     State.nextAutoOpenPackAt = 0
     State.nextPlayTimeClaimAt = 0
+    State.nextDailyRewardClaimAt = 0
     State.nextAutoEquipBestAt = 0
     State.nextWorldCupCheckAt = 0
     State.nextWorldCupRewardCheckAt = 0
@@ -3077,6 +3177,75 @@ function Runtime.claimReadyPlayTimeRewards(isAutomatic)
 
     return true
 end
+
+function Runtime.claimDailyReward(isAutomatic)
+    if State.claimingDailyReward then
+        return false, "Claim Daily Reward sedang diproses"
+    end
+
+    if not tryRediscoverNetworker() then
+        return false, "Networker belum ditemukan"
+    end
+
+    local dailyState = Runtime.getDailyRewardState()
+    if not dailyState.available then
+        return false, "Daily Reward belum tersedia"
+    end
+    if not dailyState.ready then
+        return false, "Onboarding belum selesai"
+    end
+
+    State.claimingDailyReward = true
+    State.lastDailyRewardClaimError = nil
+    updateAutomationButtons()
+
+    task.spawn(function()
+        local response, errorMessage = callNetwork("ClaimDailyReward")
+        local claimed = response == true
+            or (
+                type(response) == "table"
+                and response.success == true
+            )
+
+        State.claimingDailyReward = false
+        State.nextDailyRewardClaimAt = os.clock() + 5
+
+        if claimed then
+            State.lastDailyRewardClaimAt = os.time()
+            State.lastDailyRewardClaimDay = dailyState.claimDay
+            State.lastDailyRewardClaimResponse = response
+            State.lastDailyRewardClaimError = nil
+            State.nextAutoOpenPackAt = 0
+
+            setStatus(
+                string.format(
+                    "Daily Reward Day %d berhasil diklaim.",
+                    dailyState.claimDay
+                ),
+                COLORS.success
+            )
+        else
+            State.lastDailyRewardClaimResponse = response
+            State.lastDailyRewardClaimError = tostring(
+                errorMessage or "Server tidak mengonfirmasi claim"
+            )
+
+            if not isAutomatic then
+                setStatus(
+                    "Claim Daily Reward gagal: "
+                        .. State.lastDailyRewardClaimError,
+                    COLORS.danger
+                )
+            end
+        end
+
+        updateAutomationButtons()
+        refreshUI(true)
+    end)
+
+    return true
+end
+
 
 local function getPlaybackEventBus()
     local eventBus = State.eventBus
@@ -6266,6 +6435,7 @@ function Runtime.runAutomationTick()
         or State.collectingWorldCupReward
         or State.fillingWorldCupVisual
         or State.pickingSpawnedPacks
+        or State.claimingDailyReward
         or State.autoMatchTransaction
     then
         return
@@ -6303,6 +6473,13 @@ function Runtime.runAutomationTick()
     end
 
     ensureMatchPlaybackListeners()
+
+    if State.autoClaimDailyReward and now >= State.nextDailyRewardClaimAt then
+        State.nextDailyRewardClaimAt = now + 5
+        if Runtime.claimDailyReward(true) then
+            return
+        end
+    end
 
     if State.autoClaimPlayTimeRewards and now >= State.nextPlayTimeClaimAt then
         State.nextPlayTimeClaimAt = now + 5
@@ -6850,6 +7027,15 @@ function Runtime.createAutomationTab(Window)
         IconSize = 18,
         Value = State.autoClaimPlayTimeRewards,
         Callback = setAutoClaimPlayTimeRewardsEnabled,
+    })
+
+    State.autoClaimDailyRewardToggle = Runtime.uiToggle(tab, {
+        Title = "Auto Claim Daily Reward",
+        Desc = "Claim Daily Reward saat tersedia.",
+        Icon = "gift",
+        IconSize = 18,
+        Value = State.autoClaimDailyReward,
+        Callback = Runtime.setAutoClaimDailyRewardEnabled,
     })
 
     State.autoEquipBestToggle = Runtime.uiToggle(tab, {
@@ -7527,6 +7713,10 @@ function API.ToggleAutoClaimPlayTimeRewards()
     return State.autoClaimPlayTimeRewards
 end
 
+function API.ToggleAutoClaimDailyReward()
+    return Runtime.setAutoClaimDailyRewardEnabled(not State.autoClaimDailyReward)
+end
+
 function API.ToggleAutoEquipBest()
     setAutoEquipBestEnabled(not State.autoEquipBest)
 end
@@ -7590,6 +7780,10 @@ function API.SetAutoClaimPlayTimeRewards(enabled)
     return State.autoClaimPlayTimeRewards
 end
 
+function API.SetAutoClaimDailyReward(enabled)
+    return Runtime.setAutoClaimDailyRewardEnabled(enabled)
+end
+
 function API.SetAutoEquipBest(enabled)
     setAutoEquipBestEnabled(enabled)
 end
@@ -7641,6 +7835,10 @@ end
 
 function API.ClaimPlayTimeRewardsNow()
     return Runtime.claimReadyPlayTimeRewards(false)
+end
+
+function API.ClaimDailyRewardNow()
+    return Runtime.claimDailyReward(false)
 end
 
 function API.EquipBestNow()
@@ -7801,6 +7999,18 @@ function API.GetPlayTimeRewardsState()
     return rewardState
 end
 
+function API.GetDailyRewardState()
+    local rewardState = Runtime.getDailyRewardState()
+    rewardState.enabled = State.autoClaimDailyReward
+    rewardState.claiming = State.claimingDailyReward
+    rewardState.lastClaimAt = State.lastDailyRewardClaimAt
+    rewardState.lastClaimDay = State.lastDailyRewardClaimDay
+    rewardState.lastResponse = State.lastDailyRewardClaimResponse
+    rewardState.lastError = State.lastDailyRewardClaimError
+    rewardState.nextAttemptAt = State.nextDailyRewardClaimAt
+    return rewardState
+end
+
 function API.GetAutoPlayState()
     return {
         enabled = State.autoMatch,
@@ -7846,6 +8056,7 @@ function API.GetAutomationState()
         autoOpenPacks = State.autoOpenPacks,
         packPickMode = State.packPickMode,
         autoClaimPlayTimeRewards = State.autoClaimPlayTimeRewards,
+        autoClaimDailyReward = State.autoClaimDailyReward,
         autoEquipBest = State.autoEquipBest,
         autoJoinWorldCup = State.autoJoinWorldCup,
         autoCollectWorldCupRewards = State.autoCollectWorldCupRewards,
@@ -7861,6 +8072,8 @@ function API.GetAutomationState()
         openingPacks = State.openingPacks,
         claimingPlayTimeRewards = State.claimingPlayTimeRewards,
         readyPlayTimeRewards = Runtime.getPlayTimeRewardState().readyCount,
+        claimingDailyReward = State.claimingDailyReward,
+        dailyReward = Runtime.getDailyRewardState(),
         equippingBest = State.equippingBest,
         ownedPacks = Runtime.getOwnedPackCount(),
         settingAutoMatch = State.settingAutoMatch,
@@ -7901,6 +8114,7 @@ function API.GetConfigState()
         startupError = State.startupConfigError,
         windowKeybind = State.windowKeybind,
         autoPlay = State.autoMatch,
+        autoClaimDailyReward = State.autoClaimDailyReward,
         autoJoinWorldCup = State.autoJoinWorldCup,
         autoCollectWorldCupRewards = State.autoCollectWorldCupRewards,
         fillWorldCupVisualBeforeJoin = State.fillWorldCupVisualBeforeJoin,
@@ -7923,6 +8137,7 @@ function API.Stop()
     State.autoPrestige = false
     State.autoOpenPacks = false
     State.autoClaimPlayTimeRewards = false
+    State.autoClaimDailyReward = false
     State.autoEquipBest = false
     State.autoJoinWorldCup = false
     State.autoCollectWorldCupRewards = false
@@ -7933,6 +8148,7 @@ function API.Stop()
     State.fillWorldCupVisualBeforeJoin = false
     State.openingPacks = false
     State.claimingPlayTimeRewards = false
+    State.claimingDailyReward = false
     State.equippingBest = false
     State.joiningWorldCup = false
     State.collectingWorldCupReward = false
