@@ -60,6 +60,7 @@
       LoanOutGUI.TeleportToConveyor()
       LoanOutGUI.ToggleAntiAfk()
       LoanOutGUI.SetAntiAfk(true/false)
+      LoanOutGUI.PulseAntiAfk()
       LoanOutGUI.Rejoin()
       LoanOutGUI.PrestigeNow()
       LoanOutGUI.SaveConfig()
@@ -120,7 +121,7 @@ end
 local GAME_NAME = getCurrentGameName()
 local HUB_TITLE = GAME_NAME
 
-local CONFIG_VERSION = 16
+local CONFIG_VERSION = 17
 local CONFIG_ROOT = "xSansHUB"
 local CONFIG_FOLDER = CONFIG_ROOT .. "/LoanOutManager"
 local CONFIG_FILE = CONFIG_FOLDER .. "/" .. tostring(game.PlaceId) .. ".json"
@@ -565,6 +566,11 @@ local State = {
     antiAfk = PersistentConfig.antiAfk ~= false,
     antiAfkCount = 0,
     lastAntiAfkAt = 0,
+    nextAntiAfkPulseAt = 0,
+    antiAfkInterval = 45,
+    antiAfkMethod = "waiting",
+    lastAntiAfkError = nil,
+    antiAfkBusy = false,
     worldCupSquadMode = normalizeWorldCupSquadMode(PersistentConfig.worldCupSquadMode),
     settingAutoMatch = false,
     openingPacks = false,
@@ -1027,7 +1033,16 @@ end
 
 -- Register fix: helper functions are namespaced under Runtime to stay below Luau's 200-local limit.
 local Runtime = {}
-Runtime.virtualUser = game:GetService("VirtualUser")
+
+Runtime.virtualUser = nil
+pcall(function()
+    Runtime.virtualUser = game:GetService("VirtualUser")
+end)
+
+Runtime.virtualInputManager = nil
+pcall(function()
+    Runtime.virtualInputManager = game:GetService("VirtualInputManager")
+end)
 
 local function statusKindFromColor(color)
     if color == COLORS.success then
@@ -1529,12 +1544,21 @@ local function updateAutomationButtons()
 
         local antiAfkDesc
         if State.antiAfk then
-            antiAfkDesc = "ACTIVE • mencegah idle kick Roblox dengan input virtual saat LocalPlayer.Idled terpicu."
+            antiAfkDesc = string.format(
+                "ACTIVE • pulse tiap %ds • method: %s",
+                tonumber(State.antiAfkInterval) or 45,
+                tostring(State.antiAfkMethod or "waiting")
+            )
+
             if State.antiAfkCount > 0 then
-                antiAfkDesc = antiAfkDesc .. string.format(" • blocked %d idle event.", State.antiAfkCount)
+                antiAfkDesc = antiAfkDesc .. string.format(" • pulse %d", State.antiAfkCount)
+            end
+
+            if State.lastAntiAfkError then
+                antiAfkDesc = antiAfkDesc .. " • fallback aktif"
             end
         else
-            antiAfkDesc = "Anti AFK mati • Roblox dapat mengeluarkan player setelah terlalu lama tidak ada input."
+            antiAfkDesc = "Anti AFK mati • idle kick Roblox tidak dicegah."
         end
         State.antiAfkToggle:SetDesc(antiAfkDesc)
     end
@@ -5168,41 +5192,166 @@ Runtime.setAutoConveyorEnabled = function(enabled, announce)
     return State.autoConveyor
 end
 
-Runtime.preventIdleKick = function()
-    if not State.running or not State.antiAfk then
-        return false, "Anti AFK disabled"
+Runtime.tryMouseMoveRelative = function()
+    local mover = nil
+
+    if type(Environment) == "table" then
+        mover = Environment.mousemoverel
+            or Environment.mouse_move_relative
+            or Environment.mouserel
+    end
+
+    if type(mover) ~= "function" and type(mousemoverel) == "function" then
+        mover = mousemoverel
+    end
+
+    if type(mover) ~= "function" then
+        return false, "mousemoverel unavailable"
+    end
+
+    local success, errorMessage = pcall(function()
+        mover(1, 0)
+        task.wait(0.03)
+        mover(-1, 0)
+    end)
+
+    return success, success and nil or tostring(errorMessage)
+end
+
+Runtime.tryVirtualInputMouse = function()
+    local manager = Runtime.virtualInputManager
+    if not manager then
+        return false, "VirtualInputManager unavailable"
+    end
+
+    local success, errorMessage = pcall(function()
+        local position = UserInputService:GetMouseLocation()
+        manager:SendMouseMoveEvent(position.X + 1, position.Y, game)
+        task.wait(0.03)
+        manager:SendMouseMoveEvent(position.X, position.Y, game)
+    end)
+
+    return success, success and nil or tostring(errorMessage)
+end
+
+Runtime.tryVirtualInputKey = function()
+    local manager = Runtime.virtualInputManager
+    if not manager then
+        return false, "VirtualInputManager unavailable"
+    end
+
+    local success, errorMessage = pcall(function()
+        manager:SendKeyEvent(true, Enum.KeyCode.RightControl, false, game)
+        task.wait(0.04)
+        manager:SendKeyEvent(false, Enum.KeyCode.RightControl, false, game)
+    end)
+
+    return success, success and nil or tostring(errorMessage)
+end
+
+Runtime.tryVirtualUser = function()
+    local virtualUser = Runtime.virtualUser
+    if not virtualUser then
+        return false, "VirtualUser unavailable"
     end
 
     local camera = Workspace.CurrentCamera
     local cameraCFrame = camera and camera.CFrame or CFrame.new()
     local point = Vector2.new(0, 0)
+
     local success, errorMessage = pcall(function()
-        Runtime.virtualUser:CaptureController()
-        Runtime.virtualUser:Button2Down(point, cameraCFrame)
-        task.wait(0.12)
-        Runtime.virtualUser:Button2Up(point, cameraCFrame)
+        virtualUser:CaptureController()
+
+        local clicked = pcall(function()
+            virtualUser:ClickButton2(point)
+        end)
+
+        if not clicked then
+            virtualUser:Button2Down(point, cameraCFrame)
+            task.wait(0.06)
+            virtualUser:Button2Up(point, cameraCFrame)
+        end
     end)
 
-    if success then
+    return success, success and nil or tostring(errorMessage)
+end
+
+Runtime.preventIdleKick = function(source)
+    if not State.running or not State.antiAfk then
+        return false, "Anti AFK disabled"
+    end
+
+    if State.antiAfkBusy then
+        return false, "Anti AFK pulse already running"
+    end
+
+    State.antiAfkBusy = true
+
+    local successfulMethods = {}
+    local errors = {}
+
+    local methods = {
+        {"MouseRel", Runtime.tryMouseMoveRelative},
+        {"VIM Mouse", Runtime.tryVirtualInputMouse},
+        {"VirtualUser", Runtime.tryVirtualUser},
+        {"VIM Key", Runtime.tryVirtualInputKey},
+    }
+
+    for _, method in ipairs(methods) do
+        local name = method[1]
+        local callback = method[2]
+        local success, errorMessage = callback()
+
+        if success then
+            successfulMethods[#successfulMethods + 1] = name
+        elseif errorMessage then
+            errors[#errors + 1] = name .. ": " .. tostring(errorMessage)
+        end
+    end
+
+    State.antiAfkBusy = false
+    State.nextAntiAfkPulseAt = os.clock() + (tonumber(State.antiAfkInterval) or 45)
+
+    if #successfulMethods > 0 then
         State.antiAfkCount += 1
         State.lastAntiAfkAt = os.time()
+        State.antiAfkMethod = table.concat(successfulMethods, " + ")
+        State.lastAntiAfkError = #errors > 0 and table.concat(errors, " | ") or nil
         State.uiRefreshRequested = true
         return true
     end
 
-    return false, tostring(errorMessage)
+    State.antiAfkMethod = "FAILED"
+    State.lastAntiAfkError = #errors > 0 and table.concat(errors, " | ")
+        or "No supported virtual input method"
+    State.uiRefreshRequested = true
+
+    return false, State.lastAntiAfkError
 end
 
 Runtime.setAntiAfkEnabled = function(enabled, announce)
     State.antiAfk = enabled == true
     PersistentConfig.antiAfk = State.antiAfk
+    State.nextAntiAfkPulseAt = 0
+
+    if not State.antiAfk then
+        State.antiAfkMethod = "disabled"
+        State.lastAntiAfkError = nil
+    else
+        task.defer(function()
+            if State.running and State.antiAfk then
+                Runtime.preventIdleKick("toggle")
+            end
+        end)
+    end
+
     requestConfigSave()
     updateAutomationButtons()
 
     if announce ~= false then
         setStatus(
             State.antiAfk
-                and "Anti AFK aktif. Idle kick Roblox akan dicegah tanpa melakukan reconnect."
+                and "Anti AFK aktif. Input keep-alive langsung dites dan dikirim berkala."
                 or "Anti AFK dinonaktifkan.",
             State.antiAfk and COLORS.success or COLORS.muted
         )
@@ -5212,7 +5361,11 @@ Runtime.setAntiAfkEnabled = function(enabled, announce)
 end
 
 addConnection(LocalPlayer.Idled:Connect(function()
-    Runtime.preventIdleKick()
+    State.nextAntiAfkPulseAt = 0
+
+    task.spawn(function()
+        Runtime.preventIdleKick("Idled")
+    end)
 end))
 
 addConnection(RunService.Heartbeat:Connect(function()
@@ -5221,6 +5374,19 @@ addConnection(RunService.Heartbeat:Connect(function()
     end
 
     local now = os.clock()
+
+    -- Proaktif: tidak menunggu LocalPlayer.Idled karena event tersebut tidak
+    -- selalu diteruskan oleh semua executor.
+    if State.antiAfk
+        and not State.antiAfkBusy
+        and now >= State.nextAntiAfkPulseAt
+    then
+        State.nextAntiAfkPulseAt = now + (tonumber(State.antiAfkInterval) or 45)
+
+        task.spawn(function()
+            Runtime.preventIdleKick("periodic")
+        end)
+    end
 
     if State.lockPosition and now - State.lastAntiCollisionSweepAt >= 0.25 then
         State.lastAntiCollisionSweepAt = now
@@ -8605,11 +8771,22 @@ function API.SetAntiAfk(enabled)
     return Runtime.setAntiAfkEnabled(enabled)
 end
 
+function API.PulseAntiAfk()
+    return Runtime.preventIdleKick("manual")
+end
+
 function API.GetAntiAfkState()
     return {
         enabled = State.antiAfk,
         count = State.antiAfkCount,
         lastPreventedAt = State.lastAntiAfkAt,
+        nextPulseAt = State.nextAntiAfkPulseAt,
+        interval = State.antiAfkInterval,
+        method = State.antiAfkMethod,
+        lastError = State.lastAntiAfkError,
+        busy = State.antiAfkBusy,
+        virtualUserAvailable = Runtime.virtualUser ~= nil,
+        virtualInputManagerAvailable = Runtime.virtualInputManager ~= nil,
     }
 end
 
