@@ -49,6 +49,20 @@ local CardConfig = requirePath(
     "Configs",
     "CardConfig"
 )
+local PackConfig = requirePath(
+    ReplicatedStorage,
+    "Source",
+    "Shared",
+    "Configs",
+    "PackConfig"
+)
+local RebirthConfig = requirePath(
+    ReplicatedStorage,
+    "Source",
+    "Shared",
+    "Configs",
+    "RebirthConfig"
+)
 local Networker = requirePath(
     ReplicatedStorage,
     "Source",
@@ -140,6 +154,13 @@ local SlotController = requirePath(
     "Controllers",
     "SlotController"
 )
+local PackAnimationController = requirePath(
+    ReplicatedStorage,
+    "Source",
+    "Client",
+    "UI",
+    "PackAnimationController"
+)
 
 local CraftTrophy = Networker.get_remote("CraftTrophy")
 local SeashellCollect = Networker.get_remote("SeashellCollect")
@@ -155,6 +176,10 @@ local PerformWish = Networker.get_remotefunction("PerformWish")
 local ClaimAllIndexGems = Networker.get_remote("ClaimAllIndexGems")
 local DailyReward = Networker.get_remote("DailyReward")
 local RedeemCode = Networker.get_remote("RedeemCode")
+local RebirthRemote = Networker.get_remote("Rebirth")
+local PackSettings = Networker.get_remote("PackSettings")
+local BuyPackRemote = Networker.get_remote("BuyPack")
+local SetAutoBuyPackRemote = Networker.get_remote("SetAutoBuy")
 
 local REDEEM_CODES = {
     "OWL-HAPPY",
@@ -162,6 +187,62 @@ local REDEEM_CODES = {
 }
 
 local REDEEM_CODE_GROUP_ID = 520125566
+local PACK_AUTO_SKIP_GAMEPASS_ID = 1642325239
+
+local PackBuyNames = {}
+local PackBuyLabels = {}
+local PackBuyNameByLabel = {}
+local PackBuyLabelByName = {}
+
+local function buildPackBuyOptions()
+    local entries = {}
+
+    for packName, packData in pairs(PackConfig.Packs) do
+        if type(packData) == "table"
+            and packName ~= "Scarlet"
+            and packName ~= "Bonded"
+            and packData.HideFromShop ~= true
+            and tonumber(packData.Price)
+            and tonumber(packData.Price) > 0
+            and type(packData.RobuxOptions) ~= "table"
+        then
+            entries[#entries + 1] = {
+                name = tostring(packName),
+                label = tostring(
+                    packData.DisplayName
+                    or packName
+                ),
+                order = tonumber(packData.LayoutOrder) or 0,
+            }
+        end
+    end
+
+    table.sort(entries, function(left, right)
+        if left.order ~= right.order then
+            return left.order < right.order
+        end
+
+        return left.label < right.label
+    end)
+
+    local usedLabels = {}
+
+    for _, entry in ipairs(entries) do
+        local label = entry.label
+
+        if usedLabels[label] then
+            label = label .. " (" .. entry.name .. ")"
+        end
+
+        usedLabels[label] = true
+        PackBuyNames[#PackBuyNames + 1] = entry.name
+        PackBuyLabels[#PackBuyLabels + 1] = label
+        PackBuyNameByLabel[label] = entry.name
+        PackBuyLabelByName[entry.name] = label
+    end
+end
+
+buildPackBuyOptions()
 
 local TROPHY_ORDER = {
     "Golden Boot",
@@ -444,6 +525,57 @@ buildTournamentShopConfigOptions()
 
 local State = {
     running = true,
+    autoBuyPacks = false,
+    packBuyWhitelist = {},
+    packBuyPollInterval = 0.5,
+    packBuyActionCooldown = 1.25,
+    packBuyRetryCooldown = 4,
+    packBuyPendingTimeout = 8,
+    packBuyNextAt = 0,
+    packBuyPending = nil,
+    packBuyRequests = 0,
+    packBuyPurchases = 0,
+    packBuyNativeUpdates = 0,
+    packBuyFailures = 0,
+    packBuyLastItem = "-",
+    packBuyLastStatus = "Choose packs from the whitelist.",
+    packBuyStatusParagraph = nil,
+    packBuyWhitelistDropdown = nil,
+    autoBuyPacksToggle = nil,
+
+    autoOpenPacks = false,
+    hidePackAnimation = false,
+    autoSkipPackAnimation = false,
+    packSettingsPollInterval = 0.35,
+    packSettingsSyncCooldown = 1.5,
+    packSettingsNextSyncAt = 0,
+    packSettingsResetPending = false,
+    packSkipLocalApplied = false,
+    packSkipAppliedAt = 0,
+    packSettingsRequests = 0,
+    packSettingsFailures = 0,
+    packLastStatus = "Waiting for pack activity.",
+    packStatusParagraph = nil,
+    autoOpenPacksToggle = nil,
+    hidePackAnimationToggle = nil,
+    autoSkipPackAnimationToggle = nil,
+
+    autoRebirth = false,
+    rebirthPollInterval = 0.75,
+    rebirthCooldown = 3,
+    rebirthRetryCooldown = 5,
+    rebirthPendingTimeout = 12,
+    rebirthNextAt = 0,
+    rebirthPending = false,
+    rebirthPendingSince = 0,
+    rebirthPendingFrom = nil,
+    rebirthAttempts = 0,
+    rebirthSuccesses = 0,
+    rebirthFailures = 0,
+    rebirthLastStatus = "Waiting for requirements.",
+    rebirthStatusParagraph = nil,
+    autoRebirthToggle = nil,
+
     autoEquipBestCards = false,
     equipBestMode = "income",
     equipBestPollInterval = 1,
@@ -722,6 +854,8 @@ local State = {
 local LOG_FILTER_OPTIONS = {
     "All",
     "Hub",
+    "Packs",
+    "Rebirth",
     "Team",
     "Trophies",
     "Summer",
@@ -5581,6 +5715,1649 @@ function TournamentRuntime.handleTick(payload)
     TournamentRuntime.updateUI()
 end
 
+local PackBuyRuntime = {}
+
+function PackBuyRuntime.getPlayerData()
+    local playerData = getPlayerData()
+
+    if type(playerData) ~= "table" then
+        return nil
+    end
+
+    return playerData
+end
+
+function PackBuyRuntime.getPackState(packName, playerData)
+    playerData = playerData or PackBuyRuntime.getPlayerData()
+
+    local packData = PackConfig.Packs[packName]
+
+    if type(packData) ~= "table"
+        or type(playerData) ~= "table"
+    then
+        return nil
+    end
+
+    local stocks =
+        type(playerData.shop) == "table"
+        and type(playerData.shop.stocks) == "table"
+        and playerData.shop.stocks
+        or {}
+
+    local purchaseCounts =
+        type(playerData.packPurchaseCounts) == "table"
+        and playerData.packPurchaseCounts
+        or {}
+
+    local nativeMap =
+        type(playerData.autoBuyPacks) == "table"
+        and playerData.autoBuyPacks
+        or {}
+
+    local purchaseCount =
+        math.max(
+            0,
+            math.floor(
+                tonumber(purchaseCounts[packName]) or 0
+            )
+        )
+
+    return {
+        name = packName,
+        label = PackBuyLabelByName[packName] or packName,
+        config = packData,
+        price = math.max(0, tonumber(packData.Price) or 0),
+        rebirthRequired =
+            math.max(0, tonumber(packData.RebirthReq) or 0),
+        rebirth = math.max(
+            0,
+            tonumber(playerData.rebirth) or 0
+        ),
+        cash = math.max(0, tonumber(playerData.cash) or 0),
+        stock = math.max(
+            0,
+            math.floor(tonumber(stocks[packName]) or 0)
+        ),
+        purchaseCount = purchaseCount,
+        unlockRemaining = math.max(0, 5 - purchaseCount),
+        nativeUnlocked = purchaseCount >= 5,
+        nativeEnabled = nativeMap[packName] == true,
+    }
+end
+
+function PackBuyRuntime.countSelected()
+    local count = 0
+
+    for _, packName in ipairs(PackBuyNames) do
+        if State.packBuyWhitelist[packName] then
+            count += 1
+        end
+    end
+
+    return count
+end
+
+function PackBuyRuntime.getSelectedLabels()
+    local labels = {}
+
+    for _, packName in ipairs(PackBuyNames) do
+        if State.packBuyWhitelist[packName] then
+            labels[#labels + 1] =
+                PackBuyLabelByName[packName] or packName
+        end
+    end
+
+    return labels
+end
+
+function PackBuyRuntime.nameFromSelection(value)
+    value = normalizeSelectedValue(value)
+
+    if value == nil then
+        return nil
+    end
+
+    local normalized = tostring(value)
+
+    if PackBuyNameByLabel[normalized] then
+        return PackBuyNameByLabel[normalized]
+    end
+
+    if PackBuyLabelByName[normalized] then
+        return normalized
+    end
+
+    return nil
+end
+
+function PackBuyRuntime.syncWhitelistDropdown()
+    if not State.packBuyWhitelistDropdown
+        or type(State.packBuyWhitelistDropdown.Select)
+            ~= "function"
+    then
+        return
+    end
+
+    pcall(function()
+        State.packBuyWhitelistDropdown:Select(
+            PackBuyRuntime.getSelectedLabels()
+        )
+    end)
+end
+
+function PackBuyRuntime.applyWhitelistSelection(selectedValues)
+    local selected = {}
+
+    local function enable(value)
+        local packName =
+            PackBuyRuntime.nameFromSelection(value)
+
+        if packName then
+            selected[packName] = true
+        end
+    end
+
+    if type(selectedValues) == "table" then
+        local foundArrayValue = false
+
+        for key, value in pairs(selectedValues) do
+            if type(key) == "number" then
+                foundArrayValue = true
+                enable(value)
+            elseif value == true then
+                enable(key)
+            elseif type(value) == "table" then
+                enable(value)
+            end
+        end
+
+        if not foundArrayValue and selectedValues.Title then
+            enable(selectedValues)
+        end
+    elseif selectedValues ~= nil then
+        enable(selectedValues)
+    end
+
+    table.clear(State.packBuyWhitelist)
+
+    for _, packName in ipairs(PackBuyNames) do
+        State.packBuyWhitelist[packName] =
+            selected[packName] == true
+    end
+
+    State.packBuyNextAt = 0
+
+    PackBuyRuntime.updateUI(
+        "Pack whitelist updated.",
+        true
+    )
+end
+
+function PackBuyRuntime.setAll(enabled)
+    for _, packName in ipairs(PackBuyNames) do
+        State.packBuyWhitelist[packName] =
+            enabled == true
+    end
+
+    State.packBuyNextAt = 0
+    PackBuyRuntime.syncWhitelistDropdown()
+
+    PackBuyRuntime.updateUI(
+        enabled
+            and "All eligible packs selected."
+            or "Pack whitelist cleared.",
+        true
+    )
+end
+
+function PackBuyRuntime.getSummary()
+    local playerData = PackBuyRuntime.getPlayerData()
+    local summary = {
+        selected = 0,
+        unlocked = 0,
+        locked = 0,
+        nativeEnabled = 0,
+        readyToUnlock = 0,
+    }
+
+    if not playerData then
+        return summary
+    end
+
+    for _, packName in ipairs(PackBuyNames) do
+        local packState =
+            PackBuyRuntime.getPackState(
+                packName,
+                playerData
+            )
+
+        if packState then
+            if packState.nativeEnabled then
+                summary.nativeEnabled += 1
+            end
+
+            if State.packBuyWhitelist[packName] then
+                summary.selected += 1
+
+                if packState.nativeUnlocked then
+                    summary.unlocked += 1
+                else
+                    summary.locked += 1
+
+                    if packState.rebirth
+                            >= packState.rebirthRequired
+                        and packState.stock > 0
+                        and packState.cash >= packState.price
+                    then
+                        summary.readyToUnlock += 1
+                    end
+                end
+            end
+        end
+    end
+
+    return summary
+end
+
+function PackBuyRuntime.updateUI(message, shouldLog)
+    if message ~= nil then
+        State.packBuyLastStatus = tostring(message)
+
+        if shouldLog == true then
+            LogRuntime.append(
+                "Packs",
+                State.packBuyLastStatus
+            )
+        end
+    end
+
+    local summary = PackBuyRuntime.getSummary()
+    local pending = State.packBuyPending
+    local pendingText = "None"
+
+    if type(pending) == "table" then
+        pendingText =
+            tostring(pending.kind or "Action")
+            .. " • "
+            .. tostring(
+                PackBuyLabelByName[pending.packName]
+                or pending.packName
+                or "-"
+            )
+    end
+
+    local description = table.concat({
+        "Auto Buy Packs: "
+            .. (State.autoBuyPacks and "ON" or "OFF"),
+        "Whitelist: "
+            .. tostring(summary.selected)
+            .. "/"
+            .. tostring(#PackBuyNames),
+        "Native Unlocked: "
+            .. tostring(summary.unlocked),
+        "Unlock Progress Needed: "
+            .. tostring(summary.locked),
+        "Ready to Purchase: "
+            .. tostring(summary.readyToUnlock),
+        "Native Checkboxes ON: "
+            .. tostring(summary.nativeEnabled),
+        "Pending: " .. pendingText,
+        "Purchase Requests: "
+            .. tostring(State.packBuyRequests),
+        "Confirmed Purchases: "
+            .. tostring(State.packBuyPurchases),
+        "Checkbox Updates: "
+            .. tostring(State.packBuyNativeUpdates),
+        "Failures: " .. tostring(State.packBuyFailures),
+        "Last Pack: " .. tostring(State.packBuyLastItem),
+        "Status: " .. tostring(State.packBuyLastStatus),
+    }, "\n")
+
+    if State.packBuyStatusParagraph
+        and type(State.packBuyStatusParagraph.SetDesc)
+            == "function"
+    then
+        pcall(function()
+            State.packBuyStatusParagraph:SetDesc(description)
+        end)
+    end
+end
+
+function PackBuyRuntime.setAuto(enabled)
+    State.autoBuyPacks = enabled == true
+    State.packBuyNextAt = 0
+
+    PackBuyRuntime.updateUI(
+        State.autoBuyPacks
+            and "Auto Buy Packs enabled."
+            or "Auto Buy Packs disabled.",
+        true
+    )
+
+    return State.autoBuyPacks
+end
+
+function PackBuyRuntime.setPending(kind, packName, data)
+    data = type(data) == "table" and data or {}
+    data.kind = kind
+    data.packName = packName
+    data.startedAt = os.clock()
+    State.packBuyPending = data
+end
+
+function PackBuyRuntime.clearPending()
+    State.packBuyPending = nil
+end
+
+function PackBuyRuntime.confirmPending()
+    local pending = State.packBuyPending
+
+    if type(pending) ~= "table" then
+        return false
+    end
+
+    local playerData = PackBuyRuntime.getPlayerData()
+    local packState = playerData
+        and PackBuyRuntime.getPackState(
+            pending.packName,
+            playerData
+        )
+
+    if packState then
+        local confirmed = false
+
+        if pending.kind == "Native" then
+            confirmed =
+                packState.nativeEnabled
+                == (pending.desired == true)
+        elseif pending.kind == "Purchase" then
+            confirmed =
+                packState.purchaseCount
+                    > (tonumber(pending.beforeCount) or 0)
+                or packState.stock
+                    < (tonumber(pending.beforeStock) or 0)
+        end
+
+        if confirmed then
+            if pending.kind == "Native" then
+                State.packBuyNativeUpdates += 1
+                State.packBuyLastStatus =
+                    (pending.desired and "Enabled " or "Disabled ")
+                    .. "native Auto Buy for "
+                    .. packState.label
+                    .. "."
+            else
+                State.packBuyPurchases += 1
+                State.packBuyLastStatus =
+                    "Purchased "
+                    .. packState.label
+                    .. " for Auto Buy unlock progress."
+            end
+
+            State.packBuyLastItem = packState.label
+            PackBuyRuntime.clearPending()
+            State.packBuyNextAt =
+                os.clock() + State.packBuyActionCooldown
+
+            PackBuyRuntime.updateUI(
+                State.packBuyLastStatus,
+                true
+            )
+
+            return true
+        end
+    end
+
+    if os.clock() - (tonumber(pending.startedAt) or 0)
+        >= State.packBuyPendingTimeout
+    then
+        local label =
+            PackBuyLabelByName[pending.packName]
+            or tostring(pending.packName or "-")
+
+        PackBuyRuntime.clearPending()
+        State.packBuyFailures += 1
+        State.packBuyNextAt =
+            os.clock() + State.packBuyRetryCooldown
+
+        PackBuyRuntime.updateUI(
+            tostring(pending.kind)
+                .. " confirmation timed out for "
+                .. label
+                .. ".",
+            true
+        )
+
+        return true
+    end
+
+    PackBuyRuntime.updateUI()
+    return true
+end
+
+function PackBuyRuntime.sendNative(packState, desired)
+    if State.packBuyPending then
+        return false, "Another pack action is pending"
+    end
+
+    local success, errorMessage = pcall(function()
+        SetAutoBuyPackRemote:FireServer(
+            packState.name,
+            desired == true
+        )
+    end)
+
+    if not success then
+        State.packBuyFailures += 1
+        State.packBuyNextAt =
+            os.clock() + State.packBuyRetryCooldown
+
+        PackBuyRuntime.updateUI(
+            "Could not update the native Auto Buy checkbox.",
+            true
+        )
+
+        return false, tostring(errorMessage)
+    end
+
+    State.packBuyRequests += 1
+    State.packBuyLastItem = packState.label
+    State.packBuyNextAt =
+        os.clock() + State.packBuyActionCooldown
+
+    PackBuyRuntime.setPending(
+        "Native",
+        packState.name,
+        {
+            desired = desired == true,
+        }
+    )
+
+    PackBuyRuntime.updateUI(
+        (desired and "Enabling " or "Disabling ")
+            .. "native Auto Buy for "
+            .. packState.label
+            .. "."
+    )
+
+    return true
+end
+
+function PackBuyRuntime.sendPurchase(packState)
+    if State.packBuyPending then
+        return false, "Another pack action is pending"
+    end
+
+    if packState.rebirth < packState.rebirthRequired then
+        return false,
+            "Requires Rebirth "
+                .. tostring(packState.rebirthRequired)
+    end
+
+    if packState.stock <= 0 then
+        return false, "Pack is out of stock"
+    end
+
+    if packState.cash < packState.price then
+        return false, "Not enough cash"
+    end
+
+    local success, errorMessage = pcall(function()
+        BuyPackRemote:FireServer(packState.name)
+    end)
+
+    if not success then
+        State.packBuyFailures += 1
+        State.packBuyNextAt =
+            os.clock() + State.packBuyRetryCooldown
+
+        PackBuyRuntime.updateUI(
+            "Could not purchase " .. packState.label .. ".",
+            true
+        )
+
+        return false, tostring(errorMessage)
+    end
+
+    State.packBuyRequests += 1
+    State.packBuyLastItem = packState.label
+    State.packBuyNextAt =
+        os.clock() + State.packBuyActionCooldown
+
+    PackBuyRuntime.setPending(
+        "Purchase",
+        packState.name,
+        {
+            beforeCount = packState.purchaseCount,
+            beforeStock = packState.stock,
+        }
+    )
+
+    PackBuyRuntime.updateUI(
+        "Purchasing "
+            .. packState.label
+            .. " • "
+            .. tostring(packState.unlockRemaining)
+            .. " purchase(s) until native Auto Buy unlock."
+    )
+
+    return true
+end
+
+function PackBuyRuntime.findNativeMismatch(playerData)
+    for _, packName in ipairs(PackBuyNames) do
+        local packState =
+            PackBuyRuntime.getPackState(
+                packName,
+                playerData
+            )
+
+        if packState and packState.nativeUnlocked then
+            local desired =
+                State.autoBuyPacks
+                and State.packBuyWhitelist[packName] == true
+
+            if packState.nativeEnabled ~= desired then
+                return packState, desired
+            end
+        end
+    end
+
+    return nil
+end
+
+function PackBuyRuntime.findUnlockPurchase(playerData)
+    local firstReason
+
+    for _, packName in ipairs(PackBuyNames) do
+        if State.packBuyWhitelist[packName] then
+            local packState =
+                PackBuyRuntime.getPackState(
+                    packName,
+                    playerData
+                )
+
+            if packState and not packState.nativeUnlocked then
+                if packState.rebirth
+                        < packState.rebirthRequired
+                then
+                    firstReason = firstReason
+                        or (
+                            packState.label
+                            .. " requires Rebirth "
+                            .. tostring(
+                                packState.rebirthRequired
+                            )
+                        )
+                elseif packState.stock <= 0 then
+                    firstReason = firstReason
+                        or (
+                            packState.label
+                            .. " is out of stock"
+                        )
+                elseif packState.cash < packState.price then
+                    firstReason = firstReason
+                        or (
+                            "Not enough cash for "
+                            .. packState.label
+                        )
+                else
+                    return packState
+                end
+            end
+        end
+    end
+
+    return nil, firstReason
+end
+
+function PackBuyRuntime.process(force)
+    if PackBuyRuntime.confirmPending() then
+        return false, "Waiting for confirmation"
+    end
+
+    if force ~= true
+        and os.clock() < State.packBuyNextAt
+    then
+        return false, "Pack buying is on cooldown"
+    end
+
+    local playerData = PackBuyRuntime.getPlayerData()
+
+    if not playerData then
+        PackBuyRuntime.updateUI(
+            "Player data is not ready."
+        )
+        return false, "Player data is not ready"
+    end
+
+    local mismatch, desired =
+        PackBuyRuntime.findNativeMismatch(playerData)
+
+    if mismatch then
+        return PackBuyRuntime.sendNative(
+            mismatch,
+            desired
+        )
+    end
+
+    if not State.autoBuyPacks then
+        PackBuyRuntime.updateUI(
+            "Native Auto Buy checkboxes are disabled."
+        )
+        return false, "Auto Buy Packs is disabled"
+    end
+
+    if PackBuyRuntime.countSelected() <= 0 then
+        PackBuyRuntime.updateUI(
+            "Choose at least one pack from the whitelist."
+        )
+        return false, "Pack whitelist is empty"
+    end
+
+    local packState, reason =
+        PackBuyRuntime.findUnlockPurchase(playerData)
+
+    if packState then
+        return PackBuyRuntime.sendPurchase(packState)
+    end
+
+    PackBuyRuntime.updateUI(
+        reason
+        or "Selected native Auto Buy checkboxes are synchronized."
+    )
+
+    return true, reason or "Synchronized"
+end
+
+function PackBuyRuntime.disableNativeAll()
+    local playerData = PackBuyRuntime.getPlayerData()
+
+    if not playerData then
+        return
+    end
+
+    for _, packName in ipairs(PackBuyNames) do
+        local packState =
+            PackBuyRuntime.getPackState(
+                packName,
+                playerData
+            )
+
+        if packState
+            and packState.nativeUnlocked
+            and packState.nativeEnabled
+        then
+            pcall(function()
+                SetAutoBuyPackRemote:FireServer(
+                    packName,
+                    false
+                )
+            end)
+        end
+    end
+end
+
+function PackBuyRuntime.tick()
+    if State.packBuyPending then
+        PackBuyRuntime.confirmPending()
+        return
+    end
+
+    if State.autoBuyPacks
+        or PackBuyRuntime.getSummary().nativeEnabled > 0
+    then
+        PackBuyRuntime.process(false)
+    elseif State.packBuyStatusParagraph then
+        PackBuyRuntime.updateUI()
+    end
+end
+
+local PackRuntime = {}
+
+function PackRuntime.getServerSettings()
+    local playerData = getPlayerData()
+    local settings =
+        type(playerData) == "table"
+        and type(playerData.settings) == "table"
+        and playerData.settings
+        or {}
+
+    return {
+        autoOpen = settings.packAutoOpen == true,
+        hideAnimation = settings.packHideAnimation == true,
+        autoSkip = settings.packAutoSkip == true,
+    }
+end
+
+function PackRuntime.hasAutoSkipPass()
+    local success, result = pcall(function()
+        return PurchaseClient.hasGamepass(
+            PACK_AUTO_SKIP_GAMEPASS_ID
+        )
+    end)
+
+    return success and result == true
+end
+
+function PackRuntime.isAnimating()
+    local success, result = pcall(function()
+        return PackAnimationController.isAnimating()
+    end)
+
+    return success and result == true
+end
+
+function PackRuntime.isMinimized()
+    local success, result = pcall(function()
+        return PackAnimationController.isMinimized()
+    end)
+
+    return success and result == true
+end
+
+function PackRuntime.sendSetting(name, value)
+    local success, errorMessage = pcall(function()
+        PackSettings:FireServer(name, value == true)
+    end)
+
+    if not success then
+        State.packSettingsFailures += 1
+        State.packLastStatus =
+            "Could not update pack settings."
+
+        return false, tostring(errorMessage)
+    end
+
+    State.packSettingsRequests += 1
+    return true
+end
+
+function PackRuntime.setControllerAutoOpen(enabled)
+    local success, errorMessage = pcall(function()
+        PackAnimationController.setAutoOpen(enabled == true)
+    end)
+
+    if not success then
+        State.packSettingsFailures += 1
+        return false, tostring(errorMessage)
+    end
+
+    return true
+end
+
+function PackRuntime.syncToggle(toggle, value)
+    if toggle and type(toggle.Set) == "function" then
+        pcall(function()
+            toggle:Set(value == true, false)
+        end)
+    end
+end
+
+function PackRuntime.updateUI(message, shouldLog)
+    if message ~= nil then
+        State.packLastStatus = tostring(message)
+
+        if shouldLog == true then
+            LogRuntime.append(
+                "Packs",
+                State.packLastStatus
+            )
+        end
+    end
+
+    local server = PackRuntime.getServerSettings()
+    local animating = PackRuntime.isAnimating()
+    local minimized = PackRuntime.isMinimized()
+    local hasPass = PackRuntime.hasAutoSkipPass()
+
+    local description = table.concat({
+        "Auto Open Packs: "
+            .. (State.autoOpenPacks and "ON" or "OFF"),
+        "Hide Animation: "
+            .. (State.hidePackAnimation and "ON" or "OFF"),
+        "Auto Skip: "
+            .. (State.autoSkipPackAnimation and "ON" or "OFF"),
+        "Skip Access: "
+            .. (hasPass and "Available" or "Gamepass Required"),
+        "Animation: "
+            .. (
+                animating
+                    and (minimized and "Hidden" or "Playing")
+                    or "Idle"
+            ),
+        "Server Auto Open: "
+            .. (server.autoOpen and "ON" or "OFF"),
+        "Server Hide: "
+            .. (server.hideAnimation and "ON" or "OFF"),
+        "Server Auto Skip: "
+            .. (server.autoSkip and "ON" or "OFF"),
+        "Updates: " .. tostring(State.packSettingsRequests),
+        "Failures: " .. tostring(State.packSettingsFailures),
+        "Status: " .. tostring(State.packLastStatus),
+    }, "\n")
+
+    if State.packStatusParagraph
+        and type(State.packStatusParagraph.SetDesc)
+            == "function"
+    then
+        pcall(function()
+            State.packStatusParagraph:SetDesc(description)
+        end)
+    end
+end
+
+function PackRuntime.findAutoSkipButton()
+    local playerGui =
+        LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    local root =
+        playerGui
+        and playerGui:FindFirstChild("PackOpeningUI")
+
+    if not root then
+        return nil
+    end
+
+    for _, descendant in ipairs(root:GetDescendants()) do
+        if descendant:IsA("GuiButton")
+            and descendant.Name == "AutoSkip"
+        then
+            return descendant
+        end
+    end
+
+    return nil
+end
+
+function PackRuntime.activateButton(button)
+    if typeof(button) ~= "Instance"
+        or not button:IsA("GuiButton")
+    then
+        return false
+    end
+
+    if type(firesignal) == "function" then
+        local success = pcall(function()
+            firesignal(button.MouseButton1Click)
+        end)
+
+        if success then
+            return true
+        end
+    end
+
+    return pcall(function()
+        button:Activate()
+    end)
+end
+
+function PackRuntime.applyReset()
+    if PackRuntime.isAnimating() then
+        State.packSettingsResetPending = true
+        return false
+    end
+
+    local success, errorMessage = pcall(function()
+        PackAnimationController.resetEverything(true)
+    end)
+
+    if not success then
+        State.packSettingsFailures += 1
+        PackRuntime.updateUI(
+            "Could not reset native pack settings.",
+            true
+        )
+
+        return false, tostring(errorMessage)
+    end
+
+    State.packSettingsResetPending = false
+    State.packSkipLocalApplied = false
+    State.packSkipAppliedAt = 0
+
+    PackRuntime.setControllerAutoOpen(
+        State.autoOpenPacks
+    )
+
+    if State.autoOpenPacks then
+        PackRuntime.sendSetting(
+            "packAutoOpen",
+            true
+        )
+    end
+
+    if State.hidePackAnimation then
+        PackRuntime.sendSetting(
+            "packHideAnimation",
+            true
+        )
+    end
+
+    return true
+end
+
+function PackRuntime.setAutoOpen(enabled)
+    State.autoOpenPacks = enabled == true
+    State.packSettingsNextSyncAt = 0
+
+    PackRuntime.setControllerAutoOpen(
+        State.autoOpenPacks
+    )
+    PackRuntime.sendSetting(
+        "packAutoOpen",
+        State.autoOpenPacks
+    )
+
+    PackRuntime.updateUI(
+        State.autoOpenPacks
+            and "Auto Open Packs enabled."
+            or "Auto Open Packs disabled.",
+        true
+    )
+
+    return State.autoOpenPacks
+end
+
+function PackRuntime.setHideAnimation(enabled)
+    enabled = enabled == true
+
+    if not enabled and State.autoSkipPackAnimation then
+        PackRuntime.updateUI(
+            "Hide Animation is required while Auto Skip is enabled.",
+            true
+        )
+        PackRuntime.syncToggle(
+            State.hidePackAnimationToggle,
+            true
+        )
+
+        return false, "Disable Auto Skip first"
+    end
+
+    State.hidePackAnimation = enabled
+    State.packSettingsNextSyncAt = 0
+
+    if enabled then
+        PackRuntime.sendSetting(
+            "packHideAnimation",
+            true
+        )
+
+        if PackRuntime.isAnimating()
+            and not PackRuntime.isMinimized()
+        then
+            pcall(function()
+                PackAnimationController.forceHide()
+            end)
+        end
+    else
+        PackRuntime.sendSetting(
+            "packHideAnimation",
+            false
+        )
+        State.packSettingsResetPending = true
+
+        if not PackRuntime.isAnimating() then
+            PackRuntime.applyReset()
+        end
+    end
+
+    PackRuntime.updateUI(
+        enabled
+            and "Pack animations will be hidden."
+            or "Pack animations will be shown.",
+        true
+    )
+
+    return State.hidePackAnimation
+end
+
+function PackRuntime.setAutoSkip(enabled)
+    enabled = enabled == true
+
+    if enabled and not PackRuntime.hasAutoSkipPass() then
+        State.autoSkipPackAnimation = false
+        PackRuntime.syncToggle(
+            State.autoSkipPackAnimationToggle,
+            false
+        )
+
+        PackRuntime.updateUI(
+            "Auto Skip requires the official gamepass.",
+            true
+        )
+
+        return false, "Auto Skip gamepass required"
+    end
+
+    State.autoSkipPackAnimation = enabled
+    State.packSettingsNextSyncAt = 0
+
+    if enabled then
+        State.autoOpenPacks = true
+        State.hidePackAnimation = true
+        State.packSkipLocalApplied = false
+        State.packSkipAppliedAt = 0
+
+        PackRuntime.syncToggle(
+            State.autoOpenPacksToggle,
+            true
+        )
+        PackRuntime.syncToggle(
+            State.hidePackAnimationToggle,
+            true
+        )
+
+        PackRuntime.setControllerAutoOpen(true)
+        PackRuntime.sendSetting(
+            "packAutoOpen",
+            true
+        )
+        PackRuntime.sendSetting(
+            "packHideAnimation",
+            true
+        )
+    else
+        PackRuntime.sendSetting(
+            "packAutoSkip",
+            false
+        )
+        State.packSettingsResetPending = true
+        State.packSkipLocalApplied = false
+        State.packSkipAppliedAt = 0
+
+        if not PackRuntime.isAnimating() then
+            PackRuntime.applyReset()
+        end
+    end
+
+    PackRuntime.updateUI(
+        enabled
+            and "Native Auto Skip enabled."
+            or "Native Auto Skip disabled.",
+        true
+    )
+
+    return State.autoSkipPackAnimation
+end
+
+function PackRuntime.applyDesiredSettings()
+    local server = PackRuntime.getServerSettings()
+
+    PackRuntime.setControllerAutoOpen(
+        State.autoOpenPacks
+    )
+
+    if server.autoOpen ~= State.autoOpenPacks then
+        PackRuntime.sendSetting(
+            "packAutoOpen",
+            State.autoOpenPacks
+        )
+    end
+
+    if State.hidePackAnimation then
+        if not server.hideAnimation then
+            PackRuntime.sendSetting(
+                "packHideAnimation",
+                true
+            )
+        end
+
+        if PackRuntime.isAnimating()
+            and not PackRuntime.isMinimized()
+        then
+            pcall(function()
+                PackAnimationController.forceHide()
+            end)
+        end
+    elseif server.hideAnimation
+        and not State.packSettingsResetPending
+    then
+        State.packSettingsResetPending = true
+    end
+
+    if not State.autoSkipPackAnimation
+        and server.autoSkip
+        and not State.packSettingsResetPending
+    then
+        State.packSettingsResetPending = true
+    end
+end
+
+function PackRuntime.applyNativeAutoSkip()
+    if not State.autoSkipPackAnimation then
+        return false
+    end
+
+    if not PackRuntime.hasAutoSkipPass() then
+        PackRuntime.setAutoSkip(false)
+        return false
+    end
+
+    local server = PackRuntime.getServerSettings()
+
+    if server.autoSkip
+        and State.packSkipAppliedAt == 0
+    then
+        State.packSkipLocalApplied = true
+        return true
+    end
+
+    if State.packSkipLocalApplied then
+        return true
+    end
+
+    if not PackRuntime.isAnimating() then
+        return false
+    end
+
+    local button = PackRuntime.findAutoSkipButton()
+
+    if not button then
+        return false
+    end
+
+    if not PackRuntime.activateButton(button) then
+        State.packSettingsFailures += 1
+        PackRuntime.updateUI(
+            "Could not activate native Auto Skip.",
+            true
+        )
+        return false
+    end
+
+    State.packSkipLocalApplied = true
+    State.packSkipAppliedAt = os.clock()
+    State.packSettingsRequests += 1
+
+    PackRuntime.updateUI(
+        "Native Auto Skip activated.",
+        true
+    )
+
+    return true
+end
+
+function PackRuntime.tick()
+    if State.packSettingsResetPending
+        and not PackRuntime.isAnimating()
+    then
+        PackRuntime.applyReset()
+    end
+
+    if os.clock() >= State.packSettingsNextSyncAt then
+        State.packSettingsNextSyncAt =
+            os.clock() + State.packSettingsSyncCooldown
+
+        PackRuntime.applyDesiredSettings()
+    end
+
+    if State.autoSkipPackAnimation then
+        PackRuntime.applyNativeAutoSkip()
+    end
+
+    if State.packStatusParagraph then
+        PackRuntime.updateUI()
+    end
+end
+
+local RebirthRuntime = {}
+
+function RebirthRuntime.getOwnedCardIds(playerData)
+    local owned = {}
+
+    local function addCard(card)
+        if type(card) ~= "table" then
+            return
+        end
+
+        local cardId = tostring(card.id or "")
+        if cardId ~= "" then
+            owned[cardId] = true
+        end
+    end
+
+    if type(playerData) == "table"
+        and type(playerData.inventory) == "table"
+    then
+        for _, card in ipairs(playerData.inventory) do
+            addCard(card)
+        end
+    end
+
+    if type(playerData) == "table"
+        and type(playerData.slots) == "table"
+    then
+        for _, slotData in pairs(playerData.slots) do
+            addCard(
+                type(slotData) == "table"
+                    and slotData.card
+                    or nil
+            )
+        end
+    end
+
+    return owned
+end
+
+function RebirthRuntime.parseRequirement(requirement)
+    local success, isAny, value = pcall(function()
+        return RebirthConfig.ParseCardRequirement(requirement)
+    end)
+
+    if not success then
+        return nil, nil
+    end
+
+    return isAny == true, tostring(value or "")
+end
+
+function RebirthRuntime.validateCards(playerData, target)
+    local requirements =
+        type(target) == "table"
+        and type(target.RequiredCards) == "table"
+        and target.RequiredCards
+        or {}
+
+    if #requirements == 0 then
+        return true, "Ready"
+    end
+
+    local owned = RebirthRuntime.getOwnedCardIds(playerData)
+    local exactRequired = {}
+
+    for _, requirement in ipairs(requirements) do
+        local isAny, value =
+            RebirthRuntime.parseRequirement(requirement)
+
+        if isAny == nil or value == "" then
+            return false, "Invalid card requirement"
+        end
+
+        if not isAny then
+            exactRequired[value] = true
+        end
+    end
+
+    local usedAny = {}
+
+    for _, requirement in ipairs(requirements) do
+        local isAny, value =
+            RebirthRuntime.parseRequirement(requirement)
+
+        if isAny then
+            local found = false
+
+            for cardId in pairs(owned) do
+                local cardData = CardConfig.Cards[cardId]
+
+                if not exactRequired[cardId]
+                    and not usedAny[cardId]
+                    and type(cardData) == "table"
+                    and tostring(cardData.Rarity or "") == value
+                then
+                    usedAny[cardId] = true
+                    found = true
+                    break
+                end
+            end
+
+            if not found then
+                return false, "Missing any " .. value .. " card"
+            end
+        elseif not owned[value] then
+            local cardData = CardConfig.Cards[value]
+            local displayName =
+                type(cardData) == "table"
+                and tostring(
+                    cardData.DisplayName
+                    or cardData.Name
+                    or value
+                )
+                or value
+
+            return false, "Missing " .. displayName
+        end
+    end
+
+    return true, "Ready"
+end
+
+function RebirthRuntime.getState()
+    local playerData = getPlayerData()
+
+    if type(playerData) ~= "table" then
+        return {
+            ready = false,
+            canRebirth = false,
+            reason = "Player data is not ready",
+            current = 0,
+            nextLevel = 1,
+            maxLevel = 0,
+            cash = 0,
+            gems = 0,
+            cashRequired = 0,
+            gemsRequired = 0,
+            cardRequirements = 0,
+            cardsReady = false,
+        }
+    end
+
+    local current = tonumber(playerData.rebirth) or 0
+    local maxLevel = 0
+
+    pcall(function()
+        maxLevel = tonumber(RebirthConfig.GetMaxRebirth()) or 0
+    end)
+
+    if maxLevel > 0 and current >= maxLevel then
+        return {
+            ready = true,
+            canRebirth = false,
+            reason = "Maximum Rebirth reached",
+            current = current,
+            nextLevel = current,
+            maxLevel = maxLevel,
+            atMax = true,
+            cash = tonumber(playerData.cash) or 0,
+            gems = tonumber(playerData.gems) or 0,
+            cashRequired = 0,
+            gemsRequired = 0,
+            cardRequirements = 0,
+            cardsReady = true,
+        }
+    end
+
+    local nextLevel = current + 1
+    local target
+
+    local targetSuccess = pcall(function()
+        target = RebirthConfig.GetRebirth(nextLevel)
+    end)
+
+    if not targetSuccess or type(target) ~= "table" then
+        return {
+            ready = true,
+            canRebirth = false,
+            reason = "Rebirth configuration is unavailable",
+            current = current,
+            nextLevel = nextLevel,
+            maxLevel = maxLevel,
+            cash = tonumber(playerData.cash) or 0,
+            gems = tonumber(playerData.gems) or 0,
+            cashRequired = 0,
+            gemsRequired = 0,
+            cardRequirements = 0,
+            cardsReady = false,
+        }
+    end
+
+    local cash = tonumber(playerData.cash) or 0
+    local gems = tonumber(playerData.gems) or 0
+    local cashRequired = tonumber(target.CashRequired) or 0
+    local gemsRequired = tonumber(target.GemsRequired) or 0
+    local requiredCards =
+        type(target.RequiredCards) == "table"
+        and target.RequiredCards
+        or {}
+
+    if cash < cashRequired then
+        return {
+            ready = true,
+            canRebirth = false,
+            reason = "Not enough cash",
+            current = current,
+            nextLevel = nextLevel,
+            maxLevel = maxLevel,
+            target = target,
+            cash = cash,
+            gems = gems,
+            cashRequired = cashRequired,
+            gemsRequired = gemsRequired,
+            cardRequirements = #requiredCards,
+            cardsReady = false,
+        }
+    end
+
+    if gemsRequired > 0 then
+        local enoughGems = gems >= gemsRequired
+
+        return {
+            ready = true,
+            canRebirth = enoughGems,
+            reason = enoughGems and "Ready" or "Not enough Gems",
+            current = current,
+            nextLevel = nextLevel,
+            maxLevel = maxLevel,
+            target = target,
+            cash = cash,
+            gems = gems,
+            cashRequired = cashRequired,
+            gemsRequired = gemsRequired,
+            cardRequirements = #requiredCards,
+            cardsReady = true,
+        }
+    end
+
+    local cardsReady, cardReason =
+        RebirthRuntime.validateCards(playerData, target)
+
+    return {
+        ready = true,
+        canRebirth = cardsReady,
+        reason = cardsReady and "Ready" or cardReason,
+        current = current,
+        nextLevel = nextLevel,
+        maxLevel = maxLevel,
+        target = target,
+        cash = cash,
+        gems = gems,
+        cashRequired = cashRequired,
+        gemsRequired = gemsRequired,
+        cardRequirements = #requiredCards,
+        cardsReady = cardsReady,
+    }
+end
+
+function RebirthRuntime.updateUI(message, shouldLog)
+    if message ~= nil then
+        State.rebirthLastStatus = tostring(message)
+
+        if shouldLog == true then
+            LogRuntime.append(
+                "Rebirth",
+                State.rebirthLastStatus
+            )
+        end
+    end
+
+    local data = RebirthRuntime.getState()
+    local nextLabel = data.atMax
+        and "MAX"
+        or tostring(data.nextLevel)
+
+    local descriptions = {
+        "Auto Rebirth: "
+            .. (State.autoRebirth and "ON" or "OFF"),
+        "Current Rebirth: " .. tostring(data.current),
+        "Next Rebirth: " .. nextLabel,
+        "Cash: "
+            .. formatCompactNumber(data.cash)
+            .. " / "
+            .. formatCompactNumber(data.cashRequired),
+    }
+
+    if data.gemsRequired > 0 then
+        descriptions[#descriptions + 1] =
+            "Gems: "
+            .. formatCompactNumber(data.gems)
+            .. " / "
+            .. formatCompactNumber(data.gemsRequired)
+    else
+        descriptions[#descriptions + 1] =
+            "Cards: "
+            .. (
+                data.cardsReady
+                    and "Ready"
+                    or tostring(data.reason)
+            )
+    end
+
+    descriptions[#descriptions + 1] =
+        "Requirements: "
+        .. (data.canRebirth and "Ready" or tostring(data.reason))
+    descriptions[#descriptions + 1] =
+        "Pending: " .. (State.rebirthPending and "YES" or "NO")
+    descriptions[#descriptions + 1] =
+        "Attempts: " .. tostring(State.rebirthAttempts)
+    descriptions[#descriptions + 1] =
+        "Completed: " .. tostring(State.rebirthSuccesses)
+    descriptions[#descriptions + 1] =
+        "Failures: " .. tostring(State.rebirthFailures)
+    descriptions[#descriptions + 1] =
+        "Status: " .. tostring(State.rebirthLastStatus)
+
+    if State.rebirthStatusParagraph
+        and type(State.rebirthStatusParagraph.SetDesc)
+            == "function"
+    then
+        pcall(function()
+            State.rebirthStatusParagraph:SetDesc(
+                table.concat(descriptions, "\n")
+            )
+        end)
+    end
+end
+
+function RebirthRuntime.setAuto(enabled)
+    State.autoRebirth = enabled == true
+    State.rebirthNextAt = 0
+
+    RebirthRuntime.updateUI(
+        State.autoRebirth
+            and "Auto Rebirth enabled."
+            or "Auto Rebirth disabled.",
+        true
+    )
+
+    return State.autoRebirth
+end
+
+function RebirthRuntime.clearPending()
+    State.rebirthPending = false
+    State.rebirthPendingSince = 0
+    State.rebirthPendingFrom = nil
+end
+
+function RebirthRuntime.rebirth(force)
+    if State.rebirthPending then
+        return false, "A Rebirth request is still being processed"
+    end
+
+    local now = os.clock()
+
+    if force ~= true and now < State.rebirthNextAt then
+        return false, "Rebirth is on cooldown"
+    end
+
+    local data = RebirthRuntime.getState()
+
+    if not data.canRebirth then
+        RebirthRuntime.updateUI(data.reason)
+        return false, data.reason
+    end
+
+    State.rebirthPending = true
+    State.rebirthPendingSince = now
+    State.rebirthPendingFrom = data.current
+    State.rebirthNextAt = now + State.rebirthCooldown
+    State.rebirthAttempts += 1
+
+    local success, errorMessage = pcall(function()
+        RebirthRemote:FireServer()
+    end)
+
+    if not success then
+        RebirthRuntime.clearPending()
+        State.rebirthFailures += 1
+        State.rebirthNextAt =
+            os.clock() + State.rebirthRetryCooldown
+
+        RebirthRuntime.updateUI(
+            "Could not submit the Rebirth request.",
+            true
+        )
+
+        return false, tostring(errorMessage)
+    end
+
+    RebirthRuntime.updateUI(
+        "Rebirth request submitted."
+    )
+
+    return true, data.nextLevel
+end
+
+function RebirthRuntime.tick()
+    if State.rebirthPending then
+        local data = RebirthRuntime.getState()
+        local pendingFrom =
+            tonumber(State.rebirthPendingFrom) or data.current
+
+        if data.current > pendingFrom then
+            RebirthRuntime.clearPending()
+            State.rebirthSuccesses += 1
+            State.rebirthNextAt =
+                os.clock() + State.rebirthCooldown
+            State.equipBestLastSignature = nil
+            State.tournamentLastEquipSignature = nil
+            State.tournamentLastEquipTeamFingerprint = ""
+
+            RebirthRuntime.updateUI(
+                "Rebirth "
+                    .. tostring(data.current)
+                    .. " completed.",
+                true
+            )
+
+            return
+        end
+
+        if os.clock() - State.rebirthPendingSince
+            >= State.rebirthPendingTimeout
+        then
+            RebirthRuntime.clearPending()
+            State.rebirthFailures += 1
+            State.rebirthNextAt =
+                os.clock() + State.rebirthRetryCooldown
+
+            RebirthRuntime.updateUI(
+                "Rebirth confirmation timed out.",
+                true
+            )
+
+            return
+        end
+
+        RebirthRuntime.updateUI()
+        return
+    end
+
+    if State.autoRebirth
+        and os.clock() >= State.rebirthNextAt
+    then
+        local data = RebirthRuntime.getState()
+
+        if data.canRebirth then
+            RebirthRuntime.rebirth(false)
+        else
+            RebirthRuntime.updateUI(data.reason)
+        end
+    elseif State.rebirthStatusParagraph then
+        RebirthRuntime.updateUI()
+    end
+end
+
 local EQUIP_BEST_MODE_INCOME = "income"
 local EQUIP_BEST_MODE_RARITY = "rarity"
 
@@ -5953,7 +7730,7 @@ local function normalizeWindowKeybind(value)
 end
 
 local ConfigRuntime = {
-    version = 11,
+    version = 14,
     root = "xSansHUB",
     folder = "xSansHUB/SpinASoccerCardHub",
     file = "xSansHUB/SpinASoccerCardHub/" .. tostring(game.PlaceId) .. ".json",
@@ -6036,6 +7813,19 @@ function ConfigRuntime.buildSnapshot(includeSaveMetadata)
         autoSave = State.autoSave == true,
         autoLoad = State.autoLoad == true,
         windowKeybind = normalizeWindowKeybind(State.windowKeybind),
+
+        autoBuyPacks = State.autoBuyPacks == true,
+        packBuyWhitelist =
+            ConfigRuntime.copyBooleanMap(
+                State.packBuyWhitelist
+            ),
+
+        autoOpenPacks = State.autoOpenPacks == true,
+        hidePackAnimation = State.hidePackAnimation == true,
+        autoSkipPackAnimation =
+            State.autoSkipPackAnimation == true,
+
+        autoRebirth = State.autoRebirth == true,
 
         autoEquipBestCards = State.autoEquipBestCards == true,
         equipBestMode =
@@ -6174,6 +7964,17 @@ function ConfigRuntime.syncControls()
         end
     end
 
+    setToggle(State.autoBuyPacksToggle, State.autoBuyPacks)
+    setToggle(State.autoOpenPacksToggle, State.autoOpenPacks)
+    setToggle(
+        State.hidePackAnimationToggle,
+        State.hidePackAnimation
+    )
+    setToggle(
+        State.autoSkipPackAnimationToggle,
+        State.autoSkipPackAnimation
+    )
+    setToggle(State.autoRebirthToggle, State.autoRebirth)
     setToggle(
         State.autoEquipBestCardsToggle,
         State.autoEquipBestCards
@@ -6205,6 +8006,7 @@ function ConfigRuntime.syncControls()
 
     applyWindowKeybind(State.windowKeybind, true)
     EquipBestRuntime.syncModeDropdown()
+    PackBuyRuntime.syncWhitelistDropdown()
 
     syncWhitelistDropdown()
     syncGemShopWhitelistDropdown()
@@ -6212,6 +8014,9 @@ function ConfigRuntime.syncControls()
     refreshTournamentShopOptions(false)
     syncTournamentShopWhitelistDropdown()
 
+    PackBuyRuntime.updateUI()
+    PackRuntime.updateUI()
+    RebirthRuntime.updateUI()
     EquipBestRuntime.updateUI()
     updateStatus()
     updateSeashellStatus()
@@ -6231,6 +8036,14 @@ function ConfigRuntime.syncControls()
 end
 
 function ConfigRuntime.resetActionCooldowns()
+    State.packBuyNextAt = 0
+    PackBuyRuntime.clearPending()
+    State.packSettingsNextSyncAt = 0
+    State.packSkipLocalApplied = false
+    State.packSkipAppliedAt = 0
+    State.packSettingsResetPending = false
+    State.rebirthNextAt = 0
+    RebirthRuntime.clearPending()
     State.nextCraftAt = 0
     State.gemShopNextBuyAt = 0
     State.summerShopNextBuyAt = 0
@@ -6273,6 +8086,45 @@ function ConfigRuntime.apply(config, syncUI)
     if config.windowKeybind ~= nil then
         State.windowKeybind =
             normalizeWindowKeybind(config.windowKeybind)
+    end
+
+    if config.autoBuyPacks ~= nil then
+        State.autoBuyPacks =
+            config.autoBuyPacks == true
+    end
+    if type(config.packBuyWhitelist) == "table" then
+        table.clear(State.packBuyWhitelist)
+
+        for _, packName in ipairs(PackBuyNames) do
+            State.packBuyWhitelist[packName] =
+                config.packBuyWhitelist[packName] == true
+        end
+    end
+
+    if config.autoOpenPacks ~= nil then
+        State.autoOpenPacks =
+            config.autoOpenPacks == true
+    end
+    if config.hidePackAnimation ~= nil then
+        State.hidePackAnimation =
+            config.hidePackAnimation == true
+    end
+    if config.autoSkipPackAnimation ~= nil then
+        State.autoSkipPackAnimation =
+            config.autoSkipPackAnimation == true
+    end
+
+    if State.autoSkipPackAnimation then
+        if PackRuntime.hasAutoSkipPass() then
+            State.autoOpenPacks = true
+            State.hidePackAnimation = true
+        else
+            State.autoSkipPackAnimation = false
+        end
+    end
+
+    if config.autoRebirth ~= nil then
+        State.autoRebirth = config.autoRebirth == true
     end
 
     if config.autoEquipBestCards ~= nil then
@@ -6661,6 +8513,9 @@ function HomeRuntime.getActiveFeatures()
     local features = {}
 
     local entries = {
+        {State.autoBuyPacks, "Pack Buying"},
+        {State.autoOpenPacks, "Packs"},
+        {State.autoRebirth, "Rebirth"},
         {State.autoEquipBestCards, "Main Team"},
         {State.autoCraft, "Trophies"},
         {State.autoClaimSeashell, "Seashells"},
@@ -6697,6 +8552,7 @@ function HomeRuntime.update(message)
     local dailyStatus = DailyRewardRuntime.getStatusLabel()
     local pendingCodes = #CodesRuntime.getPendingCodes()
     local activeFeatures = HomeRuntime.getActiveFeatures()
+    local rebirthState = RebirthRuntime.getState()
 
     local activeText = #activeFeatures > 0
         and table.concat(activeFeatures, ", ")
@@ -6707,6 +8563,15 @@ function HomeRuntime.update(message)
         "",
         "Active: " .. activeText,
         "",
+        "Pack Auto Buy: "
+            .. (State.autoBuyPacks and "ON" or "OFF"),
+        "Pack Buy Whitelist: "
+            .. tostring(PackBuyRuntime.countSelected())
+            .. "/"
+            .. tostring(#PackBuyNames),
+        "Pack Auto Open: "
+            .. (State.autoOpenPacks and "ON" or "OFF"),
+        "Rebirth: " .. tostring(rebirthState.current),
         "Main Team Mode: "
             .. equipBestModeLabel(State.equipBestMode),
         "Gems: " .. formatCompactNumber(getCurrentGems()),
@@ -6838,6 +8703,187 @@ local function buildGui()
         }, "\n"),
         Image = "circle-help",
         ImageSize = 19,
+        Size = "Small",
+    })
+
+    local PacksTab = Window:Tab({
+        Title = "Packs",
+        Icon = "package-open",
+        IconSize = 16,
+    })
+
+    State.packStatusParagraph = PacksTab:Paragraph({
+        Title = "Pack Automation",
+        Desc = "Loading...",
+        Image = "package-open",
+        ImageSize = 19,
+        Size = "Small",
+    })
+
+    State.packBuyStatusParagraph = PacksTab:Paragraph({
+        Title = "Pack Shop Automation",
+        Desc = "Loading...",
+        Image = "shopping-cart",
+        ImageSize = 19,
+        Size = "Small",
+    })
+
+    State.packBuyWhitelistDropdown = PacksTab:Dropdown({
+        Title = "Pack Whitelist",
+        Desc = "Locked selections are purchased until native Auto Buy unlocks.",
+        Values = PackBuyLabels,
+        Value = PackBuyRuntime.getSelectedLabels(),
+        Multi = true,
+        AllowNone = true,
+        SearchBarEnabled = true,
+        MenuWidth = 300,
+        Callback = PackBuyRuntime.applyWhitelistSelection,
+    })
+
+    PacksTab:Button({
+        Title = "Select All Packs",
+        Desc = "Select every eligible cash pack.",
+        Icon = "list-checks",
+        Callback = function()
+            PackBuyRuntime.setAll(true)
+        end,
+    })
+
+    PacksTab:Button({
+        Title = "Clear Pack Whitelist",
+        Desc = "Clear all selected packs.",
+        Icon = "list-x",
+        Callback = function()
+            PackBuyRuntime.setAll(false)
+        end,
+    })
+
+    PacksTab:Button({
+        Title = "Process Next Pack",
+        Desc = "Synchronize one checkbox or buy one locked selected pack.",
+        Icon = "shopping-cart",
+        Callback = function()
+            local success, result =
+                PackBuyRuntime.process(true)
+
+            notify(
+                "Pack Shop",
+                tostring(result),
+                success and "shopping-cart" or "triangle-alert"
+            )
+        end,
+    })
+
+    State.autoBuyPacksToggle = PacksTab:Toggle({
+        Title = "Auto Buy Packs",
+        Desc = "Unlock and enable native Auto Buy for whitelisted packs.",
+        Icon = "refresh-cw",
+        Value = State.autoBuyPacks,
+        Callback = PackBuyRuntime.setAuto,
+    })
+
+    PacksTab:Space()
+
+    State.autoOpenPacksToggle = PacksTab:Toggle({
+        Title = "Auto Open Packs",
+        Desc = "Use the game's native Auto Open behavior.",
+        Icon = "package",
+        Value = State.autoOpenPacks,
+        Callback = PackRuntime.setAutoOpen,
+    })
+
+    State.hidePackAnimationToggle = PacksTab:Toggle({
+        Title = "Hide Pack Animation",
+        Desc = "Minimize pack animations without requiring a gamepass.",
+        Icon = "eye-off",
+        Value = State.hidePackAnimation,
+        Callback = PackRuntime.setHideAnimation,
+    })
+
+    State.autoSkipPackAnimationToggle = PacksTab:Toggle({
+        Title = "Auto Skip Pack Animation",
+        Desc = "Use the native instant reveal when the official gamepass is owned.",
+        Icon = "fast-forward",
+        Value = State.autoSkipPackAnimation,
+        Callback = PackRuntime.setAutoSkip,
+    })
+
+    PacksTab:Button({
+        Title = "Apply Pack Settings",
+        Desc = "Synchronize the selected settings with the game.",
+        Icon = "refresh-cw",
+        Callback = function()
+            State.packSettingsNextSyncAt = 0
+            PackRuntime.applyDesiredSettings()
+            PackRuntime.applyNativeAutoSkip()
+            PackRuntime.updateUI(
+                "Pack settings synchronized.",
+                true
+            )
+        end,
+    })
+
+    PacksTab:Paragraph({
+        Title = "Animation Access",
+        Desc = table.concat({
+            "Auto Open and Hide Animation use native pack settings.",
+            "Full Auto Skip follows the official gamepass restriction.",
+            "Without the gamepass, Hide Animation remains available.",
+        }, "\n"),
+        Image = "info",
+        ImageSize = 18,
+        Size = "Small",
+    })
+
+    local RebirthTab = Window:Tab({
+        Title = "Rebirth",
+        Icon = "rotate-cw",
+        IconSize = 16,
+    })
+
+    State.rebirthStatusParagraph = RebirthTab:Paragraph({
+        Title = "Rebirth Status",
+        Desc = "Loading...",
+        Image = "rotate-cw",
+        ImageSize = 19,
+        Size = "Small",
+    })
+
+    RebirthTab:Button({
+        Title = "Rebirth Now",
+        Desc = "Rebirth when every requirement is ready.",
+        Icon = "rotate-cw",
+        Callback = function()
+            local success, result =
+                RebirthRuntime.rebirth(true)
+
+            notify(
+                "Rebirth",
+                success
+                    and (
+                        "Rebirth "
+                        .. tostring(result)
+                        .. " request submitted."
+                    )
+                    or tostring(result),
+                success and "rotate-cw" or "triangle-alert"
+            )
+        end,
+    })
+
+    State.autoRebirthToggle = RebirthTab:Toggle({
+        Title = "Auto Rebirth",
+        Desc = "Rebirth automatically when cash, Gems, and card requirements are ready.",
+        Icon = "refresh-cw",
+        Value = State.autoRebirth,
+        Callback = RebirthRuntime.setAuto,
+    })
+
+    RebirthTab:Paragraph({
+        Title = "Requirement Handling",
+        Desc = "Exact cards and Any Rarity requirements are checked before a request is sent.",
+        Image = "shield-check",
+        ImageSize = 18,
         Size = "Small",
     })
 
@@ -8075,6 +10121,11 @@ local function buildGui()
             or State.configStartupError
             or "Ready."
     )
+    PackBuyRuntime.updateUI(
+        "Choose packs from the whitelist."
+    )
+    PackRuntime.updateUI("Waiting for pack activity.")
+    RebirthRuntime.updateUI("Waiting for requirements.")
     EquipBestRuntime.updateUI("Ready.")
     HomeRuntime.update()
     LogRuntime.append("Hub", "Hub ready.", "info", true)
@@ -8113,6 +10164,8 @@ local function buildGui()
 end
 
 local Hub = {
+    Packs = {},
+    Rebirth = {},
     Team = {},
     Trophies = {},
     Seashells = {},
@@ -8130,6 +10183,199 @@ local Hub = {
     Utilities = {},
     Config = {},
 }
+
+function Hub.Packs.SetAutoBuy(enabled)
+    local value = PackBuyRuntime.setAuto(enabled)
+
+    PackRuntime.syncToggle(
+        State.autoBuyPacksToggle,
+        value
+    )
+
+    return value
+end
+
+function Hub.Packs.ToggleAutoBuy()
+    return Hub.Packs.SetAutoBuy(
+        not State.autoBuyPacks
+    )
+end
+
+function Hub.Packs.SetBuyWhitelist(values)
+    PackBuyRuntime.applyWhitelistSelection(values)
+    PackBuyRuntime.syncWhitelistDropdown()
+
+    return Hub.Packs.GetBuyWhitelist()
+end
+
+function Hub.Packs.GetBuyWhitelist()
+    local result = {}
+
+    for _, packName in ipairs(PackBuyNames) do
+        if State.packBuyWhitelist[packName] then
+            result[#result + 1] = packName
+        end
+    end
+
+    return result
+end
+
+function Hub.Packs.SelectAllBuyPacks()
+    PackBuyRuntime.setAll(true)
+    return Hub.Packs.GetBuyWhitelist()
+end
+
+function Hub.Packs.ClearBuyWhitelist()
+    PackBuyRuntime.setAll(false)
+    return {}
+end
+
+function Hub.Packs.ProcessNextBuy()
+    return PackBuyRuntime.process(true)
+end
+
+function Hub.Packs.SetAutoOpen(enabled)
+    local value = PackRuntime.setAutoOpen(enabled)
+
+    PackRuntime.syncToggle(
+        State.autoOpenPacksToggle,
+        value
+    )
+
+    return value
+end
+
+function Hub.Packs.ToggleAutoOpen()
+    return Hub.Packs.SetAutoOpen(
+        not State.autoOpenPacks
+    )
+end
+
+function Hub.Packs.SetHideAnimation(enabled)
+    local value, errorMessage =
+        PackRuntime.setHideAnimation(enabled)
+
+    PackRuntime.syncToggle(
+        State.hidePackAnimationToggle,
+        State.hidePackAnimation
+    )
+
+    return value, errorMessage
+end
+
+function Hub.Packs.ToggleHideAnimation()
+    return Hub.Packs.SetHideAnimation(
+        not State.hidePackAnimation
+    )
+end
+
+function Hub.Packs.SetAutoSkip(enabled)
+    local value, errorMessage =
+        PackRuntime.setAutoSkip(enabled)
+
+    PackRuntime.syncToggle(
+        State.autoSkipPackAnimationToggle,
+        State.autoSkipPackAnimation
+    )
+
+    return value, errorMessage
+end
+
+function Hub.Packs.ToggleAutoSkip()
+    return Hub.Packs.SetAutoSkip(
+        not State.autoSkipPackAnimation
+    )
+end
+
+function Hub.Packs.ApplySettings()
+    State.packSettingsNextSyncAt = 0
+    PackRuntime.applyDesiredSettings()
+    PackRuntime.applyNativeAutoSkip()
+    PackRuntime.updateUI(
+        "Pack settings synchronized.",
+        true
+    )
+
+    return true
+end
+
+function Hub.Packs.GetState()
+    local server = PackRuntime.getServerSettings()
+
+    return {
+        autoBuy = State.autoBuyPacks,
+        buyWhitelist = Hub.Packs.GetBuyWhitelist(),
+        buyPending = State.packBuyPending,
+        buyRequests = State.packBuyRequests,
+        confirmedPurchases = State.packBuyPurchases,
+        nativeCheckboxUpdates =
+            State.packBuyNativeUpdates,
+        buyFailures = State.packBuyFailures,
+        buyStatus = State.packBuyLastStatus,
+        autoOpen = State.autoOpenPacks,
+        hideAnimation = State.hidePackAnimation,
+        autoSkip = State.autoSkipPackAnimation,
+        hasAutoSkipPass = PackRuntime.hasAutoSkipPass(),
+        animating = PackRuntime.isAnimating(),
+        minimized = PackRuntime.isMinimized(),
+        serverAutoOpen = server.autoOpen,
+        serverHideAnimation = server.hideAnimation,
+        serverAutoSkip = server.autoSkip,
+        requests = State.packSettingsRequests,
+        failures = State.packSettingsFailures,
+        status = State.packLastStatus,
+    }
+end
+
+function Hub.Rebirth.SetAuto(enabled)
+    local value = RebirthRuntime.setAuto(enabled)
+
+    if State.autoRebirthToggle
+        and type(State.autoRebirthToggle.Set) == "function"
+    then
+        pcall(function()
+            State.autoRebirthToggle:Set(value)
+        end)
+    end
+
+    return value
+end
+
+function Hub.Rebirth.ToggleAuto()
+    return Hub.Rebirth.SetAuto(
+        not State.autoRebirth
+    )
+end
+
+function Hub.Rebirth.RebirthNow()
+    return RebirthRuntime.rebirth(true)
+end
+
+function Hub.Rebirth.GetState()
+    local data = RebirthRuntime.getState()
+
+    return {
+        autoRebirth = State.autoRebirth,
+        ready = data.ready,
+        canRebirth = data.canRebirth,
+        reason = data.reason,
+        current = data.current,
+        nextLevel = data.nextLevel,
+        maxLevel = data.maxLevel,
+        atMax = data.atMax == true,
+        cash = data.cash,
+        cashRequired = data.cashRequired,
+        gems = data.gems,
+        gemsRequired = data.gemsRequired,
+        cardRequirements = data.cardRequirements,
+        cardsReady = data.cardsReady,
+        pending = State.rebirthPending,
+        attempts = State.rebirthAttempts,
+        completed = State.rebirthSuccesses,
+        failures = State.rebirthFailures,
+        status = State.rebirthLastStatus,
+    }
+end
 
 function Hub.Team.SetAutoEquip(enabled)
     local value = EquipBestRuntime.setAuto(enabled)
@@ -9306,6 +11552,8 @@ end
 function Hub.GetState()
     return {
         running = State.running,
+        packs = Hub.Packs.GetState(),
+        rebirth = Hub.Rebirth.GetState(),
         team = Hub.Team.GetState(),
         trophies = {
             autoCraft = State.autoCraft,
@@ -9353,6 +11601,18 @@ function Hub.Stop()
     end
 
     State.running = false
+    State.autoBuyPacks = false
+    PackBuyRuntime.disableNativeAll()
+    PackBuyRuntime.clearPending()
+    State.autoOpenPacks = false
+    State.hidePackAnimation = false
+    State.autoSkipPackAnimation = false
+    State.packSettingsResetPending = false
+    pcall(function()
+        PackAnimationController.resetEverything(true)
+    end)
+    State.autoRebirth = false
+    RebirthRuntime.clearPending()
     State.autoEquipBestCards = false
     State.equipBestBusy = false
     State.autoCraft = false
@@ -9419,6 +11679,28 @@ function Hub.Stop()
         Environment.SpinASoccerCardHub = nil
     end
 end
+
+Hub.SetAutoBuyPacks = Hub.Packs.SetAutoBuy
+Hub.ToggleAutoBuyPacks = Hub.Packs.ToggleAutoBuy
+Hub.SetPackBuyWhitelist = Hub.Packs.SetBuyWhitelist
+Hub.GetPackBuyWhitelist = Hub.Packs.GetBuyWhitelist
+Hub.SelectAllBuyPacks = Hub.Packs.SelectAllBuyPacks
+Hub.ClearPackBuyWhitelist = Hub.Packs.ClearBuyWhitelist
+Hub.ProcessNextPackBuy = Hub.Packs.ProcessNextBuy
+
+Hub.SetAutoOpenPacks = Hub.Packs.SetAutoOpen
+Hub.ToggleAutoOpenPacks = Hub.Packs.ToggleAutoOpen
+Hub.SetHidePackAnimation = Hub.Packs.SetHideAnimation
+Hub.ToggleHidePackAnimation = Hub.Packs.ToggleHideAnimation
+Hub.SetAutoSkipPackAnimation = Hub.Packs.SetAutoSkip
+Hub.ToggleAutoSkipPackAnimation = Hub.Packs.ToggleAutoSkip
+Hub.ApplyPackSettings = Hub.Packs.ApplySettings
+Hub.GetPacksState = Hub.Packs.GetState
+
+Hub.SetAutoRebirth = Hub.Rebirth.SetAuto
+Hub.ToggleAutoRebirth = Hub.Rebirth.ToggleAuto
+Hub.RebirthNow = Hub.Rebirth.RebirthNow
+Hub.GetRebirthState = Hub.Rebirth.GetState
 
 Hub.SetAutoEquipBestCards = Hub.Team.SetAutoEquip
 Hub.ToggleAutoEquipBestCards = Hub.Team.ToggleAutoEquip
@@ -9635,6 +11917,30 @@ task.spawn(function()
     if not success then
         State.lastStatus = "GUI error: " .. tostring(errorMessage)
         warn("[SpinASoccerCardHub] " .. tostring(errorMessage))
+    end
+end)
+
+task.spawn(function()
+    while State.running do
+        pcall(PackBuyRuntime.tick)
+
+        task.wait(State.packBuyPollInterval)
+    end
+end)
+
+task.spawn(function()
+    while State.running do
+        pcall(PackRuntime.tick)
+
+        task.wait(State.packSettingsPollInterval)
+    end
+end)
+
+task.spawn(function()
+    while State.running do
+        pcall(RebirthRuntime.tick)
+
+        task.wait(State.rebirthPollInterval)
     end
 end)
 
