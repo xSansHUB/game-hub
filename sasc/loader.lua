@@ -720,6 +720,7 @@ local State = {
     configLastObservedFingerprint = nil,
     configStartupLoaded = false,
     configStartupError = nil,
+    configLastError = nil,
     configStatusParagraph = nil,
     autoSaveToggle = nil,
     autoLoadToggle = nil,
@@ -5640,8 +5641,25 @@ function TournamentRuntime.handleTick(payload)
 end
 
 
+local function normalizeWindowKeybind(value)
+    local keyName
+
+    if typeof(value) == "EnumItem" then
+        keyName = value.Name
+    else
+        keyName = tostring(value or "G")
+    end
+
+    if Enum.KeyCode[keyName] then
+        return keyName
+    end
+
+    return "G"
+end
+
+
 local ConfigRuntime = {
-    version = 9,
+    version = 10,
     root = "xSansHUB",
     folder = "xSansHUB/SpinASoccerCardHub",
     file = "xSansHUB/SpinASoccerCardHub/" .. tostring(game.PlaceId) .. ".json",
@@ -5855,7 +5873,7 @@ function ConfigRuntime.syncControls()
     local function setToggle(toggle, value)
         if toggle and type(toggle.Set) == "function" then
             pcall(function()
-                toggle:Set(value == true)
+                toggle:Set(value == true, false)
             end)
         end
     end
@@ -6096,6 +6114,7 @@ function ConfigRuntime.save()
 
     local folderSuccess, folderError = ConfigRuntime.ensureFolders()
     if not folderSuccess then
+        State.configLastError = tostring(folderError)
         ConfigRuntime.updateStatus("Could not prepare saved settings.")
         return false, "Could not prepare saved settings"
     end
@@ -6107,6 +6126,7 @@ function ConfigRuntime.save()
     end)
 
     if not encodeSuccess then
+        State.configLastError = tostring(encoded)
         ConfigRuntime.updateStatus("Could not prepare saved settings.")
         return false, "Could not prepare saved settings"
     end
@@ -6118,11 +6138,13 @@ function ConfigRuntime.save()
     )
 
     if not writeSuccess then
+        State.configLastError = tostring(writeError)
         ConfigRuntime.updateStatus("Could not save settings.")
         return false, "Could not save settings"
     end
 
     State.configDirty = false
+    State.configLastError = nil
     State.configLastSavedAt = os.time()
     State.configLastObservedFingerprint = ConfigRuntime.fingerprint()
     ConfigRuntime.updateStatus("Settings saved successfully.")
@@ -6133,17 +6155,20 @@ end
 function ConfigRuntime.load()
     local config, readError = ConfigRuntime.read()
     if not config then
-        ConfigRuntime.updateStatus(tostring(readError))
+        State.configLastError = tostring(readError)
+        ConfigRuntime.updateStatus("Could not load saved settings.")
         return false, readError
     end
 
     local success, applyError = ConfigRuntime.apply(config, true)
     if not success then
-        ConfigRuntime.updateStatus(tostring(applyError))
+        State.configLastError = tostring(applyError)
+        ConfigRuntime.updateStatus("Could not apply saved settings.")
         return false, applyError
     end
 
     State.configStartupLoaded = true
+    State.configLastError = nil
     ConfigRuntime.updateStatus("Settings loaded successfully.")
 
     return true
@@ -6173,7 +6198,14 @@ function ConfigRuntime.requestSave()
             return
         end
 
-        ConfigRuntime.save()
+        local saved = ConfigRuntime.save()
+
+        if not saved then
+            State.configDirty = true
+            ConfigRuntime.updateStatus(
+                "Save pending; retry required."
+            )
+        end
     end)
 end
 
@@ -6220,14 +6252,29 @@ function ConfigRuntime.initialize()
     end
 
     if not ConfigRuntime.fileExists() then
-        State.configLastObservedFingerprint = ConfigRuntime.fingerprint()
+        State.configLastObservedFingerprint =
+            ConfigRuntime.fingerprint()
+
+        if State.autoSave then
+            local saved, saveError = ConfigRuntime.save()
+
+            if not saved then
+                State.configStartupError = tostring(saveError)
+                return false, saveError
+            end
+
+            return true, "Default settings saved."
+        end
+
         return true, "No saved settings found; using defaults."
     end
 
     local config, readError = ConfigRuntime.read()
     if not config then
+        State.configLastError = tostring(readError)
         State.configStartupError = tostring(readError)
-        State.configLastObservedFingerprint = ConfigRuntime.fingerprint()
+        State.configLastObservedFingerprint =
+            ConfigRuntime.fingerprint()
         return false, readError
     end
 
@@ -6247,31 +6294,17 @@ function ConfigRuntime.initialize()
     if State.autoLoad then
         local success, applyError = ConfigRuntime.apply(config, false)
         if not success then
+            State.configLastError = tostring(applyError)
             State.configStartupError = tostring(applyError)
             return false, applyError
         end
 
+        State.configLastError = nil
         State.configStartupLoaded = true
     end
 
     State.configLastObservedFingerprint = ConfigRuntime.fingerprint()
     return true
-end
-
-local function normalizeWindowKeybind(value)
-    local keyName
-
-    if typeof(value) == "EnumItem" then
-        keyName = value.Name
-    else
-        keyName = tostring(value or "G")
-    end
-
-    if Enum.KeyCode[keyName] then
-        return keyName
-    end
-
-    return "G"
 end
 
 local function updateWindowKeybindTag()
@@ -8841,8 +8874,10 @@ function Hub.Config.GetState()
         keybind = State.windowKeybind,
         dirty = State.configDirty,
         lastSavedAt = State.configLastSavedAt,
+        lastError = State.configLastError,
         startupLoaded = State.configStartupLoaded,
         startupError = State.configStartupError,
+        status = State.configLastStatus,
     }
 end
 
