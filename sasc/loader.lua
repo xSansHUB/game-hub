@@ -118,6 +118,20 @@ local TournamentConfig = requirePath(
     "Configs",
     "TournamentConfig"
 )
+local ScalingIncome = requirePath(
+    ReplicatedStorage,
+    "Source",
+    "Shared",
+    "Helpers",
+    "ScalingIncome"
+)
+local TournamentClock = requirePath(
+    ReplicatedStorage,
+    "Source",
+    "Shared",
+    "Helpers",
+    "TournamentClock"
+)
 local GachaConfig = requirePath(
     ReplicatedStorage,
     "Source",
@@ -149,6 +163,8 @@ local BuyGemShopItem = Networker.get_remote("BuyGemShopItem")
 local SummerQuestClaim = Networker.get_remote("SummerQuestClaim")
 local SummerShopBuy = Networker.get_remote("SummerShopBuy")
 local TournamentServer = Networker.get_remote("TournamentServer")
+local TournamentRemote = Networker.get_remote("Tournament")
+local TournamentTick = Networker.get_remote("TournamentTick")
 local PerformWish = Networker.get_remotefunction("PerformWish")
 local ClaimAllIndexGems = Networker.get_remote("ClaimAllIndexGems")
 local DailyReward = Networker.get_remote("DailyReward")
@@ -576,6 +592,28 @@ local State = {
     autoBuyTournamentShopToggle = nil,
     tournamentShopConnection = nil,
     syncingTournamentShopDropdown = false,
+
+    autoJoinTournament = false,
+    autoEquipBestTournament = false,
+    tournamentAutomationPollInterval = 0.35,
+    tournamentActionDelay = 0.75,
+    tournamentEquipCooldown = 3,
+    tournamentPendingTimeout = 6,
+    tournamentNextActionAt = 0,
+    tournamentNextEquipAt = 0,
+    tournamentPendingAction = nil,
+    tournamentManualJoinRequested = false,
+    tournamentTickState = nil,
+    tournamentTeamRequests = 0,
+    tournamentEquipRequests = 0,
+    tournamentJoinRequests = 0,
+    tournamentJoins = 0,
+    tournamentFailures = 0,
+    tournamentLastStatus = "Waiting for tournament.",
+    tournamentAutomationStatusParagraph = nil,
+    autoJoinTournamentToggle = nil,
+    autoEquipBestTournamentToggle = nil,
+    tournamentTickConnection = nil,
 
     autoSpinWishTickets = false,
     skipWishAnimation = true,
@@ -1206,7 +1244,7 @@ end
 
 local function craftNextWhitelisted()
     if os.clock() < State.nextCraftAt then
-        return false, "Cooldown remote"
+        return false, "Action is on cooldown"
     end
 
     if countSelectedTrophies() == 0 then
@@ -3389,8 +3427,8 @@ function IndexRuntime.claimAll(force)
 
     if not stats.playerDataReady then
         State.indexNextClaimAt = now + 2
-        IndexRuntime.updateStatus("PlayerStore belum tersedia.")
-        return false, "PlayerStore belum tersedia"
+        IndexRuntime.updateStatus("Player data is not ready yet.")
+        return false, "Player data is not ready yet"
     end
 
     if stats.total <= 0 then
@@ -3704,8 +3742,8 @@ function WishRuntime.perform(force)
 
     if not data.playerData then
         State.wishNextAt = now + 2
-        WishRuntime.updateStatus("PlayerStore belum tersedia.")
-        return false, "PlayerStore belum tersedia"
+        WishRuntime.updateStatus("Player data is not ready yet.")
+        return false, "Player data is not ready yet"
     end
 
     if data.rebirth < data.minRebirth then
@@ -3948,7 +3986,7 @@ end
 
 function AntiAfkRuntime.pulse(source, force)
     if not State.running then
-        return false, "Script sudah berhenti"
+        return false, "Hub has stopped"
     end
 
     if not State.antiAfk and force ~= true then
@@ -4200,7 +4238,7 @@ function CodesRuntime.updateUI(message, shouldLog)
 
     local description = table.concat({
         "Auto Redeem: " .. (State.autoRedeemCodes and "ON" or "OFF"),
-        "Saved Codes: " .. tostring(#codes),
+        "Available Codes: " .. tostring(#codes),
         "Pending: " .. tostring(#pending),
         "Attempted: " .. tostring(#codes - #pending),
         "Group: " .. groupText,
@@ -4783,8 +4821,827 @@ function DailyRewardRuntime.tick()
 end
 
 
+local TournamentRuntime = {}
+
+function TournamentRuntime.copyTeam(team)
+    local result = {}
+
+    if type(team) == "table" then
+        for index = 1, 5 do
+            local uuid = team[index]
+            if uuid ~= nil then
+                result[index] = tostring(uuid)
+            end
+        end
+    end
+
+    return result
+end
+
+function TournamentRuntime.teamCount(team)
+    local count = 0
+
+    for index = 1, 5 do
+        if type(team) == "table" and team[index] ~= nil then
+            count += 1
+        end
+    end
+
+    return count
+end
+
+function TournamentRuntime.teamFingerprint(team)
+    local parts = {}
+
+    for index = 1, 5 do
+        parts[index] = tostring(
+            type(team) == "table" and team[index] or ""
+        )
+    end
+
+    return table.concat(parts, "|")
+end
+
+function TournamentRuntime.getOwnedCards(playerData)
+    local cards = {}
+    local seen = {}
+
+    local function add(card)
+        if type(card) ~= "table" then
+            return
+        end
+
+        local uuid = tostring(card.uuid or "")
+        if uuid == "" or seen[uuid] then
+            return
+        end
+
+        seen[uuid] = true
+        cards[#cards + 1] = card
+    end
+
+    if type(playerData) == "table"
+        and type(playerData.slots) == "table"
+    then
+        for _, slotData in pairs(playerData.slots) do
+            add(
+                type(slotData) == "table"
+                    and slotData.card
+                    or nil
+            )
+        end
+    end
+
+    if type(playerData) == "table"
+        and type(playerData.inventory) == "table"
+    then
+        for _, card in ipairs(playerData.inventory) do
+            add(card)
+        end
+    end
+
+    return cards
+end
+
+function TournamentRuntime.getBestTeam(playerData)
+    local cards = TournamentRuntime.getOwnedCards(playerData)
+    local incomeMap = {}
+
+    if #cards > 0 then
+        local success, result = pcall(function()
+            return ScalingIncome.computeBaseAll(cards)
+        end)
+
+        if success and type(result) == "table" then
+            incomeMap = result
+        end
+    end
+
+    table.sort(cards, function(left, right)
+        local leftUuid = tostring(left.uuid or "")
+        local rightUuid = tostring(right.uuid or "")
+        local leftIncome = tonumber(incomeMap[leftUuid]) or 0
+        local rightIncome = tonumber(incomeMap[rightUuid]) or 0
+
+        if leftIncome == rightIncome then
+            return leftUuid < rightUuid
+        end
+
+        return leftIncome > rightIncome
+    end)
+
+    local best = {}
+
+    for index = 1, math.min(5, #cards) do
+        best[index] = tostring(cards[index].uuid)
+    end
+
+    return best, incomeMap
+end
+
+function TournamentRuntime.getState()
+    local playerData = getPlayerData()
+    local tournamentData =
+        type(playerData) == "table"
+        and type(playerData.tournament) == "table"
+        and playerData.tournament
+        or {}
+
+    local team = TournamentRuntime.copyTeam(tournamentData.team)
+    local phase = "unknown"
+    local secondsLeft = 0
+    local queueWindowOpen = false
+    local tickState = State.tournamentTickState
+
+    if type(tickState) == "table" then
+        local elapsed =
+            os.clock()
+            - (tonumber(tickState.receivedAtClock) or 0)
+
+        secondsLeft = math.max(
+            0,
+            (tonumber(tickState.secondsLeftAtReceive) or 0)
+                - elapsed
+        )
+        queueWindowOpen = tickState.open == true
+        phase = queueWindowOpen and "join_window" or "countdown"
+    else
+        local success, derivedPhase, derivedSeconds =
+            pcall(function()
+                return TournamentClock.derivePhase(
+                    Workspace:GetServerTimeNow()
+                )
+            end)
+
+        if success then
+            phase = tostring(derivedPhase or "unknown")
+            secondsLeft = tonumber(derivedSeconds) or 0
+            queueWindowOpen = phase == "join_window"
+        end
+    end
+
+    local rebirth =
+        tonumber(type(playerData) == "table" and playerData.rebirth)
+        or 0
+    local cash =
+        tonumber(type(playerData) == "table" and playerData.cash)
+        or 0
+    local entryFee = 0
+
+    local feeSuccess, feeResult = pcall(function()
+        return TournamentClock.computeEntryFee(rebirth, cash)
+    end)
+
+    if feeSuccess then
+        entryFee = tonumber(feeResult) or 0
+    end
+
+    local minRebirth =
+        tonumber(TournamentConfig.MinRebirth) or 0
+
+    return {
+        ready = playerData ~= nil,
+        playerData = playerData,
+        tournamentData = tournamentData,
+        team = team,
+        teamCount = TournamentRuntime.teamCount(team),
+        phase = phase,
+        secondsLeft = secondsLeft,
+        queueWindowOpen = queueWindowOpen,
+        queued = tournamentData.queue ~= nil,
+        rebirth = rebirth,
+        minRebirth = minRebirth,
+        unlocked = rebirth >= minRebirth,
+        cash = cash,
+        entryFee = entryFee,
+        canAfford = cash >= entryFee,
+    }
+end
+
+function TournamentRuntime.teamContains(team, uuid)
+    uuid = tostring(uuid or "")
+
+    for index = 1, 5 do
+        if tostring(team[index] or "") == uuid then
+            return true, index
+        end
+    end
+
+    return false, nil
+end
+
+function TournamentRuntime.teamMatchesBest(team, best)
+    if TournamentRuntime.teamCount(team) ~= 5 or #best < 5 then
+        return false
+    end
+
+    local currentSet = {}
+    local desiredSet = {}
+
+    for index = 1, 5 do
+        currentSet[tostring(team[index] or "")] = true
+        desiredSet[tostring(best[index] or "")] = true
+    end
+
+    for uuid in pairs(desiredSet) do
+        if not currentSet[uuid] then
+            return false
+        end
+    end
+
+    for uuid in pairs(currentSet) do
+        if not desiredSet[uuid] then
+            return false
+        end
+    end
+
+    return true
+end
+
+function TournamentRuntime.formatTime(seconds)
+    local value = math.max(
+        0,
+        math.floor((tonumber(seconds) or 0) + 0.5)
+    )
+
+    return string.format(
+        "%02d:%02d",
+        math.floor(value / 60),
+        value % 60
+    )
+end
+
+function TournamentRuntime.pendingLabel()
+    local pending = State.tournamentPendingAction
+
+    if type(pending) ~= "table" then
+        return "None"
+    end
+
+    local labels = {
+        team_add = "Adding a card",
+        team_remove = "Removing a card",
+        equip_best = "Equipping best team",
+        join = "Joining queue",
+    }
+
+    return labels[pending.kind] or "Processing"
+end
+
+function TournamentRuntime.updateUI(message, shouldLog)
+    if message ~= nil then
+        State.tournamentLastStatus = tostring(message)
+
+        if shouldLog == true then
+            LogRuntime.append(
+                "Tournament",
+                State.tournamentLastStatus
+            )
+        end
+    end
+
+    local data = TournamentRuntime.getState()
+    local best = {}
+
+    if data.playerData then
+        best = TournamentRuntime.getBestTeam(data.playerData)
+    end
+
+    local description = table.concat({
+        "Auto Join: "
+            .. (State.autoJoinTournament and "ON" or "OFF"),
+        "Auto Equip Best: "
+            .. (State.autoEquipBestTournament and "ON" or "OFF"),
+        "Phase: "
+            .. (
+                data.queueWindowOpen
+                    and "Join Open"
+                    or (
+                        data.phase == "countdown"
+                            and "Countdown"
+                            or "Waiting"
+                    )
+            ),
+        "Time Left: "
+            .. TournamentRuntime.formatTime(data.secondsLeft),
+        "Queue: " .. (data.queued and "Joined" or "Not Joined"),
+        "Team: " .. tostring(data.teamCount) .. "/5",
+        "Best Team: "
+            .. (
+                TournamentRuntime.teamMatchesBest(data.team, best)
+                    and "Ready"
+                    or "Not Ready"
+            ),
+        "Entry Fee: $" .. formatCompactNumber(data.entryFee),
+        "Cash: $" .. formatCompactNumber(data.cash),
+        "Requirement: "
+            .. (
+                data.unlocked
+                    and "Unlocked"
+                    or ("Rebirth " .. tostring(data.minRebirth))
+            ),
+        "Pending: " .. TournamentRuntime.pendingLabel(),
+        "Team Updates: " .. tostring(State.tournamentTeamRequests),
+        "Joins: " .. tostring(State.tournamentJoins),
+        "Failures: " .. tostring(State.tournamentFailures),
+        "Status: " .. tostring(State.tournamentLastStatus),
+    }, "\n")
+
+    if State.tournamentAutomationStatusParagraph
+        and type(
+            State.tournamentAutomationStatusParagraph.SetDesc
+        ) == "function"
+    then
+        pcall(function()
+            State.tournamentAutomationStatusParagraph:SetDesc(
+                description
+            )
+        end)
+    end
+end
+
+function TournamentRuntime.setAutoJoin(enabled)
+    State.autoJoinTournament = enabled == true
+    State.tournamentManualJoinRequested = false
+    State.tournamentNextActionAt = 0
+
+    TournamentRuntime.updateUI(
+        State.autoJoinTournament
+            and "Auto Join enabled."
+            or "Auto Join disabled.",
+        true
+    )
+
+    return State.autoJoinTournament
+end
+
+function TournamentRuntime.setAutoEquipBest(enabled)
+    State.autoEquipBestTournament = enabled == true
+    State.tournamentNextEquipAt = 0
+
+    TournamentRuntime.updateUI(
+        State.autoEquipBestTournament
+            and "Auto Equip Best enabled."
+            or "Auto Equip Best disabled.",
+        true
+    )
+
+    return State.autoEquipBestTournament
+end
+
+function TournamentRuntime.setPending(kind, extra)
+    extra = type(extra) == "table" and extra or {}
+    extra.kind = kind
+    extra.startedAt = os.clock()
+    extra.beforeFingerprint =
+        TournamentRuntime.teamFingerprint(
+            TournamentRuntime.getState().team
+        )
+
+    State.tournamentPendingAction = extra
+end
+
+function TournamentRuntime.clearPending()
+    State.tournamentPendingAction = nil
+end
+
+function TournamentRuntime.confirmPending()
+    local pending = State.tournamentPendingAction
+
+    if type(pending) ~= "table" then
+        return false
+    end
+
+    local data = TournamentRuntime.getState()
+    local confirmed = false
+    local message
+
+    if pending.kind == "team_add" then
+        confirmed =
+            TournamentRuntime.teamContains(
+                data.team,
+                pending.uuid
+            ) == true
+        message = "Card added to tournament team."
+    elseif pending.kind == "team_remove" then
+        confirmed =
+            TournamentRuntime.teamContains(
+                data.team,
+                pending.uuid
+            ) == false
+        message = "Card removed from tournament team."
+    elseif pending.kind == "equip_best" then
+        local best = {}
+
+        if data.playerData then
+            best = TournamentRuntime.getBestTeam(data.playerData)
+        end
+
+        confirmed =
+            TournamentRuntime.teamMatchesBest(data.team, best)
+            or TournamentRuntime.teamFingerprint(data.team)
+                ~= pending.beforeFingerprint
+        message = "Best tournament team equipped."
+    elseif pending.kind == "join" then
+        confirmed = data.queued == true
+        message = "Tournament queue joined."
+
+        if confirmed then
+            State.tournamentJoins += 1
+            State.tournamentManualJoinRequested = false
+        end
+    end
+
+    if confirmed then
+        TournamentRuntime.clearPending()
+        TournamentRuntime.updateUI(message, true)
+        return true
+    end
+
+    if os.clock() - (tonumber(pending.startedAt) or 0)
+        >= State.tournamentPendingTimeout
+    then
+        State.tournamentFailures += 1
+        TournamentRuntime.clearPending()
+
+        TournamentRuntime.updateUI(
+            "Tournament action was not confirmed.",
+            true
+        )
+    end
+
+    return false
+end
+
+function TournamentRuntime.sendRemove(slotIndex, uuid)
+    if State.tournamentPendingAction
+        or os.clock() < State.tournamentNextActionAt
+    then
+        return false, "Another action is being processed"
+    end
+
+    local success, errorMessage = pcall(function()
+        TournamentRemote:FireServer(
+            "team_remove",
+            tonumber(slotIndex)
+        )
+    end)
+
+    if not success then
+        State.tournamentFailures += 1
+        TournamentRuntime.updateUI(
+            "Could not update tournament team.",
+            true
+        )
+        return false, tostring(errorMessage)
+    end
+
+    State.tournamentTeamRequests += 1
+    State.tournamentNextActionAt =
+        os.clock() + State.tournamentActionDelay
+
+    TournamentRuntime.setPending("team_remove", {
+        uuid = tostring(uuid),
+        slot = tonumber(slotIndex),
+    })
+
+    TournamentRuntime.updateUI(
+        "Removing one card from the tournament team."
+    )
+
+    return true
+end
+
+function TournamentRuntime.sendAdd(uuid)
+    if State.tournamentPendingAction
+        or os.clock() < State.tournamentNextActionAt
+    then
+        return false, "Another action is being processed"
+    end
+
+    uuid = tostring(uuid or "")
+    if uuid == "" then
+        return false, "Invalid card"
+    end
+
+    local success, errorMessage = pcall(function()
+        TournamentRemote:FireServer("team_add", uuid)
+    end)
+
+    if not success then
+        State.tournamentFailures += 1
+        TournamentRuntime.updateUI(
+            "Could not update tournament team.",
+            true
+        )
+        return false, tostring(errorMessage)
+    end
+
+    State.tournamentTeamRequests += 1
+    State.tournamentNextActionAt =
+        os.clock() + State.tournamentActionDelay
+
+    TournamentRuntime.setPending("team_add", {
+        uuid = uuid,
+    })
+
+    TournamentRuntime.updateUI(
+        "Adding one card to the tournament team."
+    )
+
+    return true
+end
+
+function TournamentRuntime.reconcileBestTeam()
+    local data = TournamentRuntime.getState()
+
+    if not data.ready then
+        TournamentRuntime.updateUI(
+            "Player data is not ready yet."
+        )
+        return false
+    end
+
+    local best = TournamentRuntime.getBestTeam(data.playerData)
+
+    if #best < 5 then
+        TournamentRuntime.updateUI(
+            "At least five cards are required."
+        )
+        return false
+    end
+
+    if TournamentRuntime.teamMatchesBest(data.team, best) then
+        return true
+    end
+
+    local desired = {}
+    for index = 1, 5 do
+        desired[best[index]] = true
+    end
+
+    -- One removal per cycle.
+    for slotIndex = 1, 5 do
+        local currentUuid = data.team[slotIndex]
+
+        if currentUuid and not desired[currentUuid] then
+            TournamentRuntime.sendRemove(
+                slotIndex,
+                currentUuid
+            )
+            return false
+        end
+    end
+
+    local current = {}
+    for index = 1, 5 do
+        if data.team[index] then
+            current[data.team[index]] = true
+        end
+    end
+
+    -- One addition per cycle.
+    for index = 1, 5 do
+        local desiredUuid = best[index]
+
+        if desiredUuid and not current[desiredUuid] then
+            TournamentRuntime.sendAdd(desiredUuid)
+            return false
+        end
+    end
+
+    return false
+end
+
+function TournamentRuntime.equipBest(force)
+    local now = os.clock()
+    local data = TournamentRuntime.getState()
+
+    if State.tournamentPendingAction then
+        return false, "Another action is being processed"
+    end
+
+    if force ~= true and now < State.tournamentNextEquipAt then
+        return false, "Equip Best is on cooldown"
+    end
+
+    if not data.ready then
+        return false, "Player data is not ready"
+    end
+
+    local best = TournamentRuntime.getBestTeam(data.playerData)
+
+    if #best < 5 then
+        return false, "At least five cards are required"
+    end
+
+    if TournamentRuntime.teamMatchesBest(data.team, best) then
+        TournamentRuntime.updateUI(
+            "Best tournament team is already equipped."
+        )
+        return true, "Already equipped"
+    end
+
+    local success, errorMessage = pcall(function()
+        TournamentRemote:FireServer("equip_best")
+    end)
+
+    if not success then
+        State.tournamentFailures += 1
+        TournamentRuntime.updateUI(
+            "Could not equip the best tournament team.",
+            true
+        )
+        return false, tostring(errorMessage)
+    end
+
+    State.tournamentEquipRequests += 1
+    State.tournamentNextEquipAt =
+        now + State.tournamentEquipCooldown
+    State.tournamentNextActionAt =
+        now + State.tournamentActionDelay
+
+    TournamentRuntime.setPending("equip_best")
+    TournamentRuntime.updateUI(
+        "Equipping the best tournament team."
+    )
+
+    return true
+end
+
+function TournamentRuntime.sendJoin()
+    local data = TournamentRuntime.getState()
+
+    if State.tournamentPendingAction
+        or os.clock() < State.tournamentNextActionAt
+    then
+        return false, "Another action is being processed"
+    end
+
+    if data.queued then
+        State.tournamentManualJoinRequested = false
+        return true, "Already queued"
+    end
+
+    if not data.unlocked then
+        return false, "Tournament is locked"
+    end
+
+    if not data.queueWindowOpen then
+        return false, "Join window is closed"
+    end
+
+    if not data.canAfford then
+        TournamentRuntime.updateUI(
+            "Not enough cash for the entry fee."
+        )
+        return false, "Not enough cash"
+    end
+
+    if data.teamCount ~= 5 then
+        return false, "Tournament team is not ready"
+    end
+
+    local success, errorMessage = pcall(function()
+        TournamentRemote:FireServer("join")
+    end)
+
+    if not success then
+        State.tournamentFailures += 1
+        TournamentRuntime.updateUI(
+            "Could not join the tournament queue.",
+            true
+        )
+        return false, tostring(errorMessage)
+    end
+
+    State.tournamentJoinRequests += 1
+    State.tournamentNextActionAt =
+        os.clock() + State.tournamentActionDelay
+
+    TournamentRuntime.setPending("join")
+    TournamentRuntime.updateUI(
+        "Joining the tournament queue."
+    )
+
+    return true
+end
+
+function TournamentRuntime.requestManualJoin()
+    local data = TournamentRuntime.getState()
+
+    if data.queued then
+        return true, "Already queued"
+    end
+
+    if not data.queueWindowOpen then
+        TournamentRuntime.updateUI(
+            "Tournament join window is closed."
+        )
+        return false, "Join window is closed"
+    end
+
+    if not data.unlocked then
+        return false, "Tournament is locked"
+    end
+
+    State.tournamentManualJoinRequested = true
+    State.tournamentNextActionAt = 0
+
+    TournamentRuntime.updateUI(
+        "Preparing the best team before joining.",
+        true
+    )
+
+    return true
+end
+
+function TournamentRuntime.runJoinStep()
+    local data = TournamentRuntime.getState()
+
+    if data.queued then
+        State.tournamentManualJoinRequested = false
+        TournamentRuntime.updateUI()
+        return
+    end
+
+    if not data.unlocked then
+        State.tournamentManualJoinRequested = false
+        TournamentRuntime.updateUI(
+            "Tournament is not unlocked yet."
+        )
+        return
+    end
+
+    if not TournamentRuntime.reconcileBestTeam() then
+        return
+    end
+
+    data = TournamentRuntime.getState()
+
+    if data.queueWindowOpen then
+        TournamentRuntime.sendJoin()
+    elseif State.tournamentManualJoinRequested then
+        State.tournamentManualJoinRequested = false
+        TournamentRuntime.updateUI(
+            "Tournament join window is closed.",
+            true
+        )
+    else
+        TournamentRuntime.updateUI()
+    end
+end
+
+function TournamentRuntime.tick()
+    if State.tournamentPendingAction then
+        TournamentRuntime.confirmPending()
+        TournamentRuntime.updateUI()
+        return
+    end
+
+    local data = TournamentRuntime.getState()
+
+    if data.queued then
+        State.tournamentManualJoinRequested = false
+        TournamentRuntime.updateUI()
+        return
+    end
+
+    if State.autoJoinTournament
+        or State.tournamentManualJoinRequested
+    then
+        TournamentRuntime.runJoinStep()
+        return
+    end
+
+    if State.autoEquipBestTournament
+        and os.clock() >= State.tournamentNextEquipAt
+    then
+        TournamentRuntime.equipBest(false)
+        return
+    end
+
+    TournamentRuntime.updateUI()
+end
+
+function TournamentRuntime.handleTick(payload)
+    if type(payload) ~= "table" then
+        return
+    end
+
+    State.tournamentTickState = {
+        open = payload.queueWindowOpen == true,
+        secondsLeftAtReceive =
+            tonumber(payload.secondsLeft) or 0,
+        receivedAtClock = os.clock(),
+    }
+
+    TournamentRuntime.updateUI()
+end
+
+
 local ConfigRuntime = {
-    version = 8,
+    version = 9,
     root = "xSansHUB",
     folder = "xSansHUB/SpinASoccerCardHub",
     file = "xSansHUB/SpinASoccerCardHub/" .. tostring(game.PlaceId) .. ".json",
@@ -4820,7 +5677,7 @@ end
 
 function ConfigRuntime.ensureFolders()
     if not State.configSupported then
-        return false, "Executor tidak mendukung readfile/writefile"
+        return false, "Saved settings are unavailable"
     end
 
     if type(makefolder) ~= "function" then
@@ -4898,6 +5755,10 @@ function ConfigRuntime.buildSnapshot(includeSaveMetadata)
         autoBuySummerShop = State.autoBuySummerShop == true,
         summerShopWhitelist = ConfigRuntime.copyBooleanMap(State.summerShopWhitelist),
 
+        autoJoinTournament = State.autoJoinTournament == true,
+        autoEquipBestTournament =
+            State.autoEquipBestTournament == true,
+
         autoBuyTournamentShop = State.autoBuyTournamentShop == true,
         tournamentShopWhitelist =
             ConfigRuntime.copyBooleanMap(State.tournamentShopWhitelist),
@@ -4928,7 +5789,7 @@ end
 
 function ConfigRuntime.read()
     if not State.configSupported then
-        return nil, "Executor tidak mendukung readfile/writefile"
+        return nil, "Saved settings are unavailable"
     end
 
     if not ConfigRuntime.fileExists() then
@@ -4965,18 +5826,19 @@ function ConfigRuntime.updateStatus(message)
     end
 
     local description = table.concat({
-        "Support: " .. (State.configSupported and "YES" or "NO"),
-        "Path: " .. ConfigRuntime.file,
-        "Exists: " .. (ConfigRuntime.fileExists() and "YES" or "NO"),
+        "Storage: "
+            .. (State.configSupported and "Available" or "Unavailable"),
+        "Saved Settings: "
+            .. (ConfigRuntime.fileExists() and "Found" or "Not Found"),
         "Auto Save: " .. (State.autoSave and "ON" or "OFF"),
         "Auto Load: " .. (State.autoLoad and "ON" or "OFF"),
         "Keybind: " .. tostring(State.windowKeybind),
-        "Dirty: " .. (State.configDirty and "YES" or "NO"),
+        "Changes: " .. (State.configDirty and "Pending" or "Saved"),
         "Last Saved: " .. savedText,
         "Status: " .. tostring(
             State.configLastStatus
                 or State.configStartupError
-                or "Config siap."
+                or "Ready."
         ),
     }, "\n")
 
@@ -5013,6 +5875,11 @@ function ConfigRuntime.syncControls()
     setToggle(State.autoBuyGemShopToggle, State.autoBuyGemShop)
     setToggle(State.autoClaimSummerQuestsToggle, State.autoClaimSummerQuests)
     setToggle(State.autoBuySummerShopToggle, State.autoBuySummerShop)
+    setToggle(State.autoJoinTournamentToggle, State.autoJoinTournament)
+    setToggle(
+        State.autoEquipBestTournamentToggle,
+        State.autoEquipBestTournament
+    )
     setToggle(State.autoBuyTournamentShopToggle, State.autoBuyTournamentShop)
     setToggle(State.antiAfkToggle, State.antiAfk)
     setToggle(State.autoSaveToggle, State.autoSave)
@@ -5037,6 +5904,7 @@ function ConfigRuntime.syncControls()
     updateGemShopStatus()
     updateSummerQuestStatus()
     updateSummerShopStatus()
+    TournamentRuntime.updateUI()
     updateTournamentShopStatus()
     AntiAfkRuntime.updateStatus()
     ConfigRuntime.updateStatus()
@@ -5055,6 +5923,10 @@ function ConfigRuntime.resetActionCooldowns()
     State.dailyRewardNextClaimAt = 0
     DailyRewardRuntime.clearPending()
     State.codeNextRedeemAt = 0
+    State.tournamentNextActionAt = 0
+    State.tournamentNextEquipAt = 0
+    State.tournamentManualJoinRequested = false
+    TournamentRuntime.clearPending()
     State.nextAntiAfkPulseAt = 0
 
     table.clear(State.gemShopItemNextAttempt)
@@ -5168,6 +6040,15 @@ function ConfigRuntime.apply(config, syncUI)
         end
     end
 
+    if config.autoJoinTournament ~= nil then
+        State.autoJoinTournament =
+            config.autoJoinTournament == true
+    end
+    if config.autoEquipBestTournament ~= nil then
+        State.autoEquipBestTournament =
+            config.autoEquipBestTournament == true
+    end
+
     if config.autoBuyTournamentShop ~= nil then
         State.autoBuyTournamentShop =
             config.autoBuyTournamentShop == true
@@ -5208,15 +6089,15 @@ end
 function ConfigRuntime.save()
     if not State.configSupported then
         ConfigRuntime.updateStatus(
-            "Executor tidak mendukung readfile/writefile."
+            "Saved settings are unavailable."
         )
-        return false, "Executor tidak mendukung readfile/writefile"
+        return false, "Saved settings are unavailable"
     end
 
     local folderSuccess, folderError = ConfigRuntime.ensureFolders()
     if not folderSuccess then
-        ConfigRuntime.updateStatus("Gagal membuat folder: " .. tostring(folderError))
-        return false, folderError
+        ConfigRuntime.updateStatus("Could not prepare saved settings.")
+        return false, "Could not prepare saved settings"
     end
 
     local encodeSuccess, encoded = pcall(function()
@@ -5226,8 +6107,8 @@ function ConfigRuntime.save()
     end)
 
     if not encodeSuccess then
-        ConfigRuntime.updateStatus("JSON encode gagal: " .. tostring(encoded))
-        return false, tostring(encoded)
+        ConfigRuntime.updateStatus("Could not prepare saved settings.")
+        return false, "Could not prepare saved settings"
     end
 
     local writeSuccess, writeError = pcall(
@@ -5237,14 +6118,14 @@ function ConfigRuntime.save()
     )
 
     if not writeSuccess then
-        ConfigRuntime.updateStatus("writefile gagal: " .. tostring(writeError))
-        return false, tostring(writeError)
+        ConfigRuntime.updateStatus("Could not save settings.")
+        return false, "Could not save settings"
     end
 
     State.configDirty = false
     State.configLastSavedAt = os.time()
     State.configLastObservedFingerprint = ConfigRuntime.fingerprint()
-    ConfigRuntime.updateStatus("Config berhasil disimpan.")
+    ConfigRuntime.updateStatus("Settings saved successfully.")
 
     return true
 end
@@ -5263,7 +6144,7 @@ function ConfigRuntime.load()
     end
 
     State.configStartupLoaded = true
-    ConfigRuntime.updateStatus("Config berhasil dimuat dan diterapkan.")
+    ConfigRuntime.updateStatus("Settings loaded successfully.")
 
     return true
 end
@@ -5333,14 +6214,14 @@ function ConfigRuntime.initialize()
 
     if not State.configSupported then
         State.configStartupError =
-            "Executor tidak mendukung readfile/writefile"
+            "Saved settings are unavailable"
         State.configLastObservedFingerprint = ConfigRuntime.fingerprint()
         return false, State.configStartupError
     end
 
     if not ConfigRuntime.fileExists() then
         State.configLastObservedFingerprint = ConfigRuntime.fingerprint()
-        return true, "Config belum ada; memakai default."
+        return true, "No saved settings found; using defaults."
     end
 
     local config, readError = ConfigRuntime.read()
@@ -5451,6 +6332,8 @@ function HomeRuntime.getActiveFeatures()
         {State.autoBuyGemShop, "Gem Shop"},
         {State.autoClaimSummerQuests, "Summer Quests"},
         {State.autoBuySummerShop, "Summer Shop"},
+        {State.autoJoinTournament, "Tournament Join"},
+        {State.autoEquipBestTournament, "Tournament Team"},
         {State.autoBuyTournamentShop, "Tournament Shop"},
         {State.antiAfk, "Anti AFK"},
     }
@@ -5468,6 +6351,7 @@ function HomeRuntime.update(message)
     local playerData = getPlayerData() or {}
     local wishData = WishRuntime.getData()
     local tournamentData = getTournamentShopData()
+    local tournamentState = TournamentRuntime.getState()
     local indexData = IndexRuntime.getStats()
     local dailyStatus = DailyRewardRuntime.getStatusLabel()
     local pendingCodes = #CodesRuntime.getPendingCodes()
@@ -5486,6 +6370,10 @@ function HomeRuntime.update(message)
         "Seashells: " .. formatCompactNumber(playerData.seashells or 0),
         "Wish Tickets: " .. formatCompactNumber(wishData.tickets),
         "Tournament Tokens: " .. formatCompactNumber(tournamentData.tokens),
+        "Tournament Queue: "
+            .. (tournamentState.queued and "Joined" or "Not Joined"),
+        "Tournament Team: "
+            .. tostring(tournamentState.teamCount) .. "/5",
         "",
         "Spin Rewards: " .. tostring(State.spinWheelResults),
         "Wish Rewards: " .. tostring(State.wishResults),
@@ -5690,7 +6578,7 @@ local function buildGui()
 
     CodesTab:Button({
         Title = "Redeem Available",
-        Desc = "Submit every saved code that has not been tried.",
+        Desc = "Redeem all available codes that have not been tried.",
         Icon = "ticket-check",
         Callback = function()
             task.spawn(function()
@@ -5724,7 +6612,7 @@ local function buildGui()
 
     State.autoRedeemCodesToggle = CodesTab:Toggle({
         Title = "Auto Redeem",
-        Desc = "Submit newly added saved codes automatically.",
+        Desc = "Redeem newly available codes automatically.",
         Icon = "refresh-cw",
         Value = State.autoRedeemCodes,
         Callback = CodesRuntime.setAutoRedeem,
@@ -5732,7 +6620,7 @@ local function buildGui()
 
     CodesTab:Button({
         Title = "Clear Attempt History",
-        Desc = "Allow saved codes to be submitted again.",
+        Desc = "Allow available codes to be tried again.",
         Icon = "rotate-ccw",
         Callback = function()
             CodesRuntime.clearHistory()
@@ -5742,18 +6630,6 @@ local function buildGui()
                 "rotate-ccw"
             )
         end,
-    })
-
-    CodesTab:Paragraph({
-        Title = "Adding New Codes",
-        Desc = table.concat({
-            "Open the script and find the REDEEM_CODES section.",
-            "Add official codes using the format WORD-WORD.",
-            "Example: \\\"NEW-CODE\\\"",
-        }, "\n"),
-        Image = "circle-help",
-        ImageSize = 19,
-        Size = "Small",
     })
 
     local TrophyTab = Window:Tab({
@@ -6305,6 +7181,71 @@ local function buildGui()
         IconSize = 16,
     })
 
+    State.tournamentAutomationStatusParagraph =
+        TournamentShopTab:Paragraph({
+            Title = "Tournament",
+            Desc = "Loading...",
+            Image = "trophy",
+            ImageSize = 19,
+            Size = "Small",
+        })
+
+    TournamentShopTab:Button({
+        Title = "Equip Best Now",
+        Desc = "Equip the strongest tournament team.",
+        Icon = "users",
+        Callback = function()
+            local success, result =
+                TournamentRuntime.equipBest(true)
+
+            notify(
+                "Tournament",
+                success
+                    and "Best team request sent."
+                    or tostring(result),
+                success and "users" or "triangle-alert"
+            )
+        end,
+    })
+
+    State.autoEquipBestTournamentToggle =
+        TournamentShopTab:Toggle({
+            Title = "Auto Equip Best",
+            Desc = "Keep the strongest tournament team equipped.",
+            Icon = "users",
+            Value = State.autoEquipBestTournament,
+            Callback = TournamentRuntime.setAutoEquipBest,
+        })
+
+    TournamentShopTab:Button({
+        Title = "Join Now",
+        Desc = "Prepare the best team and join when entries are open.",
+        Icon = "play",
+        Callback = function()
+            local success, result =
+                TournamentRuntime.requestManualJoin()
+
+            notify(
+                "Tournament",
+                success
+                    and "Preparing the tournament team."
+                    or tostring(result),
+                success and "play" or "triangle-alert"
+            )
+        end,
+    })
+
+    State.autoJoinTournamentToggle =
+        TournamentShopTab:Toggle({
+            Title = "Auto Join",
+            Desc = "Build the best team one card at a time and join automatically.",
+            Icon = "refresh-cw",
+            Value = State.autoJoinTournament,
+            Callback = TournamentRuntime.setAutoJoin,
+        })
+
+    TournamentShopTab:Space()
+
     State.tournamentShopStatusParagraph = TournamentShopTab:Paragraph({
         Title = "Shop Status",
         Desc = "Loading...",
@@ -6479,7 +7420,7 @@ local function buildGui()
             "Spin A Soccer Card Hub",
             "Current keybind: " .. tostring(State.windowKeybind),
             "Your toggles and purchase lists can be saved automatically.",
-            "Session reward logs reset when the script restarts.",
+            "Activity history is kept for the current session.",
         }, "\n"),
         Image = "info",
         ImageSize = 19,
@@ -6585,7 +7526,7 @@ local function buildGui()
     SettingsTab:Space()
 
     State.configStatusParagraph = SettingsTab:Paragraph({
-        Title = "Config Status",
+        Title = "Saved Settings",
         Desc = "Loading...",
         Image = "database",
         ImageSize = 19,
@@ -6601,8 +7542,8 @@ local function buildGui()
             local value = ConfigRuntime.setAutoSave(enabled)
             ConfigRuntime.updateStatus(
                 value
-                    and "Auto Save diaktifkan."
-                    or "Auto Save dinonaktifkan."
+                    and "Auto Save enabled."
+                    or "Auto Save disabled."
             )
         end,
     })
@@ -6616,14 +7557,14 @@ local function buildGui()
             local value = ConfigRuntime.setAutoLoad(enabled)
             ConfigRuntime.updateStatus(
                 value
-                    and "Auto Load diaktifkan."
-                    or "Auto Load dinonaktifkan."
+                    and "Auto Load enabled."
+                    or "Auto Load disabled."
             )
         end,
     })
 
     SettingsTab:Button({
-        Title = "Save Config",
+        Title = "Save Settings",
         Desc = "Save all current settings.",
         Icon = "save",
         Callback = function()
@@ -6632,7 +7573,7 @@ local function buildGui()
             notify(
                 "Configuration",
                 success
-                    and "Config berhasil disimpan."
+                    and "Settings saved successfully."
                     or tostring(errorMessage),
                 success and "save" or "triangle-alert"
             )
@@ -6640,7 +7581,7 @@ local function buildGui()
     })
 
     SettingsTab:Button({
-        Title = "Load Config",
+        Title = "Load Settings",
         Desc = "Load your saved settings.",
         Icon = "folder-down",
         Callback = function()
@@ -6649,7 +7590,7 @@ local function buildGui()
             notify(
                 "Configuration",
                 success
-                    and "Config berhasil dimuat."
+                    and "Settings loaded successfully."
                     or tostring(errorMessage),
                 success and "folder-down" or "triangle-alert"
             )
@@ -6657,8 +7598,8 @@ local function buildGui()
     })
 
     SettingsTab:Button({
-        Title = "Stop Script",
-        Desc = "Stop every automation and close the hub.",
+        Title = "Close Hub",
+        Desc = "Stop all automation and close the hub.",
         Icon = "square",
         Callback = function()
             local hub = Environment.SpinASoccerCardHub
@@ -6680,6 +7621,7 @@ local function buildGui()
     updateGemShopStatus("Choose items from the Purchase List.")
     updateSummerQuestStatus("Ready.")
     updateSummerShopStatus("Choose items from the Purchase List.")
+    TournamentRuntime.updateUI("Waiting for tournament.")
     refreshTournamentShopOptions(true)
     updateTournamentShopStatus("Choose rewards from the Reward List.")
     AntiAfkRuntime.updateStatus(
@@ -6689,9 +7631,9 @@ local function buildGui()
     )
     ConfigRuntime.updateStatus(
         State.configStartupLoaded
-            and "Auto Load: config berhasil diterapkan."
+            and "Saved settings loaded automatically."
             or State.configStartupError
-            or "Config siap."
+            or "Ready."
     )
     HomeRuntime.update()
     LogRuntime.append("Hub", "Hub ready.", "info", true)
@@ -6741,6 +7683,7 @@ local Hub = {
     GemShop = {},
     SummerQuests = {},
     SummerShop = {},
+    Tournament = {},
     TournamentShop = {},
     Logs = {},
     Utilities = {},
@@ -7468,6 +8411,113 @@ function Hub.SummerShop.GetState()
 end
 
 
+-- Tournament module ----------------------------------------------------------
+
+function Hub.Tournament.SetAutoJoin(enabled)
+    local value = TournamentRuntime.setAutoJoin(enabled)
+
+    if State.autoJoinTournamentToggle
+        and type(State.autoJoinTournamentToggle.Set) == "function"
+    then
+        pcall(function()
+            State.autoJoinTournamentToggle:Set(value)
+        end)
+    end
+
+    return value
+end
+
+function Hub.Tournament.ToggleAutoJoin()
+    return Hub.Tournament.SetAutoJoin(
+        not State.autoJoinTournament
+    )
+end
+
+function Hub.Tournament.SetAutoEquipBest(enabled)
+    local value =
+        TournamentRuntime.setAutoEquipBest(enabled)
+
+    if State.autoEquipBestTournamentToggle
+        and type(
+            State.autoEquipBestTournamentToggle.Set
+        ) == "function"
+    then
+        pcall(function()
+            State.autoEquipBestTournamentToggle:Set(value)
+        end)
+    end
+
+    return value
+end
+
+function Hub.Tournament.ToggleAutoEquipBest()
+    return Hub.Tournament.SetAutoEquipBest(
+        not State.autoEquipBestTournament
+    )
+end
+
+function Hub.Tournament.EquipBestNow()
+    return TournamentRuntime.equipBest(true)
+end
+
+function Hub.Tournament.JoinNow()
+    return TournamentRuntime.requestManualJoin()
+end
+
+function Hub.Tournament.GetBestTeam()
+    local data = TournamentRuntime.getState()
+    local best, incomeMap =
+        TournamentRuntime.getBestTeam(data.playerData)
+    local result = {}
+
+    for index, uuid in ipairs(best) do
+        result[index] = {
+            uuid = uuid,
+            baseIncome = tonumber(incomeMap[uuid]) or 0,
+        }
+    end
+
+    return result
+end
+
+function Hub.Tournament.GetState()
+    local data = TournamentRuntime.getState()
+    local best = {}
+
+    if data.playerData then
+        best = TournamentRuntime.getBestTeam(data.playerData)
+    end
+
+    return {
+        autoJoin = State.autoJoinTournament,
+        autoEquipBest = State.autoEquipBestTournament,
+        phase = data.phase,
+        secondsLeft = data.secondsLeft,
+        queueWindowOpen = data.queueWindowOpen,
+        queued = data.queued,
+        team = TournamentRuntime.copyTeam(data.team),
+        teamCount = data.teamCount,
+        bestTeamReady =
+            TournamentRuntime.teamMatchesBest(data.team, best),
+        rebirth = data.rebirth,
+        minRebirth = data.minRebirth,
+        unlocked = data.unlocked,
+        cash = data.cash,
+        entryFee = data.entryFee,
+        canAfford = data.canAfford,
+        pending = State.tournamentPendingAction
+            and State.tournamentPendingAction.kind
+            or nil,
+        teamRequests = State.tournamentTeamRequests,
+        equipRequests = State.tournamentEquipRequests,
+        joinRequests = State.tournamentJoinRequests,
+        joins = State.tournamentJoins,
+        failures = State.tournamentFailures,
+        status = State.tournamentLastStatus,
+    }
+end
+
+
 -- Tournament Shop module -----------------------------------------------------
 
 function Hub.TournamentShop.SetAutoBuy(enabled)
@@ -7817,6 +8867,7 @@ function Hub.GetState()
         gemShop = Hub.GemShop.GetState(),
         summerQuests = Hub.SummerQuests.GetState(),
         summerShop = Hub.SummerShop.GetState(),
+        tournament = Hub.Tournament.GetState(),
         tournamentShop = Hub.TournamentShop.GetState(),
         logs = Hub.Logs.GetState(),
         antiAfk = Hub.Utilities.GetAntiAfkState(),
@@ -7858,7 +8909,11 @@ function Hub.Stop()
     State.autoBuyGemShop = false
     State.autoClaimSummerQuests = false
     State.autoBuySummerShop = false
+    State.autoJoinTournament = false
+    State.autoEquipBestTournament = false
     State.autoBuyTournamentShop = false
+    State.tournamentManualJoinRequested = false
+    TournamentRuntime.clearPending()
     clearTournamentShopPending()
 
     if State.spinWheelConnection then
@@ -7873,6 +8928,13 @@ function Hub.Stop()
             State.tournamentShopConnection:Disconnect()
         end)
         State.tournamentShopConnection = nil
+    end
+
+    if State.tournamentTickConnection then
+        pcall(function()
+            State.tournamentTickConnection:Disconnect()
+        end)
+        State.tournamentTickConnection = nil
     end
 
     if State.dailyRewardConnection then
@@ -7962,6 +9024,17 @@ Hub.ToggleAutoBuySummerShop = Hub.SummerShop.ToggleAutoBuy
 Hub.SetSummerShopWhitelist = Hub.SummerShop.SetWhitelist
 Hub.BuySummerShopNow = Hub.SummerShop.BuyNow
 
+Hub.SetAutoJoinTournament = Hub.Tournament.SetAutoJoin
+Hub.ToggleAutoJoinTournament = Hub.Tournament.ToggleAutoJoin
+Hub.SetAutoEquipBestTournament =
+    Hub.Tournament.SetAutoEquipBest
+Hub.ToggleAutoEquipBestTournament =
+    Hub.Tournament.ToggleAutoEquipBest
+Hub.EquipBestTournamentNow = Hub.Tournament.EquipBestNow
+Hub.JoinTournamentNow = Hub.Tournament.JoinNow
+Hub.GetTournamentState = Hub.Tournament.GetState
+Hub.GetBestTournamentTeam = Hub.Tournament.GetBestTeam
+
 Hub.SetAutoBuyTournamentShop = Hub.TournamentShop.SetAutoBuy
 Hub.ToggleAutoBuyTournamentShop = Hub.TournamentShop.ToggleAutoBuy
 Hub.SetTournamentShopWhitelist = Hub.TournamentShop.SetWhitelist
@@ -8027,7 +9100,23 @@ do
         State.tournamentShopConnection = connectionOrError
     else
         State.tournamentShopLastStatus =
-            "Gagal memasang listener buy_result: " .. tostring(connectionOrError)
+            "Tournament updates are unavailable."
+    end
+end
+
+do
+    local success, connectionOrError = pcall(function()
+        return TournamentTick.OnClientEvent:Connect(
+            TournamentRuntime.handleTick
+        )
+    end)
+
+    if success then
+        State.tournamentTickConnection = connectionOrError
+    else
+        State.tournamentLastStatus =
+            "Tournament timing is unavailable."
+        State.tournamentFailures += 1
     end
 end
 
@@ -8199,6 +9288,14 @@ task.spawn(function()
         end
 
         task.wait(State.summerShopPollInterval)
+    end
+end)
+
+task.spawn(function()
+    while State.running do
+        pcall(TournamentRuntime.tick)
+
+        task.wait(State.tournamentAutomationPollInterval)
     end
 end)
 
