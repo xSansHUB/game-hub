@@ -27,159 +27,198 @@ local function requirePath(root, ...)
     return require(current)
 end
 
-local charm = requirePath(ReplicatedStorage, "Packages", "charm")
-local PlayerStore = requirePath(
-    ReplicatedStorage,
-    "Source",
-    "Shared",
-    "State",
-    "PlayerStore"
-)
-local TrophyConfig = requirePath(
-    ReplicatedStorage,
-    "Source",
-    "Shared",
-    "Configs",
-    "TrophyConfig"
-)
-local CardConfig = requirePath(
-    ReplicatedStorage,
-    "Source",
-    "Shared",
-    "Configs",
-    "CardConfig"
-)
-local PackConfig = requirePath(
-    ReplicatedStorage,
-    "Source",
-    "Shared",
-    "Configs",
-    "PackConfig"
-)
-local RebirthConfig = requirePath(
-    ReplicatedStorage,
-    "Source",
-    "Shared",
-    "Configs",
-    "RebirthConfig"
-)
-local Networker = requirePath(
-    ReplicatedStorage,
-    "Source",
-    "Shared",
-    "Networker"
-)
-local GemShopState = requirePath(
-    ReplicatedStorage,
-    "Source",
-    "Shared",
-    "State",
-    "GemShopState"
-)
-local GemShopConfig = requirePath(
-    ReplicatedStorage,
-    "Source",
-    "Shared",
-    "Configs",
-    "GemShopConfig"
-)
-local ProductConfig = requirePath(
-    ReplicatedStorage,
-    "Source",
-    "Shared",
-    "Configs",
-    "ProductConfig"
-)
-local SummerQuestConfig = requirePath(
-    ReplicatedStorage,
-    "Source",
-    "Shared",
-    "Configs",
-    "SummerQuestConfig"
-)
-local SummerShopConfig = requirePath(
-    ReplicatedStorage,
-    "Source",
-    "Shared",
-    "Configs",
-    "SummerShopConfig"
-)
-local TournamentConfig = requirePath(
-    ReplicatedStorage,
-    "Source",
-    "Shared",
-    "Configs",
-    "TournamentConfig"
-)
-local ScalingIncome = requirePath(
-    ReplicatedStorage,
-    "Source",
-    "Shared",
-    "Helpers",
-    "ScalingIncome"
-)
-local TournamentClock = requirePath(
-    ReplicatedStorage,
-    "Source",
-    "Shared",
-    "Helpers",
-    "TournamentClock"
-)
-local GachaConfig = requirePath(
-    ReplicatedStorage,
-    "Source",
-    "Shared",
-    "Configs",
-    "GachaConfig"
-)
-local AnimationController = requirePath(
-    ReplicatedStorage,
-    "Source",
-    "Client",
-    "UI",
-    "Gacha",
-    "AnimationController"
-)
-local PurchaseClient = requirePath(
-    ReplicatedStorage,
-    "Source",
-    "Client",
-    "Controllers",
-    "PurchaseClient"
-)
-local SlotController = requirePath(
-    ReplicatedStorage,
-    "Source",
-    "Client",
-    "Controllers",
-    "SlotController"
-)
-local PackAnimationController = requirePath(
-    ReplicatedStorage,
-    "Source",
-    "Client",
-    "UI",
-    "PackAnimationController"
-)
+local Modules = {
+    ["charm"] = requirePath(
+        ReplicatedStorage,
+        "Packages",
+        "charm"
+    ),
+    ["PlayerStore"] = requirePath(
+        ReplicatedStorage,
+        "Source",
+        "Shared",
+        "State",
+        "PlayerStore"
+    ),
+    ["TrophyConfig"] = requirePath(
+        ReplicatedStorage,
+        "Source",
+        "Shared",
+        "Configs",
+        "TrophyConfig"
+    ),
+    ["CardConfig"] = requirePath(
+        ReplicatedStorage,
+        "Source",
+        "Shared",
+        "Configs",
+        "CardConfig"
+    ),
+    ["PackConfig"] = requirePath(
+        ReplicatedStorage,
+        "Source",
+        "Shared",
+        "Configs",
+        "PackConfig"
+    ),
+    ["RebirthConfig"] = requirePath(
+        ReplicatedStorage,
+        "Source",
+        "Shared",
+        "Configs",
+        "RebirthConfig"
+    ),
+    ["Networker"] = requirePath(
+        ReplicatedStorage,
+        "Source",
+        "Shared",
+        "Networker"
+    ),
+    ["GemShopState"] = requirePath(
+        ReplicatedStorage,
+        "Source",
+        "Shared",
+        "State",
+        "GemShopState"
+    ),
+    ["GemShopConfig"] = requirePath(
+        ReplicatedStorage,
+        "Source",
+        "Shared",
+        "Configs",
+        "GemShopConfig"
+    ),
+    ["ProductConfig"] = requirePath(
+        ReplicatedStorage,
+        "Source",
+        "Shared",
+        "Configs",
+        "ProductConfig"
+    ),
+    ["SummerQuestConfig"] = requirePath(
+        ReplicatedStorage,
+        "Source",
+        "Shared",
+        "Configs",
+        "SummerQuestConfig"
+    ),
+    ["SummerShopConfig"] = requirePath(
+        ReplicatedStorage,
+        "Source",
+        "Shared",
+        "Configs",
+        "SummerShopConfig"
+    ),
+    ["TournamentConfig"] = requirePath(
+        ReplicatedStorage,
+        "Source",
+        "Shared",
+        "Configs",
+        "TournamentConfig"
+    ),
+    ["ScalingIncome"] = requirePath(
+        ReplicatedStorage,
+        "Source",
+        "Shared",
+        "Helpers",
+        "ScalingIncome"
+    ),
+    ["TournamentClock"] = requirePath(
+        ReplicatedStorage,
+        "Source",
+        "Shared",
+        "Helpers",
+        "TournamentClock"
+    ),
+    ["GachaConfig"] = requirePath(
+        ReplicatedStorage,
+        "Source",
+        "Shared",
+        "Configs",
+        "GachaConfig"
+    ),
+    ["AnimationController"] = requirePath(
+        ReplicatedStorage,
+        "Source",
+        "Client",
+        "UI",
+        "Gacha",
+        "AnimationController"
+    ),
+    ["PurchaseClient"] = requirePath(
+        ReplicatedStorage,
+        "Source",
+        "Client",
+        "Controllers",
+        "PurchaseClient"
+    ),
+    ["SlotController"] = requirePath(
+        ReplicatedStorage,
+        "Source",
+        "Client",
+        "Controllers",
+        "SlotController"
+    ),
+    ["PackAnimationController"] = requirePath(
+        ReplicatedStorage,
+        "Source",
+        "Client",
+        "UI",
+        "PackAnimationController"
+    ),
+    ["UIService"] = requirePath(
+        ReplicatedStorage,
+        "Source",
+        "Client",
+        "UI",
+        "UIService"
+    ),
+}
 
-local CraftTrophy = Networker.get_remote("CraftTrophy")
-local SeashellCollect = Networker.get_remote("SeashellCollect")
-local SpinWheelRemote = Networker.get_remote("SpinWheel")
-local SpinWheelData = Networker.get_remotefunction("SpinWheelData")
-local BuyGemShopItem = Networker.get_remote("BuyGemShopItem")
-local SummerQuestClaim = Networker.get_remote("SummerQuestClaim")
-local SummerShopBuy = Networker.get_remote("SummerShopBuy")
-local TournamentServer = Networker.get_remote("TournamentServer")
-local TournamentRemote = Networker.get_remote("Tournament")
-local TournamentTick = Networker.get_remote("TournamentTick")
-local PerformWish = Networker.get_remotefunction("PerformWish")
-local ClaimAllIndexGems = Networker.get_remote("ClaimAllIndexGems")
-local DailyReward = Networker.get_remote("DailyReward")
-local RedeemCode = Networker.get_remote("RedeemCode")
-local RebirthRemote = Networker.get_remote("Rebirth")
-local PackSettings = Networker.get_remote("PackSettings")
-local BuyPackRemote = Networker.get_remote("BuyPack")
-local SetAutoBuyPackRemote = Networker.get_remote("SetAutoBuy")
+local Remotes = {
+    ["CraftTrophy"] =
+        Modules.Networker.get_remote("CraftTrophy"),
+    ["SeashellCollect"] =
+        Modules.Networker.get_remote("SeashellCollect"),
+    ["SpinWheelRemote"] =
+        Modules.Networker.get_remote("SpinWheel"),
+    ["SpinWheelData"] =
+        Modules.Networker.get_remotefunction("SpinWheelData"),
+    ["BuyGemShopItem"] =
+        Modules.Networker.get_remote("BuyGemShopItem"),
+    ["SummerQuestClaim"] =
+        Modules.Networker.get_remote("SummerQuestClaim"),
+    ["SummerShopBuy"] =
+        Modules.Networker.get_remote("SummerShopBuy"),
+    ["TournamentServer"] =
+        Modules.Networker.get_remote("TournamentServer"),
+    ["TournamentRemote"] =
+        Modules.Networker.get_remote("Tournament"),
+    ["TournamentTick"] =
+        Modules.Networker.get_remote("TournamentTick"),
+    ["PerformWish"] =
+        Modules.Networker.get_remotefunction("PerformWish"),
+    ["ClaimAllIndexGems"] =
+        Modules.Networker.get_remote("ClaimAllIndexGems"),
+    ["DailyReward"] =
+        Modules.Networker.get_remote("DailyReward"),
+    ["RedeemCode"] =
+        Modules.Networker.get_remote("RedeemCode"),
+    ["RebirthRemote"] =
+        Modules.Networker.get_remote("Rebirth"),
+    ["BuyPackRemote"] =
+        Modules.Networker.get_remote("BuyPack"),
+    ["SetAutoBuyPackRemote"] =
+        Modules.Networker.get_remote("SetAutoBuy"),
+    ["OpenPack"] =
+        Modules.Networker.get_remote("OpenPack"),
+    ["GetThroneStatus"] =
+        Modules.Networker.get_remotefunction("GetThroneStatus"),
+    ["AttemptThrone"] =
+        Modules.Networker.get_remote("AttemptThrone"),
+    ["ThroneResult"] =
+        Modules.Networker.get_remote("ThroneResult"),
+}
 
 local REDEEM_CODES = {
     "OWL-HAPPY",
@@ -187,7 +226,6 @@ local REDEEM_CODES = {
 }
 
 local REDEEM_CODE_GROUP_ID = 520125566
-local PACK_AUTO_SKIP_GAMEPASS_ID = 1642325239
 
 local PackBuyNames = {}
 local PackBuyLabels = {}
@@ -197,7 +235,7 @@ local PackBuyLabelByName = {}
 local function buildPackBuyOptions()
     local entries = {}
 
-    for packName, packData in pairs(PackConfig.Packs) do
+    for packName, packData in pairs(Modules.PackConfig.Packs) do
         if type(packData) == "table"
             and packName ~= "Scarlet"
             and packName ~= "Bonded"
@@ -244,6 +282,75 @@ end
 
 buildPackBuyOptions()
 
+local PackLogOptions = {
+    names = {},
+    rank = {
+        Bronze = 1,
+        Silver = 2,
+        Gold = 3,
+        Legendary = 4,
+        Mythic = 5,
+        Divine = 6,
+        Primordial = 7,
+        Oblivion = 8,
+        Eternity = 9,
+        Astral = 10,
+        Sovereign = 11,
+        Vandal = 12,
+        Tyrant = 13,
+        Exclusive = 14,
+        ["Secret Exclusive"] = 15,
+        Verdant = 16,
+        Silvane = 17,
+        Lunar = 18,
+        Solar = 19,
+        Nether = 20,
+        Aether = 21,
+        Void = 22,
+        Lumine = 23,
+        Aurora = 24,
+        Nebula = 25,
+        Era = 26,
+        Chrono = 27,
+    },
+}
+
+do
+    local seen = {}
+
+    for _, cardData in pairs(Modules.CardConfig.Cards) do
+        if type(cardData) == "table"
+            and cardData.Rarity ~= nil
+        then
+            local rarity = tostring(cardData.Rarity)
+
+            if rarity ~= "" and not seen[rarity] then
+                seen[rarity] = true
+                PackLogOptions.names[
+                    #PackLogOptions.names + 1
+                ] = rarity
+            end
+        end
+    end
+
+    table.sort(PackLogOptions.names, function(left, right)
+        local leftRank =
+            tonumber(PackLogOptions.rank[left]) or 0
+        local rightRank =
+            tonumber(PackLogOptions.rank[right]) or 0
+
+        if leftRank ~= rightRank then
+            return leftRank < rightRank
+        end
+
+        return left < right
+    end)
+
+    if #PackLogOptions.names == 0 then
+        PackLogOptions.names[1] = "Unknown"
+    end
+end
+
 local TROPHY_ORDER = {
     "Golden Boot",
     "Champions League",
@@ -263,7 +370,7 @@ local GemShopKeyByLabel = {}
 local GemShopFixedConfigByKey = {}
 
 local function getGamepassDisplayName(gamepassId, fallback)
-    local gamepasses = ProductConfig.Gamepasses
+    local gamepasses = Modules.ProductConfig.Gamepasses
     local product = type(gamepasses) == "table" and gamepasses[gamepassId]
 
     if type(product) == "table"
@@ -291,7 +398,7 @@ local function buildGemShopOptions()
     table.clear(GemShopKeyByLabel)
     table.clear(GemShopFixedConfigByKey)
 
-    local fixedItems = GemShopConfig.FixedGamepasses
+    local fixedItems = Modules.GemShopConfig.FixedGamepasses
 
     if type(fixedItems) == "table" then
         for _, config in ipairs(fixedItems) do
@@ -344,7 +451,7 @@ local function buildSummerShopOptions()
     table.clear(SummerShopIdByLabel)
     table.clear(SummerShopConfigById)
 
-    local items = SummerShopConfig.Items
+    local items = Modules.SummerShopConfig.Items
 
     if type(items) ~= "table" then
         return
@@ -411,7 +518,7 @@ local function tournamentConfigDisplayName(config)
     if kind == "card" then
         local rawCardId = config.cardId
         local cardId = tostring(rawCardId or "")
-        local cards = CardConfig.Cards
+        local cards = Modules.CardConfig.Cards
         local card = type(cards) == "table"
             and (cards[rawCardId] or cards[cardId])
 
@@ -488,7 +595,7 @@ local function buildTournamentShopConfigOptions()
     table.clear(TournamentShopKeyByLabel)
     table.clear(TournamentShopConfigById)
 
-    local rewards = TournamentConfig.ShopRewards
+    local rewards = Modules.TournamentConfig.ShopRewards
     if type(rewards) ~= "table" then
         return
     end
@@ -544,21 +651,55 @@ local State = {
     autoBuyPacksToggle = nil,
 
     autoOpenPacks = false,
-    hidePackAnimation = false,
-    autoSkipPackAnimation = false,
-    packSettingsPollInterval = 0.35,
-    packSettingsSyncCooldown = 1.5,
-    packSettingsNextSyncAt = 0,
-    packSettingsResetPending = false,
-    packSkipLocalApplied = false,
-    packSkipAppliedAt = 0,
-    packSettingsRequests = 0,
-    packSettingsFailures = 0,
-    packLastStatus = "Waiting for pack activity.",
+    skipPackAnimations = true,
+    packOpenPollInterval = 0.15,
+    packOpenRequestCooldown = 0.35,
+    packOpenRetryCooldown = 2,
+    packOpenPendingTimeout = 12,
+    packAnimationWaitTimeout = 2,
+    packNextOpenAt = 0,
+    packOpenPending = nil,
+    packCurrentContext = nil,
+    packHandledContexts =
+        setmetatable({}, {__mode = "k"}),
+    packResultRarityWhitelist = (function()
+        local result = {}
+
+        for _, rarity in ipairs(PackLogOptions.names) do
+            result[rarity] = true
+        end
+
+        return result
+    end)(),
+    packResultHistory = {},
+    packResultHistoryLimit = 100,
+    packOpenRequests = 0,
+    packOpenDetected = 0,
+    packOpenSkipped = 0,
+    packOpenAdvanced = 0,
+    packFallbackClicks = 0,
+    packResultsLogged = 0,
+    packResultsFiltered = 0,
+    packOpenFailures = 0,
+    packLastPack = "-",
+    packLastCard = "-",
+    packLastRarity = "-",
+    packLastStatus = "Waiting for available packs.",
     packStatusParagraph = nil,
+    packResultParagraph = nil,
     autoOpenPacksToggle = nil,
-    hidePackAnimationToggle = nil,
-    autoSkipPackAnimationToggle = nil,
+    skipPackAnimationsToggle = nil,
+    packResultRarityDropdown = nil,
+    packOpenConnection = nil,
+    packUiChildConnection = nil,
+    packWatchedUis =
+        setmetatable({}, {__mode = "k"}),
+    packUiSuppressCount = 0,
+    packResultChainDelay = 1.25,
+    packAutomationGeneration = 0,
+    packControllerResets = 0,
+    packAnimationStaleSince = 0,
+    packAnimationRecoveryDelay = 5,
 
     autoRebirth = false,
     rebirthPollInterval = 0.75,
@@ -773,6 +914,28 @@ local State = {
     indexStatusParagraph = nil,
     autoClaimIndexToggle = nil,
 
+    autoTryVulnoneCard = false,
+    vulnonePollInterval = 5,
+    vulnoneStatusRefreshInterval = 20,
+    vulnoneAttemptCooldown = 5,
+    vulnoneRetryCooldown = 15,
+    vulnonePendingTimeout = 20,
+    vulnoneNextStatusAt = 0,
+    vulnoneNextAttemptAt = 0,
+    vulnonePending = false,
+    vulnonePendingSince = 0,
+    vulnoneAttempts = 0,
+    vulnoneResults = 0,
+    vulnoneWins = 0,
+    vulnoneLosses = 0,
+    vulnoneFailures = 0,
+    vulnoneStatus = nil,
+    vulnoneLastResult = "-",
+    vulnoneLastStatus = "Checking Vulnone status.",
+    vulnoneStatusParagraph = nil,
+    autoTryVulnoneToggle = nil,
+    vulnoneResultConnection = nil,
+
     autoClaimDailyRewards = false,
     dailyRewardPollInterval = 1,
     dailyRewardStateRefreshInterval = 15,
@@ -808,7 +971,9 @@ local State = {
     autoRedeemCodesToggle = nil,
 
     antiAfk = false,
-    antiAfkInterval = 45,
+    antiAfkInterval = 60,
+    antiAfkInputHoldDuration = 1,
+    antiAfkIdleRetryDelay = 3,
     antiAfkBusy = false,
     nextAntiAfkPulseAt = 0,
     antiAfkCount = 0,
@@ -819,6 +984,7 @@ local State = {
     antiAfkStatusParagraph = nil,
     antiAfkToggle = nil,
     antiAfkIdledConnection = nil,
+    antiAfkIdleRetryToken = 0,
 
     rejoining = false,
     lastRejoinStatus = "Ready.",
@@ -854,6 +1020,7 @@ local State = {
 local LOG_FILTER_OPTIONS = {
     "All",
     "Hub",
+    "Vulnone",
     "Packs",
     "Rebirth",
     "Team",
@@ -1094,7 +1261,7 @@ end
 
 local function getPlayerData()
     local success, store = pcall(function()
-        return charm.peek(PlayerStore)
+        return Modules.charm.peek(Modules.PlayerStore)
     end)
 
     if not success or type(store) ~= "table" then
@@ -1198,7 +1365,7 @@ local function applyWhitelistSelection(selectedValues)
 
     local function enableValue(value)
         local trophyName = tostring(normalizeSelectedValue(value) or "")
-        if TrophyConfig.Trophies[trophyName] then
+        if Modules.TrophyConfig.Trophies[trophyName] then
             enabled[trophyName] = true
         end
     end
@@ -1283,7 +1450,7 @@ local function buildUnlockedCardCounts(playerData)
             local cardId = tostring(rawCardId)
             byId[cardId] = (byId[cardId] or 0) + 1
 
-            local config = CardConfig.Cards[rawCardId] or CardConfig.Cards[cardId]
+            local config = Modules.CardConfig.Cards[rawCardId] or Modules.CardConfig.Cards[cardId]
             local rarity = config and config.Rarity
             if rarity then
                 byRarity[rarity] = (byRarity[rarity] or 0) + 1
@@ -1295,7 +1462,7 @@ local function buildUnlockedCardCounts(playerData)
 end
 
 local function hasEnoughUnlockedCards(trophyName, playerData)
-    local trophy = TrophyConfig.Trophies[trophyName]
+    local trophy = Modules.TrophyConfig.Trophies[trophyName]
     if type(trophy) ~= "table" then
         return false, "Trophy configuration was not found"
     end
@@ -1325,7 +1492,7 @@ local function hasEnoughUnlockedCards(trophyName, playerData)
             byId[cardId] = owned - amount
 
             local rawRequirementId = requirement.cardId
-            local card = CardConfig.Cards[rawRequirementId] or CardConfig.Cards[cardId]
+            local card = Modules.CardConfig.Cards[rawRequirementId] or Modules.CardConfig.Cards[cardId]
             local rarity = card and card.Rarity
             if rarity then
                 byRarity[rarity] = math.max(0, (byRarity[rarity] or 0) - amount)
@@ -1398,7 +1565,7 @@ local function craftNextWhitelisted()
                 updateStatus("Submitting trophy craft: " .. trophyName)
 
                 local success, errorMessage = pcall(function()
-                    CraftTrophy:FireServer(trophyName)
+                    Remotes.CraftTrophy:FireServer(trophyName)
                 end)
 
                 if not success then
@@ -1517,7 +1684,7 @@ local function claimAllSeashells(force)
 
             if canRequest then
                 local success, errorMessage = pcall(function()
-                    SeashellCollect:FireServer(index)
+                    Remotes.SeashellCollect:FireServer(index)
                 end)
 
                 if success then
@@ -1779,7 +1946,7 @@ local function fetchSpinWheelData(force)
     end
 
     local success, result = pcall(function()
-        return SpinWheelData:InvokeServer()
+        return Remotes.SpinWheelData:InvokeServer()
     end)
 
     if not success then
@@ -1821,7 +1988,7 @@ local function claimFreeSpin(force)
     State.spinWheelNextClaimAt = now + State.spinWheelClaimCooldown
 
     local fired, fireError = pcall(function()
-        SpinWheelRemote:FireServer("claim_free")
+        Remotes.SpinWheelRemote:FireServer("claim_free")
     end)
 
     if not fired then
@@ -1875,7 +2042,7 @@ local function spinWheelNow(force)
     State.spinWheelNextSpinAt = now + State.spinWheelSpinDelay
 
     local fired, fireError = pcall(function()
-        SpinWheelRemote:FireServer("spin")
+        Remotes.SpinWheelRemote:FireServer("spin")
     end)
 
     if not fired then
@@ -1951,7 +2118,7 @@ end
 
 local function getGemShopStateData()
     local success, state = pcall(function()
-        return charm.peek(GemShopState)
+        return Modules.charm.peek(Modules.GemShopState)
     end)
 
     if success and type(state) == "table" then
@@ -1959,7 +2126,7 @@ local function getGemShopStateData()
     end
 
     success, state = pcall(function()
-        return GemShopState()
+        return Modules.GemShopState()
     end)
 
     if success and type(state) == "table" then
@@ -1980,7 +2147,7 @@ local function hasGamepass(gamepassId)
     end
 
     local success, owned = pcall(function()
-        return PurchaseClient.hasGamepass(gamepassId)
+        return Modules.PurchaseClient.hasGamepass(gamepassId)
     end)
 
     return success and owned == true
@@ -2257,11 +2424,11 @@ end
 local function sendGemShopPurchase(candidate)
     local success, errorMessage = pcall(function()
         if candidate.purchaseType == "fixed" then
-            BuyGemShopItem:FireServer("fixed", candidate.purchaseArgument)
+            Remotes.BuyGemShopItem:FireServer("fixed", candidate.purchaseArgument)
         elseif candidate.purchaseType == "lucky" then
-            BuyGemShopItem:FireServer("lucky")
+            Remotes.BuyGemShopItem:FireServer("lucky")
         elseif candidate.purchaseType == "scarlet" then
-            BuyGemShopItem:FireServer("scarlet")
+            Remotes.BuyGemShopItem:FireServer("scarlet")
         else
             error("Unknown purchase type")
         end
@@ -2379,7 +2546,7 @@ local function getSummerQuestName(quest)
 
     local config
     pcall(function()
-        config = SummerQuestConfig.getQuest(quest.id)
+        config = Modules.SummerQuestConfig.getQuest(quest.id)
     end)
 
     if type(config) == "table"
@@ -2475,7 +2642,7 @@ local function claimSummerQuests(force)
                     now + State.summerQuestClaimCooldown
 
                 local success, errorMessage = pcall(function()
-                    SummerQuestClaim:FireServer(index)
+                    Remotes.SummerQuestClaim:FireServer(index)
                 end)
 
                 if success then
@@ -2769,7 +2936,7 @@ local function buyNextSummerShopItem(force)
                         now + State.summerShopRetryCooldown
 
                     local success, errorMessage = pcall(function()
-                        SummerShopBuy:FireServer(id)
+                        Remotes.SummerShopBuy:FireServer(id)
                     end)
 
                     if not success then
@@ -2858,8 +3025,8 @@ local function tournamentRewardDisplayName(entry)
     if kind == "card" then
         local rawCardId = payload.cardId
         local cardId = tostring(rawCardId or "")
-        local card = CardConfig.Cards[rawCardId]
-            or CardConfig.Cards[cardId]
+        local card = Modules.CardConfig.Cards[rawCardId]
+            or Modules.CardConfig.Cards[cardId]
 
         return tostring(
             card and card.DisplayName
@@ -3234,7 +3401,7 @@ local function updateTournamentShopStatus(message)
         "Current Rewards: "
             .. tostring(#TournamentShopCurrentEntries)
             .. "/"
-            .. tostring(TournamentConfig.ShopRewardsPerTournament or 3),
+            .. tostring(Modules.TournamentConfig.ShopRewardsPerTournament or 3),
         "Recognized Current: " .. tostring(recognized),
         "Whitelist: "
             .. tostring(countSelectedTournamentShopItems())
@@ -3335,7 +3502,7 @@ local function buyNextTournamentShopItem(force)
                         now + State.tournamentShopRetryCooldown
 
                     local success, errorMessage = pcall(function()
-                        TournamentServer:FireServer("buy", entry.index)
+                        Remotes.TournamentServer:FireServer("buy", entry.index)
                     end)
 
                     if not success then
@@ -3551,7 +3718,7 @@ function IndexRuntime.claimAll(force)
     State.indexNextClaimAt = now + State.indexClaimCooldown
 
     local success, errorMessage = pcall(function()
-        ClaimAllIndexGems:FireServer()
+        Remotes.ClaimAllIndexGems:FireServer()
     end)
 
     if not success then
@@ -3585,12 +3752,12 @@ function WishRuntime.getData()
         wish = wishData,
         tickets = tonumber(wishData and wishData.tickets) or 0,
         rebirth = tonumber(playerData and playerData.rebirth) or 0,
-        minRebirth = tonumber(GachaConfig.MinRebirth) or 3,
+        minRebirth = tonumber(Modules.GachaConfig.MinRebirth) or 3,
     }
 end
 
 function WishRuntime.cardName(cardId)
-    local cards = CardConfig.Cards
+    local cards = Modules.CardConfig.Cards
     local card = type(cards) == "table" and cards[cardId]
 
     if type(card) == "table" then
@@ -3805,11 +3972,11 @@ function WishRuntime.playAnimation(result)
     State.wishAnimationStartedAt = os.clock()
 
     local success, errorMessage = pcall(function()
-        if type(AnimationController.Init) == "function" then
-            AnimationController.Init()
+        if type(Modules.AnimationController.Init) == "function" then
+            Modules.AnimationController.Init()
         end
 
-        AnimationController.play(result, function()
+        Modules.AnimationController.play(result, function()
             State.wishAnimationBusy = false
             State.wishAnimationStartedAt = 0
             WishRuntime.updateStatus("Wish animation completed.")
@@ -3879,7 +4046,7 @@ function WishRuntime.perform(force)
     WishRuntime.updateStatus("Processing Wish...")
 
     local success, result = pcall(function()
-        return PerformWish:InvokeServer()
+        return Remotes.PerformWish:InvokeServer()
     end)
 
     State.wishPending = false
@@ -4073,21 +4240,27 @@ function AntiAfkRuntime.tryVirtualUser()
     end
 
     local camera = Workspace.CurrentCamera
-    local cameraCFrame = camera and camera.CFrame or CFrame.new()
-    local point = Vector2.new(0, 0)
+
+    if not camera then
+        return false, "CurrentCamera unavailable"
+    end
+
+    local viewport = camera.ViewportSize
+    local point = Vector2.new(
+        math.max(1, math.floor(viewport.X * 0.5)),
+        math.max(1, math.floor(viewport.Y * 0.5))
+    )
 
     local success, errorMessage = pcall(function()
         virtualUser:CaptureController()
-
-        local clicked = pcall(function()
-            virtualUser:ClickButton2(point)
-        end)
-
-        if not clicked then
-            virtualUser:Button2Down(point, cameraCFrame)
-            task.wait(0.06)
-            virtualUser:Button2Up(point, cameraCFrame)
-        end
+        virtualUser:Button2Down(point, camera.CFrame)
+        task.wait(
+            math.max(
+                0.25,
+                tonumber(State.antiAfkInputHoldDuration) or 1
+            )
+        )
+        virtualUser:Button2Up(point, camera.CFrame)
     end)
 
     return success, success and nil or tostring(errorMessage)
@@ -4108,13 +4281,13 @@ function AntiAfkRuntime.pulse(source, force)
 
     State.antiAfkBusy = true
 
-    local successfulMethods = {}
+    local successfulMethod
     local errors = {}
     local methods = {
-        {"MouseRel", AntiAfkRuntime.tryMouseMoveRelative},
-        {"VIM Mouse", AntiAfkRuntime.tryVirtualInputMouse},
-        {"VirtualUser", AntiAfkRuntime.tryVirtualUser},
+        {"VirtualUser Hold", AntiAfkRuntime.tryVirtualUser},
         {"VIM Key", AntiAfkRuntime.tryVirtualInputKey},
+        {"VIM Mouse", AntiAfkRuntime.tryVirtualInputMouse},
+        {"MouseRel", AntiAfkRuntime.tryMouseMoveRelative},
     }
 
     for _, method in ipairs(methods) do
@@ -4123,8 +4296,11 @@ function AntiAfkRuntime.pulse(source, force)
         local success, errorMessage = callback()
 
         if success then
-            successfulMethods[#successfulMethods + 1] = name
-        elseif errorMessage then
+            successfulMethod = name
+            break
+        end
+
+        if errorMessage then
             errors[#errors + 1] =
                 name .. ": " .. tostring(errorMessage)
         end
@@ -4132,17 +4308,16 @@ function AntiAfkRuntime.pulse(source, force)
 
     State.antiAfkBusy = false
     State.nextAntiAfkPulseAt =
-        os.clock() + (tonumber(State.antiAfkInterval) or 45)
+        os.clock() + (tonumber(State.antiAfkInterval) or 60)
 
-    if #successfulMethods > 0 then
+    if successfulMethod then
         State.antiAfkCount += 1
         State.lastAntiAfkAt = os.time()
-        State.antiAfkMethod = table.concat(successfulMethods, " + ")
-        State.lastAntiAfkError =
-            #errors > 0 and table.concat(errors, " | ") or nil
+        State.antiAfkMethod = successfulMethod
+        State.lastAntiAfkError = nil
 
         AntiAfkRuntime.updateStatus(
-            "Keep-alive succeeded"
+            "Keep-alive input sent"
                 .. (source and (" • " .. tostring(source)) or "")
         )
         return true, State.antiAfkMethod
@@ -4411,7 +4586,7 @@ function CodesRuntime.redeem(code, force)
 
     local success, errorMessage = pcall(function()
 
-        RedeemCode:FireServer(string.lower(code))
+        Remotes.RedeemCode:FireServer(string.lower(code))
     end)
 
     if not success then
@@ -4503,6 +4678,306 @@ function CodesRuntime.clearHistory()
         "Code history cleared.",
         true
     )
+end
+
+local VulnoneRuntime = {}
+
+function VulnoneRuntime.normalizeStatus(payload)
+    payload = type(payload) == "table" and payload or {}
+
+    return {
+        canAttemptFree = payload.canAttemptFree == true,
+        hasCard = payload.hasCard == true,
+        freeAttemptCooldown =
+            math.max(
+                0,
+                tonumber(payload.freeAttemptCooldown) or 0
+            ),
+        cardExpiresIn =
+            math.max(
+                0,
+                tonumber(payload.cardExpiresIn) or 0
+            ),
+    }
+end
+
+function VulnoneRuntime.refresh(force)
+    if force ~= true
+        and State.vulnoneStatus
+        and os.clock() < State.vulnoneNextStatusAt
+    then
+        return true, State.vulnoneStatus
+    end
+
+    local success, payload = pcall(function()
+        return Remotes.GetThroneStatus:InvokeServer()
+    end)
+
+    State.vulnoneNextStatusAt =
+        os.clock() + State.vulnoneStatusRefreshInterval
+
+    if not success or type(payload) ~= "table" then
+        State.vulnoneFailures += 1
+        State.vulnoneLastStatus =
+            "Could not retrieve Vulnone status."
+
+        VulnoneRuntime.updateUI()
+
+        return false, tostring(payload)
+    end
+
+    State.vulnoneStatus =
+        VulnoneRuntime.normalizeStatus(payload)
+
+    return true, State.vulnoneStatus
+end
+
+function VulnoneRuntime.getState(force)
+    local success, status =
+        VulnoneRuntime.refresh(force == true)
+
+    if success and type(status) == "table" then
+        return status
+    end
+
+    return State.vulnoneStatus
+        or VulnoneRuntime.normalizeStatus(nil)
+end
+
+function VulnoneRuntime.statusLabel(status)
+    if status.hasCard then
+        return "Card Owned"
+    end
+
+    if status.canAttemptFree then
+        return "Ready"
+    end
+
+    if status.freeAttemptCooldown > 0 then
+        return "Cooldown "
+            .. formatDuration(status.freeAttemptCooldown)
+    end
+
+    return "Not Ready"
+end
+
+function VulnoneRuntime.updateUI(message, shouldLog)
+    if message ~= nil then
+        State.vulnoneLastStatus = tostring(message)
+
+        if shouldLog == true then
+            LogRuntime.append(
+                "Vulnone",
+                State.vulnoneLastStatus
+            )
+        end
+    end
+
+    local status =
+        State.vulnoneStatus
+        or VulnoneRuntime.normalizeStatus(nil)
+
+    local description = table.concat({
+        "Auto Try: "
+            .. (State.autoTryVulnoneCard and "ON" or "OFF"),
+        "Availability: "
+            .. VulnoneRuntime.statusLabel(status),
+        "Card Expires In: "
+            .. (
+                status.hasCard
+                    and formatDuration(status.cardExpiresIn)
+                    or "-"
+            ),
+        "Pending: "
+            .. (State.vulnonePending and "YES" or "NO"),
+        "Attempts: " .. tostring(State.vulnoneAttempts),
+        "Results: " .. tostring(State.vulnoneResults),
+        "Wins: " .. tostring(State.vulnoneWins),
+        "Losses: " .. tostring(State.vulnoneLosses),
+        "Failures: " .. tostring(State.vulnoneFailures),
+        "Last Result: " .. tostring(State.vulnoneLastResult),
+        "Status: " .. tostring(State.vulnoneLastStatus),
+    }, "\n")
+
+    if State.vulnoneStatusParagraph
+        and type(State.vulnoneStatusParagraph.SetDesc)
+            == "function"
+    then
+        pcall(function()
+            State.vulnoneStatusParagraph:SetDesc(description)
+        end)
+    end
+end
+
+function VulnoneRuntime.setAuto(enabled)
+    State.autoTryVulnoneCard = enabled == true
+    State.vulnoneNextStatusAt = 0
+    State.vulnoneNextAttemptAt = 0
+
+    VulnoneRuntime.updateUI(
+        State.autoTryVulnoneCard
+            and "Auto Try Vulnone Card enabled."
+            or "Auto Try Vulnone Card disabled.",
+        true
+    )
+
+    return State.autoTryVulnoneCard
+end
+
+function VulnoneRuntime.clearPending()
+    State.vulnonePending = false
+    State.vulnonePendingSince = 0
+end
+
+function VulnoneRuntime.attempt(force)
+    if State.vulnonePending then
+        return false, "A Vulnone attempt is still pending"
+    end
+
+    local now = os.clock()
+
+    if force ~= true
+        and now < State.vulnoneNextAttemptAt
+    then
+        return false, "Vulnone attempt is on cooldown"
+    end
+
+    local status = VulnoneRuntime.getState(true)
+
+    if status.hasCard then
+        VulnoneRuntime.updateUI(
+            "Vulnone Card is already active."
+        )
+        return false, "Vulnone Card is already active"
+    end
+
+    if not status.canAttemptFree then
+        local reason =
+            status.freeAttemptCooldown > 0
+            and (
+                "Next free attempt in "
+                .. formatDuration(
+                    status.freeAttemptCooldown
+                )
+            )
+            or "The free attempt is not ready"
+
+        VulnoneRuntime.updateUI(reason)
+        return false, reason
+    end
+
+    local success, errorMessage = pcall(function()
+        Remotes.AttemptThrone:FireServer()
+    end)
+
+    if not success then
+        State.vulnoneFailures += 1
+        State.vulnoneNextAttemptAt =
+            os.clock() + State.vulnoneRetryCooldown
+
+        VulnoneRuntime.updateUI(
+            "Could not submit the Vulnone attempt.",
+            true
+        )
+
+        return false, tostring(errorMessage)
+    end
+
+    State.vulnonePending = true
+    State.vulnonePendingSince = now
+    State.vulnoneAttempts += 1
+    State.vulnoneNextAttemptAt =
+        now + State.vulnoneAttemptCooldown
+
+    VulnoneRuntime.updateUI(
+        "Vulnone attempt submitted."
+    )
+
+    return true, "Attempt submitted"
+end
+
+function VulnoneRuntime.handleResult(mode, payload)
+    if tostring(mode or "") ~= "free" then
+        return
+    end
+
+    payload = type(payload) == "table" and payload or {}
+
+    VulnoneRuntime.clearPending()
+    State.vulnoneResults += 1
+    State.vulnoneNextStatusAt = 0
+    State.vulnoneNextAttemptAt =
+        os.clock() + State.vulnoneRetryCooldown
+
+    if payload.won == true then
+        State.vulnoneWins += 1
+        State.vulnoneLastResult = "Won"
+
+        VulnoneRuntime.updateUI(
+            "Vulnone Card won.",
+            true
+        )
+    else
+        State.vulnoneLosses += 1
+        State.vulnoneLastResult = "Lost"
+
+        VulnoneRuntime.updateUI(
+            "Vulnone attempt completed without a win.",
+            true
+        )
+    end
+
+    task.delay(1, function()
+        if State.running then
+            VulnoneRuntime.refresh(true)
+            VulnoneRuntime.updateUI()
+        end
+    end)
+end
+
+function VulnoneRuntime.tick()
+    if State.vulnonePending then
+        if os.clock() - State.vulnonePendingSince
+            >= State.vulnonePendingTimeout
+        then
+            VulnoneRuntime.clearPending()
+            State.vulnoneFailures += 1
+            State.vulnoneNextStatusAt = 0
+            State.vulnoneNextAttemptAt =
+                os.clock() + State.vulnoneRetryCooldown
+
+            VulnoneRuntime.updateUI(
+                "Vulnone result confirmation timed out.",
+                true
+            )
+        else
+            VulnoneRuntime.updateUI()
+        end
+
+        return
+    end
+
+    if State.autoTryVulnoneCard then
+        local status = VulnoneRuntime.getState(false)
+
+        if status.hasCard then
+            VulnoneRuntime.updateUI(
+                "Vulnone Card is already active."
+            )
+        elseif status.canAttemptFree
+            and os.clock() >= State.vulnoneNextAttemptAt
+        then
+            VulnoneRuntime.attempt(false)
+        else
+            VulnoneRuntime.updateUI()
+        end
+    elseif State.vulnoneStatusParagraph then
+        if os.clock() >= State.vulnoneNextStatusAt then
+            VulnoneRuntime.refresh(true)
+        end
+
+        VulnoneRuntime.updateUI()
+    end
 end
 
 local DailyRewardRuntime = {}
@@ -4625,6 +5100,9 @@ end
 
 function DailyRewardRuntime.setAutoClaim(enabled)
     State.autoClaimDailyRewards = enabled == true
+    State.vulnoneNextStatusAt = 0
+    State.vulnoneNextAttemptAt = 0
+    VulnoneRuntime.clearPending()
     State.dailyRewardNextStateAt = 0
     State.dailyRewardNextClaimAt = 0
 
@@ -4674,7 +5152,7 @@ function DailyRewardRuntime.requestState(force)
         now + State.dailyRewardStateRefreshInterval
 
     local success, errorMessage = pcall(function()
-        DailyReward:FireServer("getState")
+        Remotes.DailyReward:FireServer("getState")
     end)
 
     if not success then
@@ -4758,7 +5236,7 @@ function DailyRewardRuntime.claim(force)
     local currentDay = tonumber(rewardState.currentDay) or 0
 
     local success, errorMessage = pcall(function()
-        DailyReward:FireServer("claim")
+        Remotes.DailyReward:FireServer("claim")
     end)
 
     if not success then
@@ -5012,7 +5490,7 @@ function TournamentRuntime.getBestTeam(playerData)
 
     if #cards > 0 then
         local success, result = pcall(function()
-            return ScalingIncome.computeBaseAll(cards)
+            return Modules.ScalingIncome.computeBaseAll(cards)
         end)
 
         if success and type(result) == "table" then
@@ -5071,7 +5549,7 @@ function TournamentRuntime.getState()
     else
         local success, derivedPhase, derivedSeconds =
             pcall(function()
-                return TournamentClock.derivePhase(
+                return Modules.TournamentClock.derivePhase(
                     Workspace:GetServerTimeNow()
                 )
             end)
@@ -5092,7 +5570,7 @@ function TournamentRuntime.getState()
     local entryFee = 0
 
     local feeSuccess, feeResult = pcall(function()
-        return TournamentClock.computeEntryFee(rebirth, cash)
+        return Modules.TournamentClock.computeEntryFee(rebirth, cash)
     end)
 
     if feeSuccess then
@@ -5100,7 +5578,7 @@ function TournamentRuntime.getState()
     end
 
     local minRebirth =
-        tonumber(TournamentConfig.MinRebirth) or 0
+        tonumber(Modules.TournamentConfig.MinRebirth) or 0
 
     return {
         ready = playerData ~= nil,
@@ -5483,7 +5961,7 @@ function TournamentRuntime.equipBest(force)
     end
 
     local success, errorMessage = pcall(function()
-        TournamentRemote:FireServer("equip_best")
+        Remotes.TournamentRemote:FireServer("equip_best")
     end)
 
     if not success then
@@ -5545,7 +6023,7 @@ function TournamentRuntime.sendJoin()
     end
 
     local success, errorMessage = pcall(function()
-        TournamentRemote:FireServer("join")
+        Remotes.TournamentRemote:FireServer("join")
     end)
 
     if not success then
@@ -5730,7 +6208,7 @@ end
 function PackBuyRuntime.getPackState(packName, playerData)
     playerData = playerData or PackBuyRuntime.getPlayerData()
 
-    local packData = PackConfig.Packs[packName]
+    local packData = Modules.PackConfig.Packs[packName]
 
     if type(packData) ~= "table"
         or type(playerData) ~= "table"
@@ -6141,7 +6619,7 @@ function PackBuyRuntime.sendNative(packState, desired)
     end
 
     local success, errorMessage = pcall(function()
-        SetAutoBuyPackRemote:FireServer(
+        Remotes.SetAutoBuyPackRemote:FireServer(
             packState.name,
             desired == true
         )
@@ -6203,7 +6681,7 @@ function PackBuyRuntime.sendPurchase(packState)
     end
 
     local success, errorMessage = pcall(function()
-        BuyPackRemote:FireServer(packState.name)
+        Remotes.BuyPackRemote:FireServer(packState.name)
     end)
 
     if not success then
@@ -6389,7 +6867,7 @@ function PackBuyRuntime.disableNativeAll()
             and packState.nativeEnabled
         then
             pcall(function()
-                SetAutoBuyPackRemote:FireServer(
+                Remotes.SetAutoBuyPackRemote:FireServer(
                     packName,
                     false
                 )
@@ -6415,81 +6893,665 @@ end
 
 local PackRuntime = {}
 
-function PackRuntime.getServerSettings()
-    local playerData = getPlayerData()
-    local settings =
-        type(playerData) == "table"
-        and type(playerData.settings) == "table"
-        and playerData.settings
-        or {}
-
-    return {
-        autoOpen = settings.packAutoOpen == true,
-        hideAnimation = settings.packHideAnimation == true,
-        autoSkip = settings.packAutoSkip == true,
-    }
-end
-
-function PackRuntime.hasAutoSkipPass()
-    local success, result = pcall(function()
-        return PurchaseClient.hasGamepass(
-            PACK_AUTO_SKIP_GAMEPASS_ID
-        )
-    end)
-
-    return success and result == true
-end
-
-function PackRuntime.isAnimating()
-    local success, result = pcall(function()
-        return PackAnimationController.isAnimating()
-    end)
-
-    return success and result == true
-end
-
-function PackRuntime.isMinimized()
-    local success, result = pcall(function()
-        return PackAnimationController.isMinimized()
-    end)
-
-    return success and result == true
-end
-
-function PackRuntime.sendSetting(name, value)
-    local success, errorMessage = pcall(function()
-        PackSettings:FireServer(name, value == true)
-    end)
-
-    if not success then
-        State.packSettingsFailures += 1
-        State.packLastStatus =
-            "Could not update pack settings."
-
-        return false, tostring(errorMessage)
-    end
-
-    State.packSettingsRequests += 1
-    return true
-end
-
-function PackRuntime.setControllerAutoOpen(enabled)
-    local success, errorMessage = pcall(function()
-        PackAnimationController.setAutoOpen(enabled == true)
-    end)
-
-    if not success then
-        State.packSettingsFailures += 1
-        return false, tostring(errorMessage)
-    end
-
-    return true
-end
-
 function PackRuntime.syncToggle(toggle, value)
     if toggle and type(toggle.Set) == "function" then
         pcall(function()
             toggle:Set(value == true, false)
+        end)
+    end
+end
+
+function PackRuntime.isAnimating()
+    local success, result = pcall(function()
+        return Modules.PackAnimationController.isAnimating()
+    end)
+
+    return success and result == true
+end
+
+function PackRuntime.releaseInputBlock()
+    pcall(function()
+        Modules.UIService.setBlocked(false)
+    end)
+
+    pcall(function()
+        Modules.UIService.close(
+            "__PackAnim",
+            true
+        )
+    end)
+
+    pcall(function()
+        game:GetService("StarterGui")
+            :SetCoreGuiEnabled(
+                Enum.CoreGuiType.Chat,
+                true
+            )
+    end)
+end
+
+function PackRuntime.resetControllerState()
+    State.packOpenPending = nil
+    State.packCurrentContext = nil
+    State.packNextOpenAt = 0
+    State.packAnimationStaleSince = 0
+    State.packAutomationGeneration += 1
+    _G.isOpeningPack = false
+
+    pcall(function()
+        Modules.PackAnimationController.setAutoOpen(false)
+    end)
+
+    local success = pcall(function()
+        Modules.PackAnimationController.resetEverything()
+    end)
+
+    if success then
+        State.packControllerResets += 1
+    else
+        State.packOpenFailures += 1
+    end
+
+    local playerGui =
+        LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    local root =
+        playerGui
+        and playerGui:FindFirstChild("PackOpeningUI")
+
+    if root and root.Enabled then
+        root.Enabled = false
+    end
+
+    PackRuntime.releaseInputBlock()
+
+    return success
+end
+
+function PackRuntime.restartAutomation()
+    PackRuntime.resetControllerState()
+
+    if not State.autoOpenPacks then
+        return false, "Auto Open Available Packs is disabled"
+    end
+
+    pcall(function()
+        Modules.PackAnimationController.setAutoOpen(true)
+    end)
+
+    State.packNextOpenAt = 0
+    State.packLastStatus =
+        "Pack automation restarted."
+
+    local generation =
+        State.packAutomationGeneration
+
+    task.delay(0.15, function()
+        if State.running
+            and State.autoOpenPacks
+            and generation
+                == State.packAutomationGeneration
+            and not PackRuntime.isAnimating()
+        then
+            PackRuntime.requestOpen(nil, false)
+        end
+    end)
+
+    return true
+end
+
+function PackRuntime.suppressPackUI(root)
+    if typeof(root) ~= "Instance"
+        or root.Name ~= "PackOpeningUI"
+    then
+        return false
+    end
+
+    if not State.skipPackAnimations then
+        return false
+    end
+
+    local changed = root.Enabled == true
+
+    if changed then
+        root.Enabled = false
+        State.packUiSuppressCount += 1
+    end
+
+    PackRuntime.releaseInputBlock()
+
+    return changed
+end
+
+function PackRuntime.watchPackUI(root)
+    if typeof(root) ~= "Instance"
+        or root.Name ~= "PackOpeningUI"
+    then
+        return
+    end
+
+    if State.packWatchedUis[root] then
+        PackRuntime.suppressPackUI(root)
+        return
+    end
+
+    State.packWatchedUis[root] = true
+    PackRuntime.suppressPackUI(root)
+
+    root:GetPropertyChangedSignal("Enabled")
+        :Connect(function()
+            if State.running
+                and State.skipPackAnimations
+                and root.Parent
+                and root.Enabled
+            then
+                PackRuntime.suppressPackUI(root)
+            end
+        end)
+end
+
+function PackRuntime.installUiSuppressor()
+    local playerGui =
+        LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        or LocalPlayer:WaitForChild("PlayerGui")
+
+    local existing =
+        playerGui:FindFirstChild("PackOpeningUI")
+
+    if existing then
+        PackRuntime.watchPackUI(existing)
+    end
+
+    if State.packUiChildConnection then
+        return true
+    end
+
+    State.packUiChildConnection =
+        playerGui.ChildAdded:Connect(function(child)
+            if child.Name == "PackOpeningUI" then
+                PackRuntime.watchPackUI(child)
+            end
+        end)
+
+    return true
+end
+
+function PackRuntime.getSelectedRarities()
+    local result = {}
+
+    for _, rarity in ipairs(PackLogOptions.names) do
+        if State.packResultRarityWhitelist[rarity] then
+            result[#result + 1] = rarity
+        end
+    end
+
+    return result
+end
+
+function PackRuntime.countSelectedRarities()
+    return #PackRuntime.getSelectedRarities()
+end
+
+function PackRuntime.syncRarityDropdown()
+    local dropdown = State.packResultRarityDropdown
+
+    if not dropdown then
+        return
+    end
+
+    if type(dropdown.Refresh) == "function" then
+        local success = pcall(function()
+            dropdown:Refresh(PackLogOptions.names)
+        end)
+
+        if not success then
+            pcall(function()
+                dropdown:Refresh({
+                    Values = PackLogOptions.names,
+                })
+            end)
+        end
+    end
+
+    if type(dropdown.Select) == "function" then
+        pcall(function()
+            dropdown:Select(
+                PackRuntime.getSelectedRarities()
+            )
+        end)
+    end
+end
+
+function PackRuntime.applyRaritySelection(values)
+    local selected = {}
+
+    local function enable(value)
+        local normalized = normalizeSelectedValue(value)
+
+        if normalized == nil then
+            return
+        end
+
+        local rarity = tostring(normalized)
+
+        if table.find(PackLogOptions.names, rarity) then
+            selected[rarity] = true
+        end
+    end
+
+    if type(values) == "table" then
+        for key, value in pairs(values) do
+            if type(key) == "number" then
+                enable(value)
+            elseif value == true then
+                enable(key)
+            elseif type(value) == "table" then
+                enable(value)
+            end
+        end
+
+        if values.Title then
+            enable(values)
+        end
+    elseif values ~= nil then
+        enable(values)
+    end
+
+    table.clear(State.packResultRarityWhitelist)
+
+    for _, rarity in ipairs(PackLogOptions.names) do
+        State.packResultRarityWhitelist[rarity] =
+            selected[rarity] == true
+    end
+
+    PackRuntime.updateUI(
+        "Pack result rarity filter updated."
+    )
+    PackRuntime.updateResultUI()
+end
+
+function PackRuntime.setAllRarities(enabled)
+    for _, rarity in ipairs(PackLogOptions.names) do
+        State.packResultRarityWhitelist[rarity] =
+            enabled == true
+    end
+
+    PackRuntime.syncRarityDropdown()
+    PackRuntime.updateUI(
+        enabled
+            and "All pack result rarities selected."
+            or "Pack result rarity filter cleared."
+    )
+    PackRuntime.updateResultUI()
+end
+
+function PackRuntime.getPlayerData()
+    local playerData = getPlayerData()
+
+    if type(playerData) ~= "table" then
+        return nil
+    end
+
+    return playerData
+end
+
+function PackRuntime.getPacks(playerData)
+    playerData = playerData or PackRuntime.getPlayerData()
+
+    if type(playerData) ~= "table"
+        or type(playerData.packs) ~= "table"
+    then
+        return {}
+    end
+
+    return playerData.packs
+end
+
+function PackRuntime.getTotalPackCount(playerData)
+    local total = 0
+
+    for _, amount in pairs(
+        PackRuntime.getPacks(playerData)
+    ) do
+        total += math.max(
+            0,
+            math.floor(tonumber(amount) or 0)
+        )
+    end
+
+    return total
+end
+
+function PackRuntime.getPackCount(packName, playerData)
+    return math.max(
+        0,
+        math.floor(
+            tonumber(
+                PackRuntime.getPacks(playerData)[packName]
+            ) or 0
+        )
+    )
+end
+
+function PackRuntime.selectNextPack(playerData)
+    playerData = playerData or PackRuntime.getPlayerData()
+
+    if not playerData then
+        return nil
+    end
+
+    local packs = PackRuntime.getPacks(playerData)
+    local lastOpened =
+        tostring(playerData.lastOpenedPack or "")
+
+    if lastOpened ~= ""
+        and PackRuntime.getPackCount(
+            lastOpened,
+            playerData
+        ) > 0
+    then
+        return lastOpened
+    end
+
+    local bestName
+    local bestPrice = math.huge
+
+    for packName, rawAmount in pairs(packs) do
+        local amount =
+            math.max(
+                0,
+                math.floor(tonumber(rawAmount) or 0)
+            )
+
+        if amount > 0 then
+            local config =
+                Modules.PackConfig.Packs[packName]
+            local price =
+                type(config) == "table"
+                and tonumber(config.Price)
+                or 0
+
+            price = price or 0
+
+            if price < bestPrice
+                or (
+                    price == bestPrice
+                    and (
+                        bestName == nil
+                        or tostring(packName)
+                            < tostring(bestName)
+                    )
+                )
+            then
+                bestName = tostring(packName)
+                bestPrice = price
+            end
+        end
+    end
+
+    return bestName
+end
+
+function PackRuntime.canCarryMore(playerData)
+    playerData = playerData or PackRuntime.getPlayerData()
+
+    if not playerData then
+        return false, 0, 0
+    end
+
+    local inventory =
+        type(playerData.inventory) == "table"
+        and playerData.inventory
+        or {}
+
+    local capacity = 200
+
+    local success, hasPass = pcall(function()
+        return Modules.PurchaseClient.hasGamepass(
+            1688238039
+        )
+    end)
+
+    if success and hasPass == true then
+        capacity += 500
+    end
+
+    return #inventory < capacity, #inventory, capacity
+end
+
+function PackRuntime.findCardByUuid(uuid)
+    uuid = tostring(uuid or "")
+
+    if uuid == "" then
+        return nil
+    end
+
+    local playerData = PackRuntime.getPlayerData()
+
+    if not playerData then
+        return nil
+    end
+
+    if type(playerData.inventory) == "table" then
+        for _, card in ipairs(playerData.inventory) do
+            if type(card) == "table"
+                and tostring(
+                    card.uuid
+                    or card.UUID
+                    or card.id
+                    or ""
+                ) == uuid
+            then
+                return card
+            end
+        end
+    end
+
+    if type(playerData.slots) == "table" then
+        for _, slotData in pairs(playerData.slots) do
+            local card =
+                type(slotData) == "table"
+                and slotData.card
+                or nil
+
+            if type(card) == "table"
+                and tostring(
+                    card.uuid
+                    or card.UUID
+                    or card.id
+                    or ""
+                ) == uuid
+            then
+                return card
+            end
+        end
+    end
+
+    return nil
+end
+
+function PackRuntime.resolveCard(cardData, packName)
+    cardData = type(cardData) == "table"
+        and cardData
+        or {}
+
+    local cardId = tostring(
+        cardData.id
+        or cardData.Id
+        or cardData.Name
+        or cardData.cardId
+        or "Unknown"
+    )
+
+    local config =
+        type(Modules.CardConfig.Cards) == "table"
+        and Modules.CardConfig.Cards[cardId]
+        or nil
+
+    if type(config) ~= "table"
+        and type(cardData.Data) == "table"
+    then
+        config = cardData.Data
+    end
+
+    config = type(config) == "table" and config or {}
+
+    local displayName = tostring(
+        cardData.DisplayName
+        or config.DisplayName
+        or cardData.Name
+        or config.Name
+        or cardId
+    )
+
+    local rarity = tostring(
+        cardData.Rarity
+        or config.Rarity
+        or "Unknown"
+    )
+
+    local mutations = {}
+    local rawMutations =
+        cardData.mutations
+        or cardData.Mutations
+        or cardData.mutation
+        or cardData.Mutation
+
+    if type(rawMutations) == "table" then
+        for key, value in pairs(rawMutations) do
+            if type(key) == "number"
+                and value ~= nil
+            then
+                mutations[#mutations + 1] =
+                    tostring(value)
+            elseif value == true then
+                mutations[#mutations + 1] =
+                    tostring(key)
+            elseif type(value) == "string"
+                or type(value) == "number"
+            then
+                mutations[#mutations + 1] =
+                    tostring(value)
+            end
+        end
+    elseif rawMutations ~= nil then
+        mutations[1] = tostring(rawMutations)
+    end
+
+    table.sort(mutations)
+
+    return {
+        cardId = cardId,
+        card = displayName,
+        rarity = rarity,
+        pack = tostring(packName or "Unknown"),
+        mutations = mutations,
+        timestamp = os.time(),
+    }
+end
+
+function PackRuntime.formatResult(entry)
+    local mutationText = ""
+
+    if type(entry.mutations) == "table"
+        and #entry.mutations > 0
+    then
+        mutationText =
+            " • " .. table.concat(entry.mutations, ", ")
+    end
+
+    return string.format(
+        "%s Pack → %s [%s]%s",
+        tostring(entry.pack),
+        tostring(entry.card),
+        tostring(entry.rarity),
+        mutationText
+    )
+end
+
+function PackRuntime.recordResult(packName, cardData)
+    local entry =
+        PackRuntime.resolveCard(cardData, packName)
+
+    State.packResultHistory[
+        #State.packResultHistory + 1
+    ] = entry
+
+    while #State.packResultHistory
+        > State.packResultHistoryLimit
+    do
+        table.remove(State.packResultHistory, 1)
+    end
+
+    State.packLastPack = entry.pack
+    State.packLastCard = entry.card
+    State.packLastRarity = entry.rarity
+
+    if State.packResultRarityWhitelist[entry.rarity]
+        == true
+    then
+        State.packResultsLogged += 1
+
+        LogRuntime.append(
+            "Packs",
+            PackRuntime.formatResult(entry),
+            "info",
+            true
+        )
+    else
+        State.packResultsFiltered += 1
+    end
+
+    PackRuntime.updateResultUI()
+    return entry
+end
+
+function PackRuntime.getResultLines()
+    local lines = {}
+    local shown = 0
+
+    for index = #State.packResultHistory, 1, -1 do
+        local entry = State.packResultHistory[index]
+
+        if State.packResultRarityWhitelist[entry.rarity]
+            == true
+        then
+            lines[#lines + 1] = string.format(
+                "[%s] %s",
+                os.date(
+                    "%H:%M:%S",
+                    tonumber(entry.timestamp) or os.time()
+                ),
+                PackRuntime.formatResult(entry)
+            )
+
+            shown += 1
+
+            if shown >= 10 then
+                break
+            end
+        end
+    end
+
+    if #lines == 0 then
+        lines[1] =
+            "No matching pack results in this session."
+    end
+
+    return lines
+end
+
+function PackRuntime.updateResultUI()
+    if State.packResultParagraph
+        and type(State.packResultParagraph.SetDesc)
+            == "function"
+    then
+        pcall(function()
+            State.packResultParagraph:SetDesc(
+                table.concat(
+                    PackRuntime.getResultLines(),
+                    "\n"
+                )
+            )
         end)
     end
 end
@@ -6506,35 +7568,73 @@ function PackRuntime.updateUI(message, shouldLog)
         end
     end
 
-    local server = PackRuntime.getServerSettings()
-    local animating = PackRuntime.isAnimating()
-    local minimized = PackRuntime.isMinimized()
-    local hasPass = PackRuntime.hasAutoSkipPass()
+    local playerData = PackRuntime.getPlayerData()
+    local totalPacks =
+        PackRuntime.getTotalPackCount(playerData)
+    local nextPack =
+        PackRuntime.selectNextPack(playerData)
+    local pending = State.packOpenPending
+
+    local pendingText = "None"
+
+    if type(pending) == "table" then
+        pendingText =
+            tostring(pending.packName or "Unknown")
+            .. (
+                pending.resultReceived
+                    and " • Result Received"
+                    or " • Waiting for Result"
+            )
+    end
 
     local description = table.concat({
-        "Auto Open Packs: "
+        "Auto Open Available Packs: "
             .. (State.autoOpenPacks and "ON" or "OFF"),
-        "Hide Animation: "
-            .. (State.hidePackAnimation and "ON" or "OFF"),
-        "Auto Skip: "
-            .. (State.autoSkipPackAnimation and "ON" or "OFF"),
-        "Skip Access: "
-            .. (hasPass and "Available" or "Gamepass Required"),
+        "Skip Animations: "
+            .. (State.skipPackAnimations and "ON" or "OFF"),
+        "Available Packs: "
+            .. tostring(totalPacks),
+        "Next Pack: "
+            .. tostring(nextPack or "-"),
         "Animation: "
             .. (
-                animating
-                    and (minimized and "Hidden" or "Playing")
+                PackRuntime.isAnimating()
+                    and "Processing"
                     or "Idle"
             ),
-        "Server Auto Open: "
-            .. (server.autoOpen and "ON" or "OFF"),
-        "Server Hide: "
-            .. (server.hideAnimation and "ON" or "OFF"),
-        "Server Auto Skip: "
-            .. (server.autoSkip and "ON" or "OFF"),
-        "Updates: " .. tostring(State.packSettingsRequests),
-        "Failures: " .. tostring(State.packSettingsFailures),
-        "Status: " .. tostring(State.packLastStatus),
+        "Pending: " .. pendingText,
+        "Log Rarities: "
+            .. tostring(
+                PackRuntime.countSelectedRarities()
+            )
+            .. "/"
+            .. tostring(#PackLogOptions.names),
+        "Open Requests: "
+            .. tostring(State.packOpenRequests),
+        "Results: "
+            .. tostring(State.packOpenDetected),
+        "Skipped: "
+            .. tostring(State.packOpenSkipped),
+        "UI Fallbacks: "
+            .. tostring(State.packFallbackClicks),
+        "Hidden UIs: "
+            .. tostring(State.packUiSuppressCount),
+        "Controller Resets: "
+            .. tostring(State.packControllerResets),
+        "Logged Results: "
+            .. tostring(State.packResultsLogged),
+        "Filtered Results: "
+            .. tostring(State.packResultsFiltered),
+        "Failures: "
+            .. tostring(State.packOpenFailures),
+        "Last Pack: "
+            .. tostring(State.packLastPack),
+        "Last Card: "
+            .. tostring(State.packLastCard),
+        "Last Rarity: "
+            .. tostring(State.packLastRarity),
+        "Status: "
+            .. tostring(State.packLastStatus),
     }, "\n")
 
     if State.packStatusParagraph
@@ -6542,25 +7642,173 @@ function PackRuntime.updateUI(message, shouldLog)
             == "function"
     then
         pcall(function()
-            State.packStatusParagraph:SetDesc(description)
+            State.packStatusParagraph:SetDesc(
+                description
+            )
         end)
     end
 end
 
-function PackRuntime.findAutoSkipButton()
+function PackRuntime.isContext(candidate)
+    if typeof(candidate) ~= "table" then
+        return false
+    end
+
+    local cardData = rawget(candidate, "cardData")
+    local currentPieces =
+        rawget(candidate, "currentPieces")
+    local step = rawget(candidate, "step")
+    local skipped = rawget(candidate, "skipped")
+
+    return typeof(cardData) == "table"
+        and typeof(currentPieces) == "table"
+        and (
+            step ~= nil
+            or skipped ~= nil
+        )
+end
+
+function PackRuntime.getFunctionUpvalues(callback)
+    local values = {}
+    local seen = {}
+
+    local function add(value)
+        if value ~= nil and not seen[value] then
+            seen[value] = true
+            values[#values + 1] = value
+        end
+    end
+
+    local providers = {}
+
+    if type(getupvalues) == "function" then
+        providers[#providers + 1] = getupvalues
+    end
+
+    if type(debug) == "table"
+        and type(debug.getupvalues) == "function"
+    then
+        providers[#providers + 1] =
+            debug.getupvalues
+    end
+
+    for _, provider in ipairs(providers) do
+        pcall(function()
+            local result = provider(callback)
+
+            if type(result) == "table" then
+                for _, value in pairs(result) do
+                    add(value)
+                end
+            end
+        end)
+    end
+
+    local getter
+
+    if type(getupvalue) == "function" then
+        getter = getupvalue
+    elseif type(debug) == "table"
+        and type(debug.getupvalue) == "function"
+    then
+        getter = debug.getupvalue
+    end
+
+    if getter then
+        for index = 1, 100 do
+            local success, name, value =
+                pcall(getter, callback, index)
+
+            if not success or name == nil then
+                break
+            end
+
+            add(value)
+        end
+    end
+
+    return values
+end
+
+function PackRuntime.getCurrentContext()
+    if PackRuntime.isContext(
+        State.packCurrentContext
+    ) then
+        return State.packCurrentContext
+    end
+
+    local callbacks = {
+        Modules.PackAnimationController.play,
+        Modules.PackAnimationController.forceHide,
+        Modules.PackAnimationController.resetEverything,
+    }
+
+    for _, callback in ipairs(callbacks) do
+        if type(callback) == "function" then
+            for _, value in ipairs(
+                PackRuntime.getFunctionUpvalues(callback)
+            ) do
+                if PackRuntime.isContext(value) then
+                    State.packCurrentContext = value
+                    return value
+                end
+            end
+        end
+    end
+
+    return nil
+end
+
+function PackRuntime.isContextReady(context)
+    if not PackRuntime.isContext(context) then
+        return false
+    end
+
+    return rawget(context, "contentContainer") ~= nil
+        and rawget(context, "packContainer") ~= nil
+        and rawget(context, "clickArea") ~= nil
+        and typeof(rawget(context, "motions")) == "table"
+end
+
+function PackRuntime.waitForContext()
+    local startedAt = os.clock()
+
+    while State.running
+        and os.clock() - startedAt
+            < State.packAnimationWaitTimeout
+    do
+        local context =
+            PackRuntime.getCurrentContext()
+
+        if context
+            and PackRuntime.isContextReady(context)
+        then
+            return context
+        end
+
+        task.wait(0.03)
+    end
+
+    return nil
+end
+
+function PackRuntime.findAnimationButton()
     local playerGui =
         LocalPlayer:FindFirstChildOfClass("PlayerGui")
     local root =
         playerGui
         and playerGui:FindFirstChild("PackOpeningUI")
 
-    if not root then
+    if not root or root.Enabled == false then
         return nil
     end
 
     for _, descendant in ipairs(root:GetDescendants()) do
-        if descendant:IsA("GuiButton")
-            and descendant.Name == "AutoSkip"
+        if descendant:IsA("TextButton")
+            and descendant.Visible
+            and descendant.Text == ""
+            and descendant.AbsoluteSize.X > 0
+            and descendant.AbsoluteSize.Y > 0
         then
             return descendant
         end
@@ -6591,313 +7839,480 @@ function PackRuntime.activateButton(button)
     end)
 end
 
-function PackRuntime.applyReset()
-    if PackRuntime.isAnimating() then
-        State.packSettingsResetPending = true
-        return false
+function PackRuntime.advanceAnimationFallback()
+    local startedAt = os.clock()
+    local clicked = false
+
+    while State.running
+        and PackRuntime.isAnimating()
+        and os.clock() - startedAt < 5
+    do
+        local button =
+            PackRuntime.findAnimationButton()
+
+        if button
+            and PackRuntime.activateButton(button)
+        then
+            State.packFallbackClicks += 1
+            clicked = true
+        end
+
+        task.wait(0.12)
     end
 
+    return clicked
+end
+
+function PackRuntime.skipActiveAnimation()
+    PackRuntime.installUiSuppressor()
+
+    local playerGui =
+        LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    local root =
+        playerGui
+        and playerGui:FindFirstChild("PackOpeningUI")
+
+    if root then
+        PackRuntime.suppressPackUI(root)
+    else
+        PackRuntime.releaseInputBlock()
+    end
+
+    pcall(function()
+        Modules.PackAnimationController.setAutoOpen(true)
+    end)
+
+    local context = PackRuntime.waitForContext()
+
+    if context then
+        local success, errorMessage = pcall(function()
+            Modules.PackAnimationController.skipToReveal(
+                context
+            )
+        end)
+
+        if success then
+            State.packOpenSkipped += 1
+            State.packLastStatus =
+                "Pack animation hidden and reveal accelerated."
+            PackRuntime.updateUI()
+            return true
+        end
+
+        State.packLastStatus =
+            "Pack UI hidden; local auto advance is active."
+                .. " Direct skip returned: "
+                .. tostring(errorMessage)
+        PackRuntime.updateUI()
+        return true
+    end
+
+    State.packLastStatus =
+        "Pack UI hidden; waiting for local auto advance."
+    PackRuntime.updateUI()
+
+    return true
+end
+
+function PackRuntime.requestOpen(packName, force)
+    PackRuntime.installUiSuppressor()
+
+    pcall(function()
+        Modules.PackAnimationController.setAutoOpen(
+            State.autoOpenPacks
+        )
+    end)
+
+    if type(State.packOpenPending) == "table" then
+        return false, "A pack request is already pending"
+    end
+
+    if PackRuntime.isAnimating() then
+        return false, "A pack animation is already running"
+    end
+
+    local now = os.clock()
+
+    if force ~= true and now < State.packNextOpenAt then
+        return false, "Pack opening is on cooldown"
+    end
+
+    local playerData = PackRuntime.getPlayerData()
+
+    if not playerData then
+        return false, "Player data is not ready"
+    end
+
+    packName = packName
+        or PackRuntime.selectNextPack(playerData)
+
+    if not packName
+        or PackRuntime.getPackCount(
+            packName,
+            playerData
+        ) <= 0
+    then
+        return false, "No packs are available"
+    end
+
+    local canCarry, current, capacity =
+        PackRuntime.canCarryMore(playerData)
+
+    if not canCarry then
+        State.packLastStatus =
+            string.format(
+                "Inventory is full (%d/%d).",
+                current,
+                capacity
+            )
+        PackRuntime.updateUI()
+        return false, State.packLastStatus
+    end
+
+    local beforeCount =
+        PackRuntime.getPackCount(
+            packName,
+            playerData
+        )
+
     local success, errorMessage = pcall(function()
-        PackAnimationController.resetEverything(true)
+        Remotes.OpenPack:FireServer(packName)
     end)
 
     if not success then
-        State.packSettingsFailures += 1
+        State.packOpenFailures += 1
+        State.packNextOpenAt =
+            os.clock() + State.packOpenRetryCooldown
+
         PackRuntime.updateUI(
-            "Could not reset native pack settings.",
+            "Could not submit the pack request.",
             true
         )
 
         return false, tostring(errorMessage)
     end
 
-    State.packSettingsResetPending = false
-    State.packSkipLocalApplied = false
-    State.packSkipAppliedAt = 0
+    State.packOpenRequests += 1
+    State.packOpenPending = {
+        packName = tostring(packName),
+        beforeCount = beforeCount,
+        startedAt = now,
+        resultReceived = false,
+        resultAt = 0,
+    }
+    State.packNextOpenAt =
+        now + State.packOpenRequestCooldown
+    State.packLastStatus =
+        "Opening " .. tostring(packName) .. " Pack."
 
-    PackRuntime.setControllerAutoOpen(
-        State.autoOpenPacks
-    )
+    PackRuntime.updateUI()
+    return true, packName
+end
 
-    if State.autoOpenPacks then
-        PackRuntime.sendSetting(
-            "packAutoOpen",
-            true
-        )
+function PackRuntime.handleOpenPackEvent(...)
+    local arguments = {...}
+
+    if arguments[1] == "x" then
+        State.packLastStatus =
+            "Pack request acknowledged by the server."
+        PackRuntime.updateUI()
+        return
     end
 
-    if State.hidePackAnimation then
-        PackRuntime.sendSetting(
-            "packHideAnimation",
-            true
+    local pending = State.packOpenPending
+    local packName =
+        tostring(
+            arguments[7]
+            or (
+                type(pending) == "table"
+                and pending.packName
+            )
+            or "Unknown"
         )
+
+    local cardData =
+        type(arguments[2]) == "table"
+        and arguments[2]
+        or nil
+
+    if not cardData then
+        cardData =
+            PackRuntime.findCardByUuid(arguments[4])
     end
 
+    cardData = type(cardData) == "table"
+        and cardData
+        or {
+            id = tostring(arguments[4] or "Unknown"),
+            Name = tostring(arguments[4] or "Unknown"),
+            Rarity = "Unknown",
+        }
+
+    State.packOpenDetected += 1
+    PackRuntime.recordResult(packName, cardData)
+
+    State.packOpenPending = nil
+    State.packCurrentContext = nil
+    State.packNextOpenAt =
+        os.clock() + State.packResultChainDelay
+    State.packLastStatus =
+        "Received the "
+        .. packName
+        .. " Pack result."
+
+    PackRuntime.updateUI()
+
+    if State.skipPackAnimations then
+        task.spawn(function()
+            local waitStarted = os.clock()
+
+            while State.running
+                and not PackRuntime.isAnimating()
+                and os.clock() - waitStarted
+                    < State.packAnimationWaitTimeout
+            do
+                task.wait(0.01)
+            end
+
+            if State.running then
+                PackRuntime.skipActiveAnimation()
+            end
+        end)
+    end
+end
+
+function PackRuntime.clearPending(successMessage)
+    State.packOpenPending = nil
+    State.packCurrentContext = nil
+    State.packNextOpenAt =
+        os.clock() + State.packOpenRequestCooldown
+
+    if successMessage then
+        State.packLastStatus = successMessage
+    end
+end
+
+function PackRuntime.checkPending()
+    local pending = State.packOpenPending
+
+    if type(pending) ~= "table" then
+        return false
+    end
+
+    local elapsed =
+        os.clock() - (tonumber(pending.startedAt) or 0)
+    if elapsed >= State.packOpenPendingTimeout then
+        State.packOpenFailures += 1
+        State.packOpenPending = nil
+        State.packCurrentContext = nil
+        State.packNextOpenAt =
+            os.clock() + State.packOpenRetryCooldown
+
+        pcall(function()
+            Modules.PackAnimationController.resetEverything()
+        end)
+
+        PackRuntime.releaseInputBlock()
+
+        PackRuntime.updateUI(
+            "Pack result confirmation timed out.",
+            true
+        )
+
+        return false
+    end
+
+    PackRuntime.updateUI()
     return true
 end
 
 function PackRuntime.setAutoOpen(enabled)
-    State.autoOpenPacks = enabled == true
-    State.packSettingsNextSyncAt = 0
+    enabled = enabled == true
+    State.autoOpenPacks = enabled
 
-    PackRuntime.setControllerAutoOpen(
-        State.autoOpenPacks
-    )
-    PackRuntime.sendSetting(
-        "packAutoOpen",
-        State.autoOpenPacks
-    )
+    PackRuntime.installUiSuppressor()
+    PackRuntime.resetControllerState()
+
+    if enabled then
+        pcall(function()
+            Modules.PackAnimationController.setAutoOpen(true)
+        end)
+
+        State.packNextOpenAt = 0
+        State.packLastStatus =
+            "Auto Open Available Packs enabled."
+
+        local generation =
+            State.packAutomationGeneration
+
+        task.delay(0.15, function()
+            if State.running
+                and State.autoOpenPacks
+                and generation
+                    == State.packAutomationGeneration
+                and not PackRuntime.isAnimating()
+            then
+                PackRuntime.requestOpen(nil, false)
+            end
+        end)
+    else
+        State.packLastStatus =
+            "Auto Open Available Packs disabled."
+    end
 
     PackRuntime.updateUI(
-        State.autoOpenPacks
-            and "Auto Open Packs enabled."
-            or "Auto Open Packs disabled.",
+        State.packLastStatus,
         true
     )
 
     return State.autoOpenPacks
 end
 
-function PackRuntime.setHideAnimation(enabled)
-    enabled = enabled == true
+function PackRuntime.setSkipAnimations(enabled)
+    State.skipPackAnimations = enabled == true
 
-    if not enabled and State.autoSkipPackAnimation then
-        PackRuntime.updateUI(
-            "Hide Animation is required while Auto Skip is enabled.",
-            true
-        )
-        PackRuntime.syncToggle(
-            State.hidePackAnimationToggle,
-            true
-        )
+    PackRuntime.installUiSuppressor()
 
-        return false, "Disable Auto Skip first"
+    if not State.skipPackAnimations then
+        PackRuntime.releaseInputBlock()
     end
 
-    State.hidePackAnimation = enabled
-    State.packSettingsNextSyncAt = 0
-
-    if enabled then
-        PackRuntime.sendSetting(
-            "packHideAnimation",
-            true
-        )
-
-        if PackRuntime.isAnimating()
-            and not PackRuntime.isMinimized()
-        then
-            pcall(function()
-                PackAnimationController.forceHide()
-            end)
-        end
-    else
-        PackRuntime.sendSetting(
-            "packHideAnimation",
-            false
-        )
-        State.packSettingsResetPending = true
-
-        if not PackRuntime.isAnimating() then
-            PackRuntime.applyReset()
-        end
+    if State.skipPackAnimations
+        and PackRuntime.isAnimating()
+    then
+        task.spawn(PackRuntime.skipActiveAnimation)
     end
 
     PackRuntime.updateUI(
-        enabled
-            and "Pack animations will be hidden."
-            or "Pack animations will be shown.",
+        State.skipPackAnimations
+            and "Pack animation skipping enabled."
+            or "Pack animation skipping disabled.",
         true
     )
 
-    return State.hidePackAnimation
+    return State.skipPackAnimations
 end
 
-function PackRuntime.setAutoSkip(enabled)
-    enabled = enabled == true
+function PackRuntime.clearHistory()
+    table.clear(State.packResultHistory)
+    State.packResultsLogged = 0
+    State.packResultsFiltered = 0
+    State.packLastPack = "-"
+    State.packLastCard = "-"
+    State.packLastRarity = "-"
 
-    if enabled and not PackRuntime.hasAutoSkipPass() then
-        State.autoSkipPackAnimation = false
-        PackRuntime.syncToggle(
-            State.autoSkipPackAnimationToggle,
-            false
-        )
-
-        PackRuntime.updateUI(
-            "Auto Skip requires the official gamepass.",
-            true
-        )
-
-        return false, "Auto Skip gamepass required"
-    end
-
-    State.autoSkipPackAnimation = enabled
-    State.packSettingsNextSyncAt = 0
-
-    if enabled then
-        State.autoOpenPacks = true
-        State.hidePackAnimation = true
-        State.packSkipLocalApplied = false
-        State.packSkipAppliedAt = 0
-
-        PackRuntime.syncToggle(
-            State.autoOpenPacksToggle,
-            true
-        )
-        PackRuntime.syncToggle(
-            State.hidePackAnimationToggle,
-            true
-        )
-
-        PackRuntime.setControllerAutoOpen(true)
-        PackRuntime.sendSetting(
-            "packAutoOpen",
-            true
-        )
-        PackRuntime.sendSetting(
-            "packHideAnimation",
-            true
-        )
-    else
-        PackRuntime.sendSetting(
-            "packAutoSkip",
-            false
-        )
-        State.packSettingsResetPending = true
-        State.packSkipLocalApplied = false
-        State.packSkipAppliedAt = 0
-
-        if not PackRuntime.isAnimating() then
-            PackRuntime.applyReset()
-        end
-    end
-
+    PackRuntime.updateResultUI()
     PackRuntime.updateUI(
-        enabled
-            and "Native Auto Skip enabled."
-            or "Native Auto Skip disabled.",
-        true
-    )
-
-    return State.autoSkipPackAnimation
-end
-
-function PackRuntime.applyDesiredSettings()
-    local server = PackRuntime.getServerSettings()
-
-    PackRuntime.setControllerAutoOpen(
-        State.autoOpenPacks
-    )
-
-    if server.autoOpen ~= State.autoOpenPacks then
-        PackRuntime.sendSetting(
-            "packAutoOpen",
-            State.autoOpenPacks
-        )
-    end
-
-    if State.hidePackAnimation then
-        if not server.hideAnimation then
-            PackRuntime.sendSetting(
-                "packHideAnimation",
-                true
-            )
-        end
-
-        if PackRuntime.isAnimating()
-            and not PackRuntime.isMinimized()
-        then
-            pcall(function()
-                PackAnimationController.forceHide()
-            end)
-        end
-    elseif server.hideAnimation
-        and not State.packSettingsResetPending
-    then
-        State.packSettingsResetPending = true
-    end
-
-    if not State.autoSkipPackAnimation
-        and server.autoSkip
-        and not State.packSettingsResetPending
-    then
-        State.packSettingsResetPending = true
-    end
-end
-
-function PackRuntime.applyNativeAutoSkip()
-    if not State.autoSkipPackAnimation then
-        return false
-    end
-
-    if not PackRuntime.hasAutoSkipPass() then
-        PackRuntime.setAutoSkip(false)
-        return false
-    end
-
-    local server = PackRuntime.getServerSettings()
-
-    if server.autoSkip
-        and State.packSkipAppliedAt == 0
-    then
-        State.packSkipLocalApplied = true
-        return true
-    end
-
-    if State.packSkipLocalApplied then
-        return true
-    end
-
-    if not PackRuntime.isAnimating() then
-        return false
-    end
-
-    local button = PackRuntime.findAutoSkipButton()
-
-    if not button then
-        return false
-    end
-
-    if not PackRuntime.activateButton(button) then
-        State.packSettingsFailures += 1
-        PackRuntime.updateUI(
-            "Could not activate native Auto Skip.",
-            true
-        )
-        return false
-    end
-
-    State.packSkipLocalApplied = true
-    State.packSkipAppliedAt = os.clock()
-    State.packSettingsRequests += 1
-
-    PackRuntime.updateUI(
-        "Native Auto Skip activated.",
-        true
+        "Pack result history cleared."
     )
 
     return true
 end
 
+function PackRuntime.processCurrent(force)
+    if PackRuntime.isAnimating() then
+        if State.skipPackAnimations or force == true then
+            local success =
+                PackRuntime.skipActiveAnimation()
+
+            return success,
+                success
+                    and "Active pack processed."
+                    or "Could not process the active pack"
+        end
+
+        return false, "A pack animation is already running"
+    end
+
+    return PackRuntime.requestOpen(nil, force == true)
+end
+
+function PackRuntime.installHook()
+    return true, "OpenPack event listener is active"
+end
+
+function PackRuntime.uninstallHook()
+    PackRuntime.resetControllerState()
+end
+
 function PackRuntime.tick()
-    if State.packSettingsResetPending
-        and not PackRuntime.isAnimating()
+    PackRuntime.installUiSuppressor()
+
+    pcall(function()
+        Modules.PackAnimationController.setAutoOpen(
+            State.autoOpenPacks
+        )
+    end)
+
+    local animating = PackRuntime.isAnimating()
+
+    if State.autoOpenPacks
+        and animating
+        and State.packOpenPending == nil
     then
-        PackRuntime.applyReset()
+        if State.packAnimationStaleSince <= 0 then
+            State.packAnimationStaleSince =
+                os.clock()
+        elseif os.clock()
+            - State.packAnimationStaleSince
+            >= State.packAnimationRecoveryDelay
+        then
+            PackRuntime.restartAutomation()
+            animating = false
+        end
+    else
+        State.packAnimationStaleSince = 0
     end
 
-    if os.clock() >= State.packSettingsNextSyncAt then
-        State.packSettingsNextSyncAt =
-            os.clock() + State.packSettingsSyncCooldown
+    if State.skipPackAnimations
+        and animating
+    then
+        local playerGui =
+            LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        local root =
+            playerGui
+            and playerGui:FindFirstChild(
+                "PackOpeningUI"
+            )
 
-        PackRuntime.applyDesiredSettings()
+        if root then
+            PackRuntime.suppressPackUI(root)
+        end
     end
 
-    if State.autoSkipPackAnimation then
-        PackRuntime.applyNativeAutoSkip()
+    if PackRuntime.checkPending() then
+        return
+    end
+
+    if State.autoOpenPacks
+        and not animating
+        and os.clock() >= State.packNextOpenAt
+    then
+        local playerData = PackRuntime.getPlayerData()
+        local nextPack =
+            PackRuntime.selectNextPack(playerData)
+
+        if nextPack then
+            local success, result =
+                PackRuntime.requestOpen(
+                    nextPack,
+                    false
+                )
+
+            if not success
+                and result ~= "Pack opening is on cooldown"
+            then
+                State.packLastStatus = tostring(result)
+            end
+        else
+            State.packLastStatus =
+                "Waiting for available packs."
+        end
     end
 
     if State.packStatusParagraph then
         PackRuntime.updateUI()
+        PackRuntime.updateResultUI()
     end
 end
 
@@ -6942,7 +8357,7 @@ end
 
 function RebirthRuntime.parseRequirement(requirement)
     local success, isAny, value = pcall(function()
-        return RebirthConfig.ParseCardRequirement(requirement)
+        return Modules.RebirthConfig.ParseCardRequirement(requirement)
     end)
 
     if not success then
@@ -6989,7 +8404,7 @@ function RebirthRuntime.validateCards(playerData, target)
             local found = false
 
             for cardId in pairs(owned) do
-                local cardData = CardConfig.Cards[cardId]
+                local cardData = Modules.CardConfig.Cards[cardId]
 
                 if not exactRequired[cardId]
                     and not usedAny[cardId]
@@ -7006,7 +8421,7 @@ function RebirthRuntime.validateCards(playerData, target)
                 return false, "Missing any " .. value .. " card"
             end
         elseif not owned[value] then
-            local cardData = CardConfig.Cards[value]
+            local cardData = Modules.CardConfig.Cards[value]
             local displayName =
                 type(cardData) == "table"
                 and tostring(
@@ -7047,7 +8462,7 @@ function RebirthRuntime.getState()
     local maxLevel = 0
 
     pcall(function()
-        maxLevel = tonumber(RebirthConfig.GetMaxRebirth()) or 0
+        maxLevel = tonumber(Modules.RebirthConfig.GetMaxRebirth()) or 0
     end)
 
     if maxLevel > 0 and current >= maxLevel then
@@ -7072,7 +8487,7 @@ function RebirthRuntime.getState()
     local target
 
     local targetSuccess = pcall(function()
-        target = RebirthConfig.GetRebirth(nextLevel)
+        target = Modules.RebirthConfig.GetRebirth(nextLevel)
     end)
 
     if not targetSuccess or type(target) ~= "table" then
@@ -7274,7 +8689,7 @@ function RebirthRuntime.rebirth(force)
     State.rebirthAttempts += 1
 
     local success, errorMessage = pcall(function()
-        RebirthRemote:FireServer()
+        Remotes.RebirthRemote:FireServer()
     end)
 
     if not success then
@@ -7434,7 +8849,7 @@ end
 
 function EquipBestRuntime.cardSignature(card)
     local cardId = tostring(card.id or "")
-    local cardData = CardConfig.Cards[cardId]
+    local cardData = Modules.CardConfig.Cards[cardId]
     local rarity = tostring(
         cardData and cardData.Rarity or ""
     )
@@ -7442,7 +8857,7 @@ function EquipBestRuntime.cardSignature(card)
 
     pcall(function()
         income = tonumber(
-            ScalingIncome.getFlatIncome(card)
+            Modules.ScalingIncome.getFlatIncome(card)
         ) or 0
     end)
 
@@ -7624,7 +9039,7 @@ function EquipBestRuntime.equip(mode, force)
 
     local now = os.clock()
 
-    if force ~= true and now < State.equipBestNextAt then
+    if now < State.equipBestNextAt then
         return false, "Equip Best is on cooldown"
     end
 
@@ -7642,9 +9057,9 @@ function EquipBestRuntime.equip(mode, force)
 
     local success, errorMessage = pcall(function()
         if mode == EQUIP_BEST_MODE_RARITY then
-            SlotController.equipBestRarityCards()
+            Modules.SlotController.equipBestRarityCards()
         else
-            SlotController.equipBestCards()
+            Modules.SlotController.equipBestCards()
         end
     end)
 
@@ -7730,7 +9145,7 @@ local function normalizeWindowKeybind(value)
 end
 
 local ConfigRuntime = {
-    version = 14,
+    version = 19,
     root = "xSansHUB",
     folder = "xSansHUB/SpinASoccerCardHub",
     file = "xSansHUB/SpinASoccerCardHub/" .. tostring(game.PlaceId) .. ".json",
@@ -7821,9 +9236,12 @@ function ConfigRuntime.buildSnapshot(includeSaveMetadata)
             ),
 
         autoOpenPacks = State.autoOpenPacks == true,
-        hidePackAnimation = State.hidePackAnimation == true,
-        autoSkipPackAnimation =
-            State.autoSkipPackAnimation == true,
+        skipPackAnimations =
+            State.skipPackAnimations == true,
+        packResultRarityWhitelist =
+            ConfigRuntime.copyBooleanMap(
+                State.packResultRarityWhitelist
+            ),
 
         autoRebirth = State.autoRebirth == true,
 
@@ -7843,6 +9261,9 @@ function ConfigRuntime.buildSnapshot(includeSaveMetadata)
         skipWishAnimation = State.skipWishAnimation == true,
 
         autoClaimIndex = State.autoClaimIndex == true,
+
+        autoTryVulnoneCard =
+            State.autoTryVulnoneCard == true,
 
         autoClaimDailyRewards =
             State.autoClaimDailyRewards == true,
@@ -7967,12 +9388,8 @@ function ConfigRuntime.syncControls()
     setToggle(State.autoBuyPacksToggle, State.autoBuyPacks)
     setToggle(State.autoOpenPacksToggle, State.autoOpenPacks)
     setToggle(
-        State.hidePackAnimationToggle,
-        State.hidePackAnimation
-    )
-    setToggle(
-        State.autoSkipPackAnimationToggle,
-        State.autoSkipPackAnimation
+        State.skipPackAnimationsToggle,
+        State.skipPackAnimations
     )
     setToggle(State.autoRebirthToggle, State.autoRebirth)
     setToggle(
@@ -7986,6 +9403,10 @@ function ConfigRuntime.syncControls()
     setToggle(State.autoSpinWishToggle, State.autoSpinWishTickets)
     setToggle(State.skipWishAnimationToggle, State.skipWishAnimation)
     setToggle(State.autoClaimIndexToggle, State.autoClaimIndex)
+    setToggle(
+        State.autoTryVulnoneToggle,
+        State.autoTryVulnoneCard
+    )
     setToggle(
         State.autoClaimDailyRewardsToggle,
         State.autoClaimDailyRewards
@@ -8007,6 +9428,7 @@ function ConfigRuntime.syncControls()
     applyWindowKeybind(State.windowKeybind, true)
     EquipBestRuntime.syncModeDropdown()
     PackBuyRuntime.syncWhitelistDropdown()
+    PackRuntime.syncRarityDropdown()
 
     syncWhitelistDropdown()
     syncGemShopWhitelistDropdown()
@@ -8024,6 +9446,7 @@ function ConfigRuntime.syncControls()
     WishRuntime.updateStatus()
     WishRuntime.updateLogUI()
     IndexRuntime.updateStatus()
+    VulnoneRuntime.updateUI()
     DailyRewardRuntime.updateUI()
     CodesRuntime.updateUI()
     updateGemShopStatus()
@@ -8038,10 +9461,22 @@ end
 function ConfigRuntime.resetActionCooldowns()
     State.packBuyNextAt = 0
     PackBuyRuntime.clearPending()
-    State.packSettingsNextSyncAt = 0
-    State.packSkipLocalApplied = false
-    State.packSkipAppliedAt = 0
-    State.packSettingsResetPending = false
+    State.packNextOpenAt = 0
+    State.packOpenPending = nil
+    State.packCurrentContext = nil
+    State.packAnimationStaleSince = 0
+    State.packWatchedUis =
+        setmetatable({}, {__mode = "k"})
+
+    PackRuntime.resetControllerState()
+
+    pcall(function()
+        Modules.PackAnimationController.setAutoOpen(
+            State.autoOpenPacks
+        )
+    end)
+    State.packHandledContexts =
+        setmetatable({}, {__mode = "k"})
     State.rebirthNextAt = 0
     RebirthRuntime.clearPending()
     State.nextCraftAt = 0
@@ -8105,21 +9540,23 @@ function ConfigRuntime.apply(config, syncUI)
         State.autoOpenPacks =
             config.autoOpenPacks == true
     end
-    if config.hidePackAnimation ~= nil then
-        State.hidePackAnimation =
-            config.hidePackAnimation == true
+    if config.skipPackAnimations ~= nil then
+        State.skipPackAnimations =
+            config.skipPackAnimations == true
     end
-    if config.autoSkipPackAnimation ~= nil then
-        State.autoSkipPackAnimation =
-            config.autoSkipPackAnimation == true
-    end
+    if type(config.packResultRarityWhitelist)
+        == "table"
+    then
+        table.clear(
+            State.packResultRarityWhitelist
+        )
 
-    if State.autoSkipPackAnimation then
-        if PackRuntime.hasAutoSkipPass() then
-            State.autoOpenPacks = true
-            State.hidePackAnimation = true
-        else
-            State.autoSkipPackAnimation = false
+        for _, rarity in ipairs(
+            PackLogOptions.names
+        ) do
+            State.packResultRarityWhitelist[rarity] =
+                config.packResultRarityWhitelist[rarity]
+                == true
         end
     end
 
@@ -8169,6 +9606,11 @@ function ConfigRuntime.apply(config, syncUI)
 
     if config.autoClaimIndex ~= nil then
         State.autoClaimIndex = config.autoClaimIndex == true
+    end
+
+    if config.autoTryVulnoneCard ~= nil then
+        State.autoTryVulnoneCard =
+            config.autoTryVulnoneCard == true
     end
 
     if config.autoClaimDailyRewards ~= nil then
@@ -8514,7 +9956,7 @@ function HomeRuntime.getActiveFeatures()
 
     local entries = {
         {State.autoBuyPacks, "Pack Buying"},
-        {State.autoOpenPacks, "Packs"},
+        {State.autoOpenPacks, "Direct Packs"},
         {State.autoRebirth, "Rebirth"},
         {State.autoEquipBestCards, "Main Team"},
         {State.autoCraft, "Trophies"},
@@ -8522,6 +9964,7 @@ function HomeRuntime.getActiveFeatures()
         {State.autoClaimSpinWheel, "Free Spin"},
         {State.autoSpinWheel, "Spin Wheel"},
         {State.autoSpinWishTickets, "Wish"},
+        {State.autoTryVulnoneCard, "Vulnone"},
         {State.autoClaimDailyRewards, "Daily"},
         {State.autoRedeemCodes, "Codes"},
         {State.autoClaimIndex, "Index"},
@@ -8553,6 +9996,9 @@ function HomeRuntime.update(message)
     local pendingCodes = #CodesRuntime.getPendingCodes()
     local activeFeatures = HomeRuntime.getActiveFeatures()
     local rebirthState = RebirthRuntime.getState()
+    local vulnoneState =
+        State.vulnoneStatus
+        or VulnoneRuntime.normalizeStatus(nil)
 
     local activeText = #activeFeatures > 0
         and table.concat(activeFeatures, ", ")
@@ -8569,8 +10015,10 @@ function HomeRuntime.update(message)
             .. tostring(PackBuyRuntime.countSelected())
             .. "/"
             .. tostring(#PackBuyNames),
-        "Pack Auto Open: "
+        "Direct Pack Open: "
             .. (State.autoOpenPacks and "ON" or "OFF"),
+        "Vulnone: "
+            .. VulnoneRuntime.statusLabel(vulnoneState),
         "Rebirth: " .. tostring(rebirthState.current),
         "Main Team Mode: "
             .. equipBestModeLabel(State.equipBestMode),
@@ -8785,50 +10233,116 @@ local function buildGui()
     PacksTab:Space()
 
     State.autoOpenPacksToggle = PacksTab:Toggle({
-        Title = "Auto Open Packs",
-        Desc = "Use the game's native Auto Open behavior.",
-        Icon = "package",
+        Title = "Auto Open Available Packs",
+        Desc = "Open stored packs directly through the OpenPack remote.",
+        Icon = "package-open",
         Value = State.autoOpenPacks,
         Callback = PackRuntime.setAutoOpen,
     })
 
-    State.hidePackAnimationToggle = PacksTab:Toggle({
-        Title = "Hide Pack Animation",
-        Desc = "Minimize pack animations without requiring a gamepass.",
-        Icon = "eye-off",
-        Value = State.hidePackAnimation,
-        Callback = PackRuntime.setHideAnimation,
+    State.skipPackAnimationsToggle = PacksTab:Toggle({
+        Title = "Skip Pack Animations",
+        Desc = "Jump directly to the card result without native Auto Skip settings.",
+        Icon = "fast-forward",
+        Value = State.skipPackAnimations,
+        Callback = PackRuntime.setSkipAnimations,
     })
 
-    State.autoSkipPackAnimationToggle = PacksTab:Toggle({
-        Title = "Auto Skip Pack Animation",
-        Desc = "Use the native instant reveal when the official gamepass is owned.",
-        Icon = "fast-forward",
-        Value = State.autoSkipPackAnimation,
-        Callback = PackRuntime.setAutoSkip,
+    State.packResultRarityDropdown = PacksTab:Dropdown({
+        Title = "Result Log Rarity",
+        Desc = "Only selected card rarities are added to Logs.",
+        Values = PackLogOptions.names,
+        Value = PackRuntime.getSelectedRarities(),
+        Multi = true,
+        AllowNone = true,
+        SearchBarEnabled = true,
+        MenuWidth = 280,
+        Callback = PackRuntime.applyRaritySelection,
     })
 
     PacksTab:Button({
-        Title = "Apply Pack Settings",
-        Desc = "Synchronize the selected settings with the game.",
-        Icon = "refresh-cw",
+        Title = "Select All Result Rarities",
+        Desc = "Log every card rarity obtained from packs.",
+        Icon = "list-checks",
         Callback = function()
-            State.packSettingsNextSyncAt = 0
-            PackRuntime.applyDesiredSettings()
-            PackRuntime.applyNativeAutoSkip()
-            PackRuntime.updateUI(
-                "Pack settings synchronized.",
-                true
+            PackRuntime.setAllRarities(true)
+        end,
+    })
+
+    PacksTab:Button({
+        Title = "Clear Result Rarity Filter",
+        Desc = "Keep opening packs but do not add card results to Logs.",
+        Icon = "list-x",
+        Callback = function()
+            PackRuntime.setAllRarities(false)
+        end,
+    })
+
+    PacksTab:Button({
+        Title = "Open or Process Next Pack",
+        Desc = "Open the next stored pack or process the active animation.",
+        Icon = "package-check",
+        Callback = function()
+            local success, result =
+                PackRuntime.processCurrent(true)
+
+            notify(
+                "Pack Automation",
+                tostring(result),
+                success
+                    and "package-check"
+                    or "triangle-alert"
             )
         end,
     })
 
+    PacksTab:Button({
+        Title = "Clear Pack Result History",
+        Desc = "Clear the recent result list and result counters.",
+        Icon = "trash-2",
+        Callback = PackRuntime.clearHistory,
+    })
+
+    PacksTab:Button({
+        Title = "Restart Pack Automation",
+        Desc = "Reset a stuck animation state and resume available packs.",
+        Icon = "refresh-cw",
+        Callback = function()
+            local success, result =
+                PackRuntime.restartAutomation()
+
+            PackRuntime.updateUI(
+                success
+                    and "Pack automation restarted."
+                    or tostring(result),
+                success
+            )
+
+            notify(
+                "Pack Automation",
+                tostring(result or "Restarted"),
+                success
+                    and "refresh-cw"
+                    or "triangle-alert"
+            )
+        end,
+    })
+
+    State.packResultParagraph = PacksTab:Paragraph({
+        Title = "Recent Pack Results",
+        Desc = "No matching pack results in this session.",
+        Image = "history",
+        ImageSize = 18,
+        Size = "Small",
+    })
+
     PacksTab:Paragraph({
-        Title = "Animation Access",
+        Title = "Direct Processing",
         Desc = table.concat({
-            "Auto Open and Hide Animation use native pack settings.",
-            "Full Auto Skip follows the official gamepass restriction.",
-            "Without the gamepass, Hide Animation remains available.",
+            "Stored packs are opened through OpenPack.",
+            "The local controller chains the next pack without enabling the native server checkbox.",
+            "PackOpeningUI is hidden immediately while completion continues in the background.",
+            "The rarity filter affects result logging only.",
         }, "\n"),
         Image = "info",
         ImageSize = 18,
@@ -8990,6 +10504,64 @@ local function buildGui()
         Icon = "calendar-check",
         IconSize = 16,
     })
+
+    State.vulnoneStatusParagraph = DailyTab:Paragraph({
+        Title = "Vulnone Card",
+        Desc = "Loading...",
+        Image = "crown",
+        ImageSize = 19,
+        Size = "Small",
+    })
+
+    DailyTab:Button({
+        Title = "Refresh Vulnone Status",
+        Desc = "Check the free attempt and card status.",
+        Icon = "refresh-cw",
+        Callback = function()
+            local success, result =
+                VulnoneRuntime.refresh(true)
+
+            VulnoneRuntime.updateUI(
+                success
+                    and "Vulnone status updated."
+                    or "Could not update Vulnone status."
+            )
+
+            notify(
+                "Vulnone",
+                success
+                    and VulnoneRuntime.statusLabel(result)
+                    or tostring(result),
+                success and "crown" or "triangle-alert"
+            )
+        end,
+    })
+
+    DailyTab:Button({
+        Title = "Try Vulnone Now",
+        Desc = "Use the free attempt when it is ready.",
+        Icon = "crown",
+        Callback = function()
+            local success, result =
+                VulnoneRuntime.attempt(true)
+
+            notify(
+                "Vulnone",
+                tostring(result),
+                success and "crown" or "triangle-alert"
+            )
+        end,
+    })
+
+    State.autoTryVulnoneToggle = DailyTab:Toggle({
+        Title = "Auto Try Vulnone Card",
+        Desc = "Use the free daily attempt automatically when ready.",
+        Icon = "sparkles",
+        Value = State.autoTryVulnoneCard,
+        Callback = VulnoneRuntime.setAuto,
+    })
+
+    DailyTab:Space()
 
     State.dailyRewardStatusParagraph = DailyTab:Paragraph({
         Title = "Daily Reward",
@@ -10121,10 +11693,16 @@ local function buildGui()
             or State.configStartupError
             or "Ready."
     )
+    VulnoneRuntime.updateUI(
+        "Checking Vulnone status."
+    )
     PackBuyRuntime.updateUI(
         "Choose packs from the whitelist."
     )
-    PackRuntime.updateUI("Waiting for pack activity.")
+    PackRuntime.updateUI(
+        "Waiting for available packs."
+    )
+    PackRuntime.updateResultUI()
     RebirthRuntime.updateUI("Waiting for requirements.")
     EquipBestRuntime.updateUI("Ready.")
     HomeRuntime.update()
@@ -10164,6 +11742,7 @@ local function buildGui()
 end
 
 local Hub = {
+    Vulnone = {},
     Packs = {},
     Rebirth = {},
     Team = {},
@@ -10183,6 +11762,62 @@ local Hub = {
     Utilities = {},
     Config = {},
 }
+
+function Hub.Vulnone.SetAutoTry(enabled)
+    local value = VulnoneRuntime.setAuto(enabled)
+
+    if State.autoTryVulnoneToggle
+        and type(State.autoTryVulnoneToggle.Set)
+            == "function"
+    then
+        pcall(function()
+            State.autoTryVulnoneToggle:Set(value)
+        end)
+    end
+
+    return value
+end
+
+function Hub.Vulnone.ToggleAutoTry()
+    return Hub.Vulnone.SetAutoTry(
+        not State.autoTryVulnoneCard
+    )
+end
+
+function Hub.Vulnone.TryNow()
+    return VulnoneRuntime.attempt(true)
+end
+
+function Hub.Vulnone.Refresh()
+    local success, result =
+        VulnoneRuntime.refresh(true)
+
+    VulnoneRuntime.updateUI()
+    return success, result
+end
+
+function Hub.Vulnone.GetState()
+    local status =
+        State.vulnoneStatus
+        or VulnoneRuntime.normalizeStatus(nil)
+
+    return {
+        autoTry = State.autoTryVulnoneCard,
+        canAttemptFree = status.canAttemptFree,
+        hasCard = status.hasCard,
+        freeAttemptCooldown =
+            status.freeAttemptCooldown,
+        cardExpiresIn = status.cardExpiresIn,
+        pending = State.vulnonePending,
+        attempts = State.vulnoneAttempts,
+        results = State.vulnoneResults,
+        wins = State.vulnoneWins,
+        losses = State.vulnoneLosses,
+        failures = State.vulnoneFailures,
+        lastResult = State.vulnoneLastResult,
+        status = State.vulnoneLastStatus,
+    }
+end
 
 function Hub.Packs.SetAutoBuy(enabled)
     local value = PackBuyRuntime.setAuto(enabled)
@@ -10251,56 +11886,113 @@ function Hub.Packs.ToggleAutoOpen()
     )
 end
 
-function Hub.Packs.SetHideAnimation(enabled)
-    local value, errorMessage =
-        PackRuntime.setHideAnimation(enabled)
+function Hub.Packs.SetSkipAnimations(enabled)
+    local value =
+        PackRuntime.setSkipAnimations(enabled)
 
     PackRuntime.syncToggle(
-        State.hidePackAnimationToggle,
-        State.hidePackAnimation
+        State.skipPackAnimationsToggle,
+        value
     )
 
-    return value, errorMessage
+    return value
 end
 
-function Hub.Packs.ToggleHideAnimation()
-    return Hub.Packs.SetHideAnimation(
-        not State.hidePackAnimation
-    )
-end
-
-function Hub.Packs.SetAutoSkip(enabled)
-    local value, errorMessage =
-        PackRuntime.setAutoSkip(enabled)
-
-    PackRuntime.syncToggle(
-        State.autoSkipPackAnimationToggle,
-        State.autoSkipPackAnimation
-    )
-
-    return value, errorMessage
-end
-
-function Hub.Packs.ToggleAutoSkip()
-    return Hub.Packs.SetAutoSkip(
-        not State.autoSkipPackAnimation
+function Hub.Packs.ToggleSkipAnimations()
+    return Hub.Packs.SetSkipAnimations(
+        not State.skipPackAnimations
     )
 end
 
-function Hub.Packs.ApplySettings()
-    State.packSettingsNextSyncAt = 0
-    PackRuntime.applyDesiredSettings()
-    PackRuntime.applyNativeAutoSkip()
+function Hub.Packs.SetResultRarityWhitelist(values)
+    PackRuntime.applyRaritySelection(values)
+    PackRuntime.syncRarityDropdown()
+
+    return Hub.Packs.GetResultRarityWhitelist()
+end
+
+function Hub.Packs.GetResultRarityWhitelist()
+    return PackRuntime.getSelectedRarities()
+end
+
+function Hub.Packs.SelectAllResultRarities()
+    PackRuntime.setAllRarities(true)
+    return PackRuntime.getSelectedRarities()
+end
+
+function Hub.Packs.ClearResultRarityWhitelist()
+    PackRuntime.setAllRarities(false)
+    return {}
+end
+
+function Hub.Packs.ClearResultHistory()
+    return PackRuntime.clearHistory()
+end
+
+function Hub.Packs.RestartAutomation()
+    local success, result =
+        PackRuntime.restartAutomation()
+
     PackRuntime.updateUI(
-        "Pack settings synchronized.",
+        success
+            and "Pack automation restarted."
+            or tostring(result),
         true
     )
 
-    return true
+    return success, result
+end
+
+function Hub.Packs.ProcessCurrent()
+    return PackRuntime.processCurrent(true)
+end
+
+function Hub.Packs.SetHideAnimation(enabled)
+    return Hub.Packs.SetSkipAnimations(enabled)
+end
+
+function Hub.Packs.ToggleHideAnimation()
+    return Hub.Packs.ToggleSkipAnimations()
+end
+
+function Hub.Packs.SetAutoSkip(enabled)
+    return Hub.Packs.SetSkipAnimations(enabled)
+end
+
+function Hub.Packs.ToggleAutoSkip()
+    return Hub.Packs.ToggleSkipAnimations()
+end
+
+function Hub.Packs.ApplySettings()
+    local success, result =
+        PackRuntime.processCurrent(false)
+
+    PackRuntime.updateUI(
+        success
+            and "Pack automation synchronized."
+            or tostring(result)
+    )
+
+    return success, result
 end
 
 function Hub.Packs.GetState()
-    local server = PackRuntime.getServerSettings()
+    local history = {}
+
+    for index, entry in ipairs(
+        State.packResultHistory
+    ) do
+        history[index] = {
+            pack = entry.pack,
+            cardId = entry.cardId,
+            card = entry.card,
+            rarity = entry.rarity,
+            mutations = table.clone(
+                entry.mutations or {}
+            ),
+            timestamp = entry.timestamp,
+        }
+    end
 
     return {
         autoBuy = State.autoBuyPacks,
@@ -10313,16 +12005,33 @@ function Hub.Packs.GetState()
         buyFailures = State.packBuyFailures,
         buyStatus = State.packBuyLastStatus,
         autoOpen = State.autoOpenPacks,
-        hideAnimation = State.hidePackAnimation,
-        autoSkip = State.autoSkipPackAnimation,
-        hasAutoSkipPass = PackRuntime.hasAutoSkipPass(),
+        skipAnimations = State.skipPackAnimations,
+        hideAnimation = State.skipPackAnimations,
+        autoSkip = State.skipPackAnimations,
         animating = PackRuntime.isAnimating(),
-        minimized = PackRuntime.isMinimized(),
-        serverAutoOpen = server.autoOpen,
-        serverHideAnimation = server.hideAnimation,
-        serverAutoSkip = server.autoSkip,
-        requests = State.packSettingsRequests,
-        failures = State.packSettingsFailures,
+        availablePacks =
+            PackRuntime.getTotalPackCount(),
+        nextPack =
+            PackRuntime.selectNextPack(),
+        pending = State.packOpenPending,
+        openRequests = State.packOpenRequests,
+        resultRarityWhitelist =
+            PackRuntime.getSelectedRarities(),
+        detected = State.packOpenDetected,
+        skipped = State.packOpenSkipped,
+        autoAdvanced = State.packOpenAdvanced,
+        fallbackClicks = State.packFallbackClicks,
+        controllerResets = State.packControllerResets,
+        automationGeneration =
+            State.packAutomationGeneration,
+        loggedResults = State.packResultsLogged,
+        filteredResults =
+            State.packResultsFiltered,
+        failures = State.packOpenFailures,
+        lastPack = State.packLastPack,
+        lastCard = State.packLastCard,
+        lastRarity = State.packLastRarity,
+        history = history,
         status = State.packLastStatus,
     }
 end
@@ -10461,7 +12170,7 @@ end
 function Hub.Trophies.SetEnabled(trophyName, enabled)
     trophyName = tostring(trophyName)
 
-    if not TrophyConfig.Trophies[trophyName] then
+    if not Modules.TrophyConfig.Trophies[trophyName] then
         return false, "Unknown trophy"
     end
 
@@ -11552,6 +13261,7 @@ end
 function Hub.GetState()
     return {
         running = State.running,
+        vulnone = Hub.Vulnone.GetState(),
         packs = Hub.Packs.GetState(),
         rebirth = Hub.Rebirth.GetState(),
         team = Hub.Team.GetState(),
@@ -11601,16 +13311,15 @@ function Hub.Stop()
     end
 
     State.running = false
+    State.autoTryVulnoneCard = false
+    VulnoneRuntime.clearPending()
     State.autoBuyPacks = false
     PackBuyRuntime.disableNativeAll()
     PackBuyRuntime.clearPending()
     State.autoOpenPacks = false
-    State.hidePackAnimation = false
-    State.autoSkipPackAnimation = false
-    State.packSettingsResetPending = false
-    pcall(function()
-        PackAnimationController.resetEverything(true)
-    end)
+    State.skipPackAnimations = false
+    State.packOpenPending = nil
+    PackRuntime.uninstallHook()
     State.autoRebirth = false
     RebirthRuntime.clearPending()
     State.autoEquipBestCards = false
@@ -11655,6 +13364,27 @@ function Hub.Stop()
         State.tournamentTickConnection = nil
     end
 
+    if State.packOpenConnection then
+        pcall(function()
+            State.packOpenConnection:Disconnect()
+        end)
+        State.packOpenConnection = nil
+    end
+
+    if State.packUiChildConnection then
+        pcall(function()
+            State.packUiChildConnection:Disconnect()
+        end)
+        State.packUiChildConnection = nil
+    end
+
+    if State.vulnoneResultConnection then
+        pcall(function()
+            State.vulnoneResultConnection:Disconnect()
+        end)
+        State.vulnoneResultConnection = nil
+    end
+
     if State.dailyRewardConnection then
         pcall(function()
             State.dailyRewardConnection:Disconnect()
@@ -11680,6 +13410,14 @@ function Hub.Stop()
     end
 end
 
+Hub.SetAutoTryVulnoneCard =
+    Hub.Vulnone.SetAutoTry
+Hub.ToggleAutoTryVulnoneCard =
+    Hub.Vulnone.ToggleAutoTry
+Hub.TryVulnoneCardNow = Hub.Vulnone.TryNow
+Hub.RefreshVulnoneStatus = Hub.Vulnone.Refresh
+Hub.GetVulnoneState = Hub.Vulnone.GetState
+
 Hub.SetAutoBuyPacks = Hub.Packs.SetAutoBuy
 Hub.ToggleAutoBuyPacks = Hub.Packs.ToggleAutoBuy
 Hub.SetPackBuyWhitelist = Hub.Packs.SetBuyWhitelist
@@ -11690,10 +13428,32 @@ Hub.ProcessNextPackBuy = Hub.Packs.ProcessNextBuy
 
 Hub.SetAutoOpenPacks = Hub.Packs.SetAutoOpen
 Hub.ToggleAutoOpenPacks = Hub.Packs.ToggleAutoOpen
-Hub.SetHidePackAnimation = Hub.Packs.SetHideAnimation
-Hub.ToggleHidePackAnimation = Hub.Packs.ToggleHideAnimation
-Hub.SetAutoSkipPackAnimation = Hub.Packs.SetAutoSkip
-Hub.ToggleAutoSkipPackAnimation = Hub.Packs.ToggleAutoSkip
+Hub.SetSkipPackAnimations =
+    Hub.Packs.SetSkipAnimations
+Hub.ToggleSkipPackAnimations =
+    Hub.Packs.ToggleSkipAnimations
+Hub.SetPackResultRarityWhitelist =
+    Hub.Packs.SetResultRarityWhitelist
+Hub.GetPackResultRarityWhitelist =
+    Hub.Packs.GetResultRarityWhitelist
+Hub.SelectAllPackResultRarities =
+    Hub.Packs.SelectAllResultRarities
+Hub.ClearPackResultRarityWhitelist =
+    Hub.Packs.ClearResultRarityWhitelist
+Hub.ClearPackResultHistory =
+    Hub.Packs.ClearResultHistory
+Hub.RestartPackAutomation =
+    Hub.Packs.RestartAutomation
+Hub.ProcessCurrentPack =
+    Hub.Packs.ProcessCurrent
+Hub.SetHidePackAnimation =
+    Hub.Packs.SetHideAnimation
+Hub.ToggleHidePackAnimation =
+    Hub.Packs.ToggleHideAnimation
+Hub.SetAutoSkipPackAnimation =
+    Hub.Packs.SetAutoSkip
+Hub.ToggleAutoSkipPackAnimation =
+    Hub.Packs.ToggleAutoSkip
 Hub.ApplyPackSettings = Hub.Packs.ApplySettings
 Hub.GetPacksState = Hub.Packs.GetState
 
@@ -11828,7 +13588,7 @@ Environment.SpinASoccerCardHub = Hub
 
 do
     local success, connectionOrError = pcall(function()
-        return SpinWheelRemote.OnClientEvent:Connect(onSpinWheelRemote)
+        return Remotes.SpinWheelRemote.OnClientEvent:Connect(onSpinWheelRemote)
     end)
 
     if success then
@@ -11841,7 +13601,7 @@ end
 
 do
     local success, connectionOrError = pcall(function()
-        return TournamentServer.OnClientEvent:Connect(onTournamentServerRemote)
+        return Remotes.TournamentServer.OnClientEvent:Connect(onTournamentServerRemote)
     end)
 
     if success then
@@ -11854,7 +13614,7 @@ end
 
 do
     local success, connectionOrError = pcall(function()
-        return TournamentTick.OnClientEvent:Connect(
+        return Remotes.TournamentTick.OnClientEvent:Connect(
             TournamentRuntime.handleTick
         )
     end)
@@ -11870,7 +13630,40 @@ end
 
 do
     local success, connectionOrError = pcall(function()
-        return DailyReward.OnClientEvent:Connect(
+        return Remotes.OpenPack.OnClientEvent:Connect(
+            PackRuntime.handleOpenPackEvent
+        )
+    end)
+
+    if success then
+        State.packOpenConnection = connectionOrError
+    else
+        State.packOpenFailures += 1
+        State.packLastStatus =
+            "Could not start the OpenPack result listener."
+    end
+end
+
+do
+    local success, connectionOrError = pcall(function()
+        return Remotes.ThroneResult.OnClientEvent:Connect(
+            VulnoneRuntime.handleResult
+        )
+    end)
+
+    if success then
+        State.vulnoneResultConnection =
+            connectionOrError
+    else
+        State.vulnoneFailures += 1
+        State.vulnoneLastStatus =
+            "Could not start the Vulnone result listener."
+    end
+end
+
+do
+    local success, connectionOrError = pcall(function()
+        return Remotes.DailyReward.OnClientEvent:Connect(
             DailyRewardRuntime.handleMessage
         )
     end)
@@ -11887,11 +13680,32 @@ end
 do
     local success, connectionOrError = pcall(function()
         return LocalPlayer.Idled:Connect(function()
+            if not State.running or not State.antiAfk then
+                return
+            end
+
             State.nextAntiAfkPulseAt = 0
+            State.antiAfkIdleRetryToken += 1
+            local token = State.antiAfkIdleRetryToken
 
             task.spawn(function()
-                AntiAfkRuntime.pulse("Idled", false)
+                AntiAfkRuntime.pulse("Idled", true)
             end)
+
+            task.delay(
+                tonumber(State.antiAfkIdleRetryDelay) or 3,
+                function()
+                    if State.running
+                        and State.antiAfk
+                        and token == State.antiAfkIdleRetryToken
+                    then
+                        AntiAfkRuntime.pulse(
+                            "Idled Retry",
+                            true
+                        )
+                    end
+                end
+            )
         end)
     end)
 
@@ -11932,7 +13746,7 @@ task.spawn(function()
     while State.running do
         pcall(PackRuntime.tick)
 
-        task.wait(State.packSettingsPollInterval)
+        task.wait(State.packOpenPollInterval)
     end
 end)
 
@@ -11999,6 +13813,14 @@ task.spawn(function()
         end
 
         task.wait(State.wishPollInterval)
+    end
+end)
+
+task.spawn(function()
+    while State.running do
+        pcall(VulnoneRuntime.tick)
+
+        task.wait(State.vulnonePollInterval)
     end
 end)
 
