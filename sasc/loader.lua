@@ -7,6 +7,8 @@
       - Trophy crafting
       - Summer activities, quests, and shop
       - Spin Wheel and Wish automation
+      - Daily rewards
+      - Redeem codes from a trusted list
       - Index rewards
       - Gem, Summer, and Tournament shops
       - Anti AFK
@@ -149,6 +151,22 @@ local SummerShopBuy = Networker.get_remote("SummerShopBuy")
 local TournamentServer = Networker.get_remote("TournamentServer")
 local PerformWish = Networker.get_remotefunction("PerformWish")
 local ClaimAllIndexGems = Networker.get_remote("ClaimAllIndexGems")
+local DailyReward = Networker.get_remote("DailyReward")
+local RedeemCode = Networker.get_remote("RedeemCode")
+
+-- ============================================================================
+-- REDEEM CODES
+-- Tambahkan kode resmi baru di bawah ini menggunakan format "WORD-WORD".
+-- Jangan gunakan generator acak atau brute force.
+-- ============================================================================
+local REDEEM_CODES = {
+    "OWL-HAPPY",
+
+    -- Tambahkan kode baru di bawah baris ini:
+    -- "NEW-CODE",
+}
+
+local REDEEM_CODE_GROUP_ID = 520125566
 
 local TROPHY_ORDER = {
     "Golden Boot",
@@ -592,6 +610,40 @@ local State = {
     indexStatusParagraph = nil,
     autoClaimIndexToggle = nil,
 
+    autoClaimDailyRewards = false,
+    dailyRewardPollInterval = 1,
+    dailyRewardStateRefreshInterval = 15,
+    dailyRewardClaimCooldown = 3,
+    dailyRewardPendingTimeout = 10,
+    dailyRewardNextStateAt = 0,
+    dailyRewardNextClaimAt = 0,
+    dailyRewardPending = false,
+    dailyRewardPendingAt = 0,
+    dailyRewardState = nil,
+    dailyRewardStateRequests = 0,
+    dailyRewardClaimRequests = 0,
+    dailyRewardClaims = 0,
+    dailyRewardFailures = 0,
+    dailyRewardLastClaimedDay = nil,
+    dailyRewardLastStatus = "Checking reward status.",
+    dailyRewardStatusParagraph = nil,
+    autoClaimDailyRewardsToggle = nil,
+    dailyRewardConnection = nil,
+
+    autoRedeemCodes = false,
+    codeRedeemInterval = 1.1,
+    codeNextRedeemAt = 0,
+    codeGroupCheckAt = 0,
+    codeGroupMember = nil,
+    codeRequests = 0,
+    codeSkipped = 0,
+    codeFailures = 0,
+    codeLastCode = "-",
+    codeLastStatus = "Ready.",
+    codeAttempted = {},
+    codeStatusParagraph = nil,
+    autoRedeemCodesToggle = nil,
+
     antiAfk = false,
     antiAfkInterval = 45,
     antiAfkBusy = false,
@@ -642,6 +694,8 @@ local LOG_FILTER_OPTIONS = {
     "Summer",
     "Spin Wheel",
     "Wish",
+    "Daily",
+    "Codes",
     "Index",
     "Gem Shop",
     "Tournament",
@@ -681,6 +735,14 @@ local LOG_ROUTINE_PATTERNS = {
     "choose items from",
     "choose rewards from",
     "choose trophies from",
+    "daily reward is not ready",
+    "checking daily rewards",
+    "checking reward status",
+    "daily rewards updated",
+    "player data is loading",
+    "all saved codes have been tried",
+    "no pending codes",
+    "required group has not been joined",
     "ready.",
 }
 
@@ -4039,8 +4101,690 @@ function ServerRuntime.getState()
 end
 
 
+local CodesRuntime = {}
+
+function CodesRuntime.normalize(code)
+    return string.upper(
+        tostring(code or "")
+            :gsub("^%s+", "")
+            :gsub("%s+$", "")
+    )
+end
+
+function CodesRuntime.getCodes()
+    local result = {}
+    local seen = {}
+
+    for _, rawCode in ipairs(REDEEM_CODES) do
+        local code = CodesRuntime.normalize(rawCode)
+
+        if code ~= ""
+            and #code >= 3
+            and string.match(code, "^[A-Z0-9]+%-[A-Z0-9]+$")
+            and not seen[code]
+        then
+            seen[code] = true
+            result[#result + 1] = code
+        end
+    end
+
+    return result
+end
+
+function CodesRuntime.getPendingCodes()
+    local pending = {}
+
+    for _, code in ipairs(CodesRuntime.getCodes()) do
+        if State.codeAttempted[code] ~= true then
+            pending[#pending + 1] = code
+        end
+    end
+
+    return pending
+end
+
+function CodesRuntime.checkGroup(force)
+    local now = os.clock()
+
+    if force ~= true
+        and State.codeGroupMember ~= nil
+        and now < State.codeGroupCheckAt
+    then
+        return State.codeGroupMember
+    end
+
+    local success, result = pcall(function()
+        return LocalPlayer:IsInGroupAsync(REDEEM_CODE_GROUP_ID)
+    end)
+
+    State.codeGroupCheckAt = now + 60
+
+    if not success then
+        State.codeGroupMember = nil
+        State.codeFailures += 1
+        State.codeLastStatus = "Could not check group membership."
+        LogRuntime.append("Codes", State.codeLastStatus, "error")
+        return false, tostring(result)
+    end
+
+    State.codeGroupMember = result == true
+
+    if not State.codeGroupMember then
+        State.codeLastStatus =
+            "Join the required group before redeeming codes."
+    end
+
+    return State.codeGroupMember
+end
+
+function CodesRuntime.updateUI(message, shouldLog)
+    if message ~= nil then
+        State.codeLastStatus = tostring(message)
+
+        if shouldLog == true then
+            LogRuntime.append("Codes", State.codeLastStatus)
+        end
+    end
+
+    local codes = CodesRuntime.getCodes()
+    local pending = CodesRuntime.getPendingCodes()
+    local groupText
+
+    if State.codeGroupMember == true then
+        groupText = "Joined"
+    elseif State.codeGroupMember == false then
+        groupText = "Not Joined"
+    else
+        groupText = "Not Checked"
+    end
+
+    local description = table.concat({
+        "Auto Redeem: " .. (State.autoRedeemCodes and "ON" or "OFF"),
+        "Saved Codes: " .. tostring(#codes),
+        "Pending: " .. tostring(#pending),
+        "Attempted: " .. tostring(#codes - #pending),
+        "Group: " .. groupText,
+        "Requests: " .. tostring(State.codeRequests),
+        "Skipped: " .. tostring(State.codeSkipped),
+        "Failures: " .. tostring(State.codeFailures),
+        "Last Code: " .. tostring(State.codeLastCode),
+        "Status: " .. tostring(State.codeLastStatus),
+    }, "\n")
+
+    if State.codeStatusParagraph
+        and type(State.codeStatusParagraph.SetDesc) == "function"
+    then
+        pcall(function()
+            State.codeStatusParagraph:SetDesc(description)
+        end)
+    end
+end
+
+function CodesRuntime.setAutoRedeem(enabled)
+    State.autoRedeemCodes = enabled == true
+    State.codeNextRedeemAt = 0
+
+    CodesRuntime.updateUI(
+        State.autoRedeemCodes
+            and "Auto Redeem enabled."
+            or "Auto Redeem disabled.",
+        true
+    )
+
+    return State.autoRedeemCodes
+end
+
+function CodesRuntime.redeem(code, force)
+    local now = os.clock()
+    code = CodesRuntime.normalize(code)
+
+    if code == ""
+        or not string.match(code, "^[A-Z0-9]+%-[A-Z0-9]+$")
+    then
+        return false, "Invalid code format"
+    end
+
+    if force ~= true and now < State.codeNextRedeemAt then
+        return false, "Redeem is on cooldown"
+    end
+
+    if force ~= true and State.codeAttempted[code] == true then
+        State.codeSkipped += 1
+        return false, "Code was already attempted"
+    end
+
+    local isMember, groupError = CodesRuntime.checkGroup(false)
+    if not isMember then
+        CodesRuntime.updateUI(
+            groupError or "Join the required group before redeeming codes."
+        )
+        return false, groupError or "Required group has not been joined"
+    end
+
+    State.codeNextRedeemAt = now + State.codeRedeemInterval
+    State.codeLastCode = code
+
+    local success, errorMessage = pcall(function()
+        -- CodesController sends lowercase text to the server.
+        RedeemCode:FireServer(string.lower(code))
+    end)
+
+    if not success then
+        State.codeFailures += 1
+        State.codeNextRedeemAt = now + 2
+
+        CodesRuntime.updateUI(
+            "Could not submit code " .. code .. ".",
+            true
+        )
+
+        return false, tostring(errorMessage)
+    end
+
+    -- The provided client controller does not receive a redemption result.
+    -- Store this as attempted/submitted, not as a confirmed successful reward.
+    State.codeAttempted[code] = true
+    State.codeRequests += 1
+
+    CodesRuntime.updateUI(
+        "Submitted code: " .. code,
+        true
+    )
+
+    return true, code
+end
+
+function CodesRuntime.redeemNext(force)
+    local pending = CodesRuntime.getPendingCodes()
+
+    if #pending <= 0 then
+        CodesRuntime.updateUI("All saved codes have been tried.")
+        return false, "No pending codes"
+    end
+
+    return CodesRuntime.redeem(pending[1], force == true)
+end
+
+function CodesRuntime.redeemAll()
+    local pending = CodesRuntime.getPendingCodes()
+
+    if #pending <= 0 then
+        CodesRuntime.updateUI("All saved codes have been tried.")
+        return false, "No pending codes"
+    end
+
+    local submitted = 0
+    local failed = 0
+    local firstError
+
+    for _, code in ipairs(pending) do
+        if not State.running then
+            break
+        end
+
+        local success, result = CodesRuntime.redeem(code, false)
+
+        if success then
+            submitted += 1
+        elseif result ~= "Redeem is on cooldown" then
+            failed += 1
+            firstError = firstError or result
+
+            if result == "Required group has not been joined" then
+                break
+            end
+        end
+
+        task.wait(State.codeRedeemInterval)
+    end
+
+    CodesRuntime.updateUI(
+        string.format(
+            "Submitted %d code%s%s",
+            submitted,
+            submitted == 1 and "" or "s",
+            failed > 0 and (" • " .. tostring(failed) .. " failed") or ""
+        ),
+        submitted > 0 or failed > 0
+    )
+
+    return submitted > 0, submitted, failed, firstError
+end
+
+function CodesRuntime.clearHistory()
+    table.clear(State.codeAttempted)
+    State.codeNextRedeemAt = 0
+    State.codeSkipped = 0
+
+    CodesRuntime.updateUI(
+        "Code history cleared.",
+        true
+    )
+end
+
+
+local DailyRewardRuntime = {}
+
+function DailyRewardRuntime.getPlayerState()
+    local playerData = getPlayerData()
+    local dailyData = playerData and playerData.dailyRewards
+
+    return {
+        ready = playerData ~= nil,
+        rebirth = tonumber(playerData and playerData.rebirth) or 0,
+        completed = type(dailyData) == "table"
+            and dailyData.completed == true,
+    }
+end
+
+function DailyRewardRuntime.getCachedState()
+    return type(State.dailyRewardState) == "table"
+        and State.dailyRewardState
+        or nil
+end
+
+function DailyRewardRuntime.formatRemaining(nextClaimTime)
+    local timestamp = tonumber(nextClaimTime) or 0
+    local remaining = math.max(0, timestamp - os.time())
+
+    if remaining <= 0 then
+        return "Ready"
+    end
+
+    local hours = math.floor(remaining / 3600)
+    local minutes = math.floor((remaining % 3600) / 60)
+    local seconds = remaining % 60
+
+    if hours > 0 then
+        return string.format("%dh %dm %ds", hours, minutes, seconds)
+    elseif minutes > 0 then
+        return string.format("%dm %ds", minutes, seconds)
+    end
+
+    return string.format("%ds", seconds)
+end
+
+function DailyRewardRuntime.getStatusLabel()
+    local playerState = DailyRewardRuntime.getPlayerState()
+    local rewardState = DailyRewardRuntime.getCachedState()
+
+    if playerState.completed
+        or (rewardState and rewardState.completed == true)
+    then
+        return "Completed"
+    end
+
+    if not playerState.ready then
+        return "Loading"
+    end
+
+    if playerState.rebirth < 1 then
+        return "Locked"
+    end
+
+    if not rewardState then
+        return "Checking"
+    end
+
+    if rewardState.canClaim == true then
+        return "Ready"
+    end
+
+    return "Waiting"
+end
+
+function DailyRewardRuntime.updateUI(message, shouldLog)
+    if message ~= nil then
+        State.dailyRewardLastStatus = tostring(message)
+
+        if shouldLog == true then
+            LogRuntime.append(
+                "Daily",
+                State.dailyRewardLastStatus
+            )
+        end
+    end
+
+    local playerState = DailyRewardRuntime.getPlayerState()
+    local rewardState = DailyRewardRuntime.getCachedState()
+    local currentDay = tonumber(rewardState and rewardState.currentDay) or 0
+    local phase = tonumber(rewardState and rewardState.phase) or 0
+    local nextClaimTime = tonumber(
+        rewardState and rewardState.nextClaimTime
+    ) or 0
+
+    local description = table.concat({
+        "Auto Claim: "
+            .. (State.autoClaimDailyRewards and "ON" or "OFF"),
+        "Status: " .. DailyRewardRuntime.getStatusLabel(),
+        "Phase: " .. (phase > 0 and tostring(phase) or "-"),
+        "Current Day: "
+            .. (currentDay > 0 and tostring(currentDay) or "-"),
+        "Next Reward: "
+            .. (
+                nextClaimTime > 0
+                    and DailyRewardRuntime.formatRemaining(nextClaimTime)
+                    or "-"
+            ),
+        "Pending: " .. (State.dailyRewardPending and "YES" or "NO"),
+        "Claims: " .. tostring(State.dailyRewardClaims),
+        "Failures: " .. tostring(State.dailyRewardFailures),
+        "Last Status: " .. tostring(State.dailyRewardLastStatus),
+    }, "\n")
+
+    if State.dailyRewardStatusParagraph
+        and type(State.dailyRewardStatusParagraph.SetDesc) == "function"
+    then
+        pcall(function()
+            State.dailyRewardStatusParagraph:SetDesc(description)
+        end)
+    end
+end
+
+function DailyRewardRuntime.setAutoClaim(enabled)
+    State.autoClaimDailyRewards = enabled == true
+    State.dailyRewardNextStateAt = 0
+    State.dailyRewardNextClaimAt = 0
+
+    DailyRewardRuntime.updateUI(
+        State.autoClaimDailyRewards
+            and "Auto Claim Daily Rewards enabled."
+            or "Auto Claim Daily Rewards disabled.",
+        true
+    )
+
+    return State.autoClaimDailyRewards
+end
+
+function DailyRewardRuntime.requestState(force)
+    local now = os.clock()
+    local playerState = DailyRewardRuntime.getPlayerState()
+
+    if not playerState.ready then
+        State.dailyRewardNextStateAt = now + 2
+        DailyRewardRuntime.updateUI("Player data is loading.")
+        return false, "Player data is loading"
+    end
+
+    if playerState.completed then
+        State.dailyRewardState = {
+            completed = true,
+        }
+        State.dailyRewardNextStateAt =
+            now + State.dailyRewardStateRefreshInterval
+        DailyRewardRuntime.updateUI("All Daily Rewards completed.")
+        return false, "Daily Rewards completed"
+    end
+
+    if playerState.rebirth < 1 then
+        State.dailyRewardNextStateAt = now + 10
+        DailyRewardRuntime.updateUI(
+            "Daily Rewards unlock after Rebirth 1."
+        )
+        return false, "Daily Rewards are locked"
+    end
+
+    if force ~= true and now < State.dailyRewardNextStateAt then
+        return false, "Status refresh is on cooldown"
+    end
+
+    State.dailyRewardNextStateAt =
+        now + State.dailyRewardStateRefreshInterval
+
+    local success, errorMessage = pcall(function()
+        DailyReward:FireServer("getState")
+    end)
+
+    if not success then
+        State.dailyRewardFailures += 1
+        State.dailyRewardNextStateAt = now + 3
+        DailyRewardRuntime.updateUI(
+            "Could not refresh Daily Rewards.",
+            true
+        )
+        return false, tostring(errorMessage)
+    end
+
+    State.dailyRewardStateRequests += 1
+    DailyRewardRuntime.updateUI("Checking Daily Rewards.")
+
+    return true
+end
+
+function DailyRewardRuntime.clearPending()
+    State.dailyRewardPending = false
+    State.dailyRewardPendingAt = 0
+end
+
+function DailyRewardRuntime.claim(force)
+    local now = os.clock()
+    local playerState = DailyRewardRuntime.getPlayerState()
+    local rewardState = DailyRewardRuntime.getCachedState()
+
+    if State.dailyRewardPending then
+        return false, "A claim is already being processed"
+    end
+
+    if force ~= true and now < State.dailyRewardNextClaimAt then
+        return false, "Claim is on cooldown"
+    end
+
+    if not playerState.ready then
+        State.dailyRewardNextStateAt = 0
+        DailyRewardRuntime.requestState(true)
+        return false, "Player data is loading"
+    end
+
+    if playerState.completed
+        or (rewardState and rewardState.completed == true)
+    then
+        DailyRewardRuntime.updateUI("All Daily Rewards completed.")
+        return false, "Daily Rewards completed"
+    end
+
+    if playerState.rebirth < 1 then
+        DailyRewardRuntime.updateUI(
+            "Daily Rewards unlock after Rebirth 1."
+        )
+        return false, "Daily Rewards are locked"
+    end
+
+    if not rewardState then
+        State.dailyRewardNextStateAt = 0
+        DailyRewardRuntime.requestState(true)
+        return false, "Checking reward status"
+    end
+
+    if rewardState.canClaim ~= true then
+        local nextClaimTime = tonumber(rewardState.nextClaimTime) or 0
+
+        if nextClaimTime > 0 and nextClaimTime <= os.time() then
+            State.dailyRewardNextStateAt = 0
+            DailyRewardRuntime.requestState(true)
+        end
+
+        DailyRewardRuntime.updateUI("Daily Reward is not ready yet.")
+        return false, "Daily Reward is not ready"
+    end
+
+    State.dailyRewardPending = true
+    State.dailyRewardPendingAt = now
+    State.dailyRewardNextClaimAt =
+        now + State.dailyRewardClaimCooldown
+    State.dailyRewardClaimRequests += 1
+
+    local currentDay = tonumber(rewardState.currentDay) or 0
+
+    local success, errorMessage = pcall(function()
+        DailyReward:FireServer("claim")
+    end)
+
+    if not success then
+        DailyRewardRuntime.clearPending()
+        State.dailyRewardFailures += 1
+        State.dailyRewardNextClaimAt = now + 2
+
+        DailyRewardRuntime.updateUI(
+            "Daily Reward claim failed.",
+            true
+        )
+        return false, tostring(errorMessage)
+    end
+
+    DailyRewardRuntime.updateUI(
+        currentDay > 0
+            and ("Claiming Day " .. tostring(currentDay) .. " reward.")
+            or "Claiming Daily Reward."
+    )
+
+    return true, currentDay
+end
+
+function DailyRewardRuntime.handleMessage(payload)
+    if type(payload) ~= "table" then
+        return
+    end
+
+    local action = tostring(payload.action or "")
+    local incomingState = payload.state
+
+    if type(incomingState) == "table" then
+        State.dailyRewardState = incomingState
+
+        local nextClaimTime =
+            tonumber(incomingState.nextClaimTime) or 0
+        local now = os.clock()
+
+        if nextClaimTime > os.time() then
+            State.dailyRewardNextStateAt = math.min(
+                now + State.dailyRewardStateRefreshInterval,
+                now + math.max(1, nextClaimTime - os.time())
+            )
+        else
+            State.dailyRewardNextStateAt =
+                now + State.dailyRewardStateRefreshInterval
+        end
+    end
+
+    local claimedDay = tonumber(payload.claimedDay)
+
+    if claimedDay then
+        local shouldCount =
+            State.dailyRewardPending
+            or State.dailyRewardLastClaimedDay ~= claimedDay
+
+        DailyRewardRuntime.clearPending()
+
+        if shouldCount then
+            State.dailyRewardClaims += 1
+            State.dailyRewardLastClaimedDay = claimedDay
+
+            DailyRewardRuntime.updateUI(
+                "Day " .. tostring(claimedDay)
+                    .. " reward claimed.",
+                true
+            )
+        end
+
+        task.delay(0.5, function()
+            if State.running then
+                State.dailyRewardNextStateAt = 0
+                DailyRewardRuntime.requestState(true)
+            end
+        end)
+
+        return
+    end
+
+    if State.dailyRewardPending
+        and type(incomingState) == "table"
+        and incomingState.canClaim ~= true
+    then
+        DailyRewardRuntime.clearPending()
+    end
+
+    if type(incomingState) == "table" then
+        if incomingState.completed == true then
+            DailyRewardRuntime.updateUI(
+                "All Daily Rewards completed.",
+                true
+            )
+        elseif incomingState.canClaim == true then
+            local day = tonumber(incomingState.currentDay) or 0
+
+            DailyRewardRuntime.updateUI(
+                day > 0
+                    and ("Day " .. tostring(day)
+                        .. " reward is ready.")
+                    or "Daily Reward is ready."
+            )
+
+            if State.autoClaimDailyRewards then
+                task.defer(function()
+                    if State.running and State.autoClaimDailyRewards then
+                        DailyRewardRuntime.claim(false)
+                    end
+                end)
+            end
+        else
+            DailyRewardRuntime.updateUI(
+                action == "init"
+                    and "Daily Rewards updated."
+                    or nil
+            )
+        end
+    end
+end
+
+function DailyRewardRuntime.tick()
+    local now = os.clock()
+    local playerState = DailyRewardRuntime.getPlayerState()
+    local rewardState = DailyRewardRuntime.getCachedState()
+
+    if State.dailyRewardPending
+        and now - State.dailyRewardPendingAt
+            >= State.dailyRewardPendingTimeout
+    then
+        DailyRewardRuntime.clearPending()
+        State.dailyRewardFailures += 1
+        State.dailyRewardNextStateAt = 0
+
+        DailyRewardRuntime.updateUI(
+            "Claim confirmation timed out.",
+            true
+        )
+    end
+
+    if playerState.completed then
+        if not rewardState or rewardState.completed ~= true then
+            State.dailyRewardState = {
+                completed = true,
+            }
+        end
+
+        DailyRewardRuntime.updateUI()
+        return
+    end
+
+    if now >= State.dailyRewardNextStateAt then
+        DailyRewardRuntime.requestState(false)
+    end
+
+    rewardState = DailyRewardRuntime.getCachedState()
+
+    if State.autoClaimDailyRewards
+        and rewardState
+        and rewardState.canClaim == true
+    then
+        DailyRewardRuntime.claim(false)
+    else
+        DailyRewardRuntime.updateUI()
+    end
+end
+
+
 local ConfigRuntime = {
-    version = 6,
+    version = 8,
     root = "xSansHUB",
     folder = "xSansHUB/SpinASoccerCardHub",
     file = "xSansHUB/SpinASoccerCardHub/" .. tostring(game.PlaceId) .. ".json",
@@ -4138,6 +4882,13 @@ function ConfigRuntime.buildSnapshot(includeSaveMetadata)
         skipWishAnimation = State.skipWishAnimation == true,
 
         autoClaimIndex = State.autoClaimIndex == true,
+
+        autoClaimDailyRewards =
+            State.autoClaimDailyRewards == true,
+
+        autoRedeemCodes = State.autoRedeemCodes == true,
+        codeAttempted =
+            ConfigRuntime.copyBooleanMap(State.codeAttempted),
 
         autoBuyGemShop = State.autoBuyGemShop == true,
         gemShopWhitelist = ConfigRuntime.copyBooleanMap(State.gemShopWhitelist),
@@ -4254,6 +5005,11 @@ function ConfigRuntime.syncControls()
     setToggle(State.autoSpinWishToggle, State.autoSpinWishTickets)
     setToggle(State.skipWishAnimationToggle, State.skipWishAnimation)
     setToggle(State.autoClaimIndexToggle, State.autoClaimIndex)
+    setToggle(
+        State.autoClaimDailyRewardsToggle,
+        State.autoClaimDailyRewards
+    )
+    setToggle(State.autoRedeemCodesToggle, State.autoRedeemCodes)
     setToggle(State.autoBuyGemShopToggle, State.autoBuyGemShop)
     setToggle(State.autoClaimSummerQuestsToggle, State.autoClaimSummerQuests)
     setToggle(State.autoBuySummerShopToggle, State.autoBuySummerShop)
@@ -4276,6 +5032,8 @@ function ConfigRuntime.syncControls()
     WishRuntime.updateStatus()
     WishRuntime.updateLogUI()
     IndexRuntime.updateStatus()
+    DailyRewardRuntime.updateUI()
+    CodesRuntime.updateUI()
     updateGemShopStatus()
     updateSummerQuestStatus()
     updateSummerShopStatus()
@@ -4293,6 +5051,10 @@ function ConfigRuntime.resetActionCooldowns()
     State.spinWheelNextSpinAt = 0
     State.wishNextAt = 0
     State.indexNextClaimAt = 0
+    State.dailyRewardNextStateAt = 0
+    State.dailyRewardNextClaimAt = 0
+    DailyRewardRuntime.clearPending()
+    State.codeNextRedeemAt = 0
     State.nextAntiAfkPulseAt = 0
 
     table.clear(State.gemShopItemNextAttempt)
@@ -4352,6 +5114,31 @@ function ConfigRuntime.apply(config, syncUI)
 
     if config.autoClaimIndex ~= nil then
         State.autoClaimIndex = config.autoClaimIndex == true
+    end
+
+    if config.autoClaimDailyRewards ~= nil then
+        State.autoClaimDailyRewards =
+            config.autoClaimDailyRewards == true
+    end
+
+    if config.autoRedeemCodes ~= nil then
+        State.autoRedeemCodes = config.autoRedeemCodes == true
+    end
+    if type(config.codeAttempted) == "table" then
+        table.clear(State.codeAttempted)
+
+        for code, attempted in pairs(config.codeAttempted) do
+            local normalized = CodesRuntime.normalize(code)
+
+            if attempted == true
+                and string.match(
+                    normalized,
+                    "^[A-Z0-9]+%-[A-Z0-9]+$"
+                )
+            then
+                State.codeAttempted[normalized] = true
+            end
+        end
     end
 
     if config.autoBuyGemShop ~= nil then
@@ -4658,6 +5445,8 @@ function HomeRuntime.getActiveFeatures()
         {State.autoClaimSpinWheel, "Free Spin"},
         {State.autoSpinWheel, "Spin Wheel"},
         {State.autoSpinWishTickets, "Wish"},
+        {State.autoClaimDailyRewards, "Daily"},
+        {State.autoRedeemCodes, "Codes"},
         {State.autoClaimIndex, "Index"},
         {State.autoBuyGemShop, "Gem Shop"},
         {State.autoClaimSummerQuests, "Summer Quests"},
@@ -4680,6 +5469,8 @@ function HomeRuntime.update(message)
     local wishData = WishRuntime.getData()
     local tournamentData = getTournamentShopData()
     local indexData = IndexRuntime.getStats()
+    local dailyStatus = DailyRewardRuntime.getStatusLabel()
+    local pendingCodes = #CodesRuntime.getPendingCodes()
     local activeFeatures = HomeRuntime.getActiveFeatures()
 
     local activeText = #activeFeatures > 0
@@ -4698,6 +5489,8 @@ function HomeRuntime.update(message)
         "",
         "Spin Rewards: " .. tostring(State.spinWheelResults),
         "Wish Rewards: " .. tostring(State.wishResults),
+        "Daily Reward: " .. tostring(dailyStatus),
+        "Codes Pending: " .. tostring(pendingCodes),
         "Index Ready: " .. tostring(indexData.total),
     }, "\n")
 
@@ -4811,6 +5604,152 @@ local function buildGui()
             "2. Choose items when a purchase list is available.",
             "3. Enable the automation you need.",
             "4. Settings are saved automatically.",
+        }, "\n"),
+        Image = "circle-help",
+        ImageSize = 19,
+        Size = "Small",
+    })
+
+    local DailyTab = Window:Tab({
+        Title = "Daily",
+        Icon = "calendar-check",
+        IconSize = 16,
+    })
+
+    State.dailyRewardStatusParagraph = DailyTab:Paragraph({
+        Title = "Daily Reward",
+        Desc = "Loading...",
+        Image = "gift",
+        ImageSize = 19,
+        Size = "Small",
+    })
+
+    DailyTab:Button({
+        Title = "Refresh",
+        Desc = "Update the current Daily Reward status.",
+        Icon = "refresh-cw",
+        Callback = function()
+            State.dailyRewardNextStateAt = 0
+            local success, errorMessage =
+                DailyRewardRuntime.requestState(true)
+
+            notify(
+                "Daily",
+                success
+                    and "Daily Reward status updated."
+                    or tostring(errorMessage),
+                success and "refresh-cw" or "triangle-alert"
+            )
+        end,
+    })
+
+    DailyTab:Button({
+        Title = "Claim Now",
+        Desc = "Claim the reward when it is ready.",
+        Icon = "gift",
+        Callback = function()
+            local success, result =
+                DailyRewardRuntime.claim(true)
+
+            notify(
+                "Daily",
+                success
+                    and (
+                        tonumber(result) and tonumber(result) > 0
+                            and ("Claiming Day "
+                                .. tostring(result) .. " reward.")
+                            or "Claiming Daily Reward."
+                    )
+                    or tostring(result),
+                success and "gift" or "triangle-alert"
+            )
+        end,
+    })
+
+    State.autoClaimDailyRewardsToggle = DailyTab:Toggle({
+        Title = "Auto Claim",
+        Desc = "Claim Daily Rewards automatically when ready.",
+        Icon = "calendar-check",
+        Value = State.autoClaimDailyRewards,
+        Callback = DailyRewardRuntime.setAutoClaim,
+    })
+
+    local CodesTab = Window:Tab({
+        Title = "Codes",
+        Icon = "ticket-check",
+        IconSize = 16,
+    })
+
+    State.codeStatusParagraph = CodesTab:Paragraph({
+        Title = "Redeem Codes",
+        Desc = "Loading...",
+        Image = "ticket",
+        ImageSize = 19,
+        Size = "Small",
+    })
+
+    CodesTab:Button({
+        Title = "Redeem Available",
+        Desc = "Submit every saved code that has not been tried.",
+        Icon = "ticket-check",
+        Callback = function()
+            task.spawn(function()
+                local success, submitted, failed, errorMessage =
+                    CodesRuntime.redeemAll()
+
+                if success then
+                    notify(
+                        "Codes",
+                        string.format(
+                            "Submitted %d code%s.",
+                            tonumber(submitted) or 0,
+                            tonumber(submitted) == 1 and "" or "s"
+                        ),
+                        "ticket-check"
+                    )
+                else
+                    notify(
+                        "Codes",
+                        tostring(
+                            errorMessage
+                                or submitted
+                                or "No pending codes"
+                        ),
+                        "triangle-alert"
+                    )
+                end
+            end)
+        end,
+    })
+
+    State.autoRedeemCodesToggle = CodesTab:Toggle({
+        Title = "Auto Redeem",
+        Desc = "Submit newly added saved codes automatically.",
+        Icon = "refresh-cw",
+        Value = State.autoRedeemCodes,
+        Callback = CodesRuntime.setAutoRedeem,
+    })
+
+    CodesTab:Button({
+        Title = "Clear Attempt History",
+        Desc = "Allow saved codes to be submitted again.",
+        Icon = "rotate-ccw",
+        Callback = function()
+            CodesRuntime.clearHistory()
+            notify(
+                "Codes",
+                "Code attempt history cleared.",
+                "rotate-ccw"
+            )
+        end,
+    })
+
+    CodesTab:Paragraph({
+        Title = "Adding New Codes",
+        Desc = table.concat({
+            "Open the script and find the REDEEM_CODES section.",
+            "Add official codes using the format WORD-WORD.",
+            "Example: \\\"NEW-CODE\\\"",
         }, "\n"),
         Image = "circle-help",
         ImageSize = 19,
@@ -5736,6 +6675,8 @@ local function buildGui()
     WishRuntime.updateStatus("Ready.")
     WishRuntime.updateLogUI()
     IndexRuntime.updateStatus("Ready.")
+    DailyRewardRuntime.updateUI("Checking reward status.")
+    CodesRuntime.updateUI("Ready.")
     updateGemShopStatus("Choose items from the Purchase List.")
     updateSummerQuestStatus("Ready.")
     updateSummerShopStatus("Choose items from the Purchase List.")
@@ -5794,6 +6735,8 @@ local Hub = {
     Seashells = {},
     SpinWheel = {},
     Wish = {},
+    DailyRewards = {},
+    Codes = {},
     Index = {},
     GemShop = {},
     SummerQuests = {},
@@ -6084,6 +7027,126 @@ function Hub.Wish.GetState()
     }
 end
 
+
+
+
+-- Daily Rewards module -------------------------------------------------------
+
+function Hub.DailyRewards.SetAutoClaim(enabled)
+    local value = DailyRewardRuntime.setAutoClaim(enabled)
+
+    if State.autoClaimDailyRewardsToggle
+        and type(State.autoClaimDailyRewardsToggle.Set) == "function"
+    then
+        pcall(function()
+            State.autoClaimDailyRewardsToggle:Set(value)
+        end)
+    end
+
+    return value
+end
+
+function Hub.DailyRewards.ToggleAutoClaim()
+    return Hub.DailyRewards.SetAutoClaim(
+        not State.autoClaimDailyRewards
+    )
+end
+
+function Hub.DailyRewards.ClaimNow()
+    return DailyRewardRuntime.claim(true)
+end
+
+function Hub.DailyRewards.Refresh()
+    State.dailyRewardNextStateAt = 0
+    return DailyRewardRuntime.requestState(true)
+end
+
+function Hub.DailyRewards.GetState()
+    local rewardState = DailyRewardRuntime.getCachedState()
+    local playerState = DailyRewardRuntime.getPlayerState()
+
+    return {
+        autoClaim = State.autoClaimDailyRewards,
+        status = DailyRewardRuntime.getStatusLabel(),
+        completed = playerState.completed
+            or (rewardState and rewardState.completed == true)
+            or false,
+        rebirth = playerState.rebirth,
+        phase = tonumber(rewardState and rewardState.phase) or 0,
+        currentDay =
+            tonumber(rewardState and rewardState.currentDay) or 0,
+        canClaim =
+            rewardState and rewardState.canClaim == true or false,
+        nextClaimTime =
+            tonumber(rewardState and rewardState.nextClaimTime) or 0,
+        pending = State.dailyRewardPending,
+        stateRequests = State.dailyRewardStateRequests,
+        claimRequests = State.dailyRewardClaimRequests,
+        claims = State.dailyRewardClaims,
+        failures = State.dailyRewardFailures,
+        lastStatus = State.dailyRewardLastStatus,
+    }
+end
+
+
+
+-- Codes module ---------------------------------------------------------------
+
+function Hub.Codes.SetAutoRedeem(enabled)
+    local value = CodesRuntime.setAutoRedeem(enabled)
+
+    if State.autoRedeemCodesToggle
+        and type(State.autoRedeemCodesToggle.Set) == "function"
+    then
+        pcall(function()
+            State.autoRedeemCodesToggle:Set(value)
+        end)
+    end
+
+    return value
+end
+
+function Hub.Codes.ToggleAutoRedeem()
+    return Hub.Codes.SetAutoRedeem(not State.autoRedeemCodes)
+end
+
+function Hub.Codes.RedeemAvailable()
+    return CodesRuntime.redeemAll()
+end
+
+function Hub.Codes.Redeem(code)
+    return CodesRuntime.redeem(code, true)
+end
+
+function Hub.Codes.ClearHistory()
+    CodesRuntime.clearHistory()
+end
+
+function Hub.Codes.GetList()
+    return CodesRuntime.getCodes()
+end
+
+function Hub.Codes.GetPending()
+    return CodesRuntime.getPendingCodes()
+end
+
+function Hub.Codes.GetState()
+    local codes = CodesRuntime.getCodes()
+    local pending = CodesRuntime.getPendingCodes()
+
+    return {
+        autoRedeem = State.autoRedeemCodes,
+        total = #codes,
+        pending = #pending,
+        attempted = #codes - #pending,
+        groupMember = State.codeGroupMember,
+        requests = State.codeRequests,
+        skipped = State.codeSkipped,
+        failures = State.codeFailures,
+        lastCode = State.codeLastCode,
+        status = State.codeLastStatus,
+    }
+end
 
 
 -- Index module ---------------------------------------------------------------
@@ -6748,6 +7811,8 @@ function Hub.GetState()
         seashells = Hub.Seashells.GetState(),
         spinWheel = Hub.SpinWheel.GetState(),
         wish = Hub.Wish.GetState(),
+        dailyRewards = Hub.DailyRewards.GetState(),
+        codes = Hub.Codes.GetState(),
         index = Hub.Index.GetState(),
         gemShop = Hub.GemShop.GetState(),
         summerQuests = Hub.SummerQuests.GetState(),
@@ -6786,6 +7851,8 @@ function Hub.Stop()
     State.autoClaimSpinWheel = false
     State.autoSpinWheel = false
     State.autoSpinWishTickets = false
+    State.autoClaimDailyRewards = false
+    State.autoRedeemCodes = false
     State.autoClaimIndex = false
     State.antiAfk = false
     State.autoBuyGemShop = false
@@ -6806,6 +7873,13 @@ function Hub.Stop()
             State.tournamentShopConnection:Disconnect()
         end)
         State.tournamentShopConnection = nil
+    end
+
+    if State.dailyRewardConnection then
+        pcall(function()
+            State.dailyRewardConnection:Disconnect()
+        end)
+        State.dailyRewardConnection = nil
     end
 
     if State.antiAfkIdledConnection then
@@ -6853,6 +7927,21 @@ Hub.ToggleSkipWishAnimation = Hub.Wish.ToggleSkipAnimation
 Hub.WishNow = Hub.Wish.WishNow
 Hub.GetWishSessionLog = Hub.Wish.GetLog
 Hub.ClearWishSessionLog = Hub.Wish.ClearLog
+
+Hub.SetAutoClaimDailyRewards = Hub.DailyRewards.SetAutoClaim
+Hub.ToggleAutoClaimDailyRewards = Hub.DailyRewards.ToggleAutoClaim
+Hub.ClaimDailyRewardNow = Hub.DailyRewards.ClaimNow
+Hub.RefreshDailyRewards = Hub.DailyRewards.Refresh
+Hub.GetDailyRewardsState = Hub.DailyRewards.GetState
+
+Hub.SetAutoRedeemCodes = Hub.Codes.SetAutoRedeem
+Hub.ToggleAutoRedeemCodes = Hub.Codes.ToggleAutoRedeem
+Hub.RedeemAvailableCodes = Hub.Codes.RedeemAvailable
+Hub.RedeemCode = Hub.Codes.Redeem
+Hub.ClearCodeHistory = Hub.Codes.ClearHistory
+Hub.GetRedeemCodes = Hub.Codes.GetList
+Hub.GetPendingCodes = Hub.Codes.GetPending
+Hub.GetCodesState = Hub.Codes.GetState
 
 Hub.SetAutoClaimIndex = Hub.Index.SetAutoClaim
 Hub.ToggleAutoClaimIndex = Hub.Index.ToggleAutoClaim
@@ -6944,6 +8033,22 @@ end
 
 do
     local success, connectionOrError = pcall(function()
+        return DailyReward.OnClientEvent:Connect(
+            DailyRewardRuntime.handleMessage
+        )
+    end)
+
+    if success then
+        State.dailyRewardConnection = connectionOrError
+    else
+        State.dailyRewardLastStatus =
+            "Could not start Daily Rewards listener."
+        State.dailyRewardFailures += 1
+    end
+end
+
+do
+    local success, connectionOrError = pcall(function()
         return LocalPlayer.Idled:Connect(function()
             State.nextAntiAfkPulseAt = 0
 
@@ -7025,6 +8130,27 @@ task.spawn(function()
         end
 
         task.wait(State.wishPollInterval)
+    end
+end)
+
+task.spawn(function()
+    while State.running do
+        pcall(DailyRewardRuntime.tick)
+        task.wait(State.dailyRewardPollInterval)
+    end
+end)
+
+task.spawn(function()
+    while State.running do
+        if State.autoRedeemCodes
+            and os.clock() >= State.codeNextRedeemAt
+        then
+            pcall(CodesRuntime.redeemNext, false)
+        elseif State.codeStatusParagraph then
+            pcall(CodesRuntime.updateUI)
+        end
+
+        task.wait(0.5)
     end
 end)
 
