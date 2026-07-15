@@ -41,7 +41,7 @@
       LoanOutGUI.SetAutoBuyPacks(true/false)
       LoanOutGUI.SetPackBuyWhitelist({Basic = true, Premium = false})
       LoanOutGUI.SetPackBuyPrestigePriority(true/false)
-      LoanOutGUI.BuyPacksNow() -- membeli maksimal 25 pack dari tier terpilih
+      LoanOutGUI.BuyPacksNow() -- membeli tepat 1 pack dari tier terpilih
       LoanOutGUI.GetUICapabilityState()
       LoanOutGUI.GetPackSessionLog()
       LoanOutGUI.ClearPackSessionLog()
@@ -126,7 +126,7 @@ end
 local GAME_NAME = getCurrentGameName()
 local HUB_TITLE = GAME_NAME
 
-local CONFIG_VERSION = 22
+local CONFIG_VERSION = 23
 local CONFIG_ROOT = "xSansHUB"
 local CONFIG_FOLDER = CONFIG_ROOT .. "/LoanOutManager"
 local CONFIG_FILE = CONFIG_FOLDER .. "/" .. tostring(game.PlaceId) .. ".json"
@@ -4604,6 +4604,7 @@ Runtime.getPackBuyState = function()
         nextIsPick = nextPack and nextPack.pick or false,
         nextRemaining = nextPack and nextPack.remaining or nil,
         nextCount = nextCount,
+        manualBuyCount = 1,
         maxBatch = AUTO_BUY_PACK_MAX_BATCH,
         lastBuyAt = State.lastPackBuyAt,
         lastTier = State.lastPackBuyTier,
@@ -4663,7 +4664,7 @@ Runtime.updatePackShopUI = function(allowInstanceAccess)
     end
 end
 
-Runtime.buySelectedPacks = function(isAutomatic)
+Runtime.buySelectedPacks = function(isAutomatic, requestedCount)
     if State.buyingPacks then
         return false, "Pembelian pack sedang berjalan"
     end
@@ -4736,7 +4737,23 @@ Runtime.buySelectedPacks = function(isAutomatic)
     end
 
     local affordableCount = math.floor((buyState.spendable or 0) / selected.cost)
-    local count = math.max(1, math.min(affordableCount, AUTO_BUY_PACK_MAX_BATCH))
+
+    local count
+    if requestedCount ~= nil then
+        count = math.max(
+            1,
+            math.min(
+                affordableCount,
+                math.floor(tonumber(requestedCount) or 1)
+            )
+        )
+    else
+        count = math.max(
+            1,
+            math.min(affordableCount, AUTO_BUY_PACK_MAX_BATCH)
+        )
+    end
+
     if selected.pick then
         count = math.min(count, math.max(0, tonumber(selected.remaining) or 0))
     end
@@ -8990,10 +9007,10 @@ function Runtime.createPacksTab(Window)
     })
 
     State.packBuyButton = Runtime.uiButton(tab, {
-        Title = "Buy Packs Now",
+        Title = "Buy 1 Pack Now",
         Icon = "shopping-cart",
         Callback = function()
-            Runtime.buySelectedPacks(false)
+            Runtime.buySelectedPacks(false, 1)
         end,
     })
 
@@ -9989,7 +10006,7 @@ function API.GetPackBuyWhitelist()
 end
 
 function API.BuyPacksNow()
-    return Runtime.buySelectedPacks(false)
+    return Runtime.buySelectedPacks(false, 1)
 end
 
 function API.GetUICapabilityState()
