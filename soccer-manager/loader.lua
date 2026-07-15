@@ -9,7 +9,7 @@
       - Collect All untuk seluruh loan yang sudah selesai.
       - Loan Top berdasarkan whitelist rarity dan durasi yang dipilih.
       - Toggle Auto Loan, Auto Collect, Auto Play, Auto Open Packs, Auto Claim Playtime Rewards, Auto Claim Daily Reward, Auto Equip Best stabil (pause Auto Play sampai lineup tidak berubah), Auto Join International Cup, Auto Collect Cup Rewards, Auto Collect PackDrop, Auto Conveyor, Anti AFK, Lock Position, dan Auto Prestige.
-      - Pack session log, rarity filter log, Pick Pack selection, Skip Pack Animation, dan Instant Packs.
+      - Pack session log, rarity filter log, Pick Pack selection, Skip Pack Animation, Instant Packs, dan Auto Buy Pack Shop dengan Prestige Priority.
       - Visual Fill International Cup: membuka menu Cup dan mengisi slot React melalui simulasi tombol UI.
       - Movement: anti tabrak sesama player tanpa anchor, Back to Base melalui Workspace.World.Plots, dan recovery Auto Conveyor pada part Animed Convoyor.
       - Loan Duration dan Rarity Whitelist berada tepat di atas toggle Auto Loan.
@@ -38,6 +38,11 @@
       LoanOutGUI.SetPackPickMode("best_rarity" / "best_ovr" / "best_rarity_ovr")
       LoanOutGUI.SetSkipPackAnimation(true/false)
       LoanOutGUI.SetInstantPacks(true/false)
+      LoanOutGUI.SetAutoBuyPacks(true/false)
+      LoanOutGUI.SetPackBuyWhitelist({Basic = true, Premium = false})
+      LoanOutGUI.SetPackBuyPrestigePriority(true/false)
+      LoanOutGUI.BuyPacksNow() -- membeli maksimal 25 pack dari tier terpilih
+      LoanOutGUI.GetUICapabilityState()
       LoanOutGUI.GetPackSessionLog()
       LoanOutGUI.ClearPackSessionLog()
       LoanOutGUI.ToggleAutoClaimPlayTimeRewards()
@@ -121,7 +126,7 @@ end
 local GAME_NAME = getCurrentGameName()
 local HUB_TITLE = GAME_NAME
 
-local CONFIG_VERSION = 17
+local CONFIG_VERSION = 22
 local CONFIG_ROOT = "xSansHUB"
 local CONFIG_FOLDER = CONFIG_ROOT .. "/LoanOutManager"
 local CONFIG_FILE = CONFIG_FOLDER .. "/" .. tostring(game.PlaceId) .. ".json"
@@ -269,6 +274,18 @@ local function mergeRawConfig(target, source)
     if source.instantPacks ~= nil then
         target.instantPacks = source.instantPacks == true
     end
+    if source.autoBuyPacks ~= nil then
+        target.autoBuyPacks = source.autoBuyPacks == true
+    end
+    if source.packBuyPrestigePriority ~= nil then
+        target.packBuyPrestigePriority = source.packBuyPrestigePriority == true
+    end
+    if type(source.packBuyWhitelist) == "table" then
+        target.packBuyWhitelist = {}
+        for tier, enabled in pairs(source.packBuyWhitelist) do
+            target.packBuyWhitelist[tostring(tier)] = enabled == true
+        end
+    end
     if type(source.packLogRarityWhitelist) == "table" then
         target.packLogRarityWhitelist = {}
         for rarity, enabled in pairs(source.packLogRarityWhitelist) do
@@ -338,6 +355,10 @@ local PRESTIGE_SUCCESS_DELAY = 3
 local AUTO_MATCH_RETRY_DELAY = 5
 local AUTO_PLAY_ENSURE_DELAY = 8
 local AUTO_PACK_RETRY_DELAY = 8
+local AUTO_BUY_PACK_INTERVAL = 1.5
+local AUTO_BUY_PACK_RETRY_DELAY = 5
+local AUTO_BUY_PACK_MAX_BATCH = 25
+local PACK_BUY_PRESTIGE_REFRESH_INTERVAL = 4
 local AUTO_EQUIP_BEST_RETRY_DELAY = 8
 local AUTO_EQUIP_BEST_SETTLE_TIMEOUT = 2
 local AUTO_EQUIP_BEST_MAX_PASSES = 4
@@ -459,6 +480,15 @@ end
 if PersistentConfig.instantPacks == nil then
     PersistentConfig.instantPacks = false
 end
+if PersistentConfig.autoBuyPacks == nil then
+    PersistentConfig.autoBuyPacks = false
+end
+if PersistentConfig.packBuyPrestigePriority == nil then
+    PersistentConfig.packBuyPrestigePriority = true
+end
+if type(PersistentConfig.packBuyWhitelist) ~= "table" then
+    PersistentConfig.packBuyWhitelist = {}
+end
 if type(PersistentConfig.packLogRarityWhitelist) ~= "table" then
     PersistentConfig.packLogRarityWhitelist = {}
 end
@@ -552,6 +582,14 @@ local State = {
     packPickMode = normalizePackPickMode(PersistentConfig.packPickMode),
     skipPackAnimation = PersistentConfig.skipPackAnimation ~= false,
     instantPacks = PersistentConfig.instantPacks == true,
+    autoBuyPacks = PersistentConfig.autoBuyPacks == true,
+    packBuyPrestigePriority = PersistentConfig.packBuyPrestigePriority ~= false,
+    packBuyWhitelist = PersistentConfig.packBuyWhitelist,
+    packShopTiers = {},
+    packShopLabelToTier = {},
+    packShopTierToLabel = {},
+    packShopDiscoverySources = {},
+    packShopDiscoveryScannedTables = 0,
     packLogRarityWhitelist = PersistentConfig.packLogRarityWhitelist,
     packSession = PackSession,
     autoClaimPlayTimeRewards = PersistentConfig.autoClaimPlayTimeRewards == true,
@@ -574,6 +612,7 @@ local State = {
     worldCupSquadMode = normalizeWorldCupSquadMode(PersistentConfig.worldCupSquadMode),
     settingAutoMatch = false,
     openingPacks = false,
+    buyingPacks = false,
     claimingPlayTimeRewards = false,
     claimingDailyReward = false,
     equippingBest = false,
@@ -591,6 +630,8 @@ local State = {
     nextAutoMatchSyncAt = 0,
     nextAutoPlayEnsureAt = 0,
     nextAutoOpenPackAt = 0,
+    nextAutoBuyPackAt = 0,
+    nextPackBuyPrestigeRefreshAt = 0,
     nextPlayTimeClaimAt = 0,
     lastPlayTimeClaimAt = 0,
     lastPlayTimeClaimCount = 0,
@@ -609,6 +650,12 @@ local State = {
     lastPackPickCount = 0,
     lastPackOpenError = nil,
     lastInstantPackFallback = nil,
+    lastPackBuyAt = 0,
+    lastPackBuyTier = nil,
+    lastPackBuyCount = 0,
+    lastPackBuySpent = 0,
+    lastPackBuyError = nil,
+    lastPackBuyStatus = "idle",
     lastPackLogUpdateAt = 0,
     lastEquipBestSignature = nil,
     lastEquipBestAt = 0,
@@ -690,6 +737,7 @@ local State = {
     prestigeInfoUpdatedAt = 0,
     configurationParagraph = nil,
     packSummaryParagraph = nil,
+    packShopParagraph = nil,
     packLogParagraph = nil,
     worldCupParagraph = nil,
     worldCupPreviewParagraph = nil,
@@ -706,6 +754,10 @@ local State = {
     packPickModeDropdown = nil,
     skipPackAnimationToggle = nil,
     instantPacksToggle = nil,
+    autoBuyPacksToggle = nil,
+    packBuyPrestigePriorityToggle = nil,
+    packBuyWhitelistDropdown = nil,
+    packBuyButton = nil,
     packLogRarityDropdown = nil,
     autoClaimPlayTimeRewardsToggle = nil,
     autoClaimDailyRewardToggle = nil,
@@ -766,6 +818,9 @@ local State = {
     -- DataChanged milik game dijalankan melalui free-thread Signal.
     -- Callback tersebut tidak boleh menyentuh Instance/WindUI secara langsung.
     uiRefreshRequested = false,
+    uiCapabilityFailures = 0,
+    lastUiCapabilityError = nil,
+    lastUiCapabilityMethod = nil,
     packUiDirty = true,
     pendingStatus = nil,
     forceUIRefreshRequested = false,
@@ -797,6 +852,14 @@ local function copyPackLogWhitelistForConfig()
     return result
 end
 
+local function copyPackBuyWhitelistForConfig()
+    local result = {}
+    for tier, enabled in pairs(State.packBuyWhitelist or {}) do
+        result[tostring(tier)] = enabled == true
+    end
+    return result
+end
+
 local function syncPersistentConfig()
     PersistentConfig.autoLoan = State.autoLoan == true
     PersistentConfig.autoCollect = State.autoCollect == true
@@ -807,6 +870,9 @@ local function syncPersistentConfig()
     PersistentConfig.packPickMode = normalizePackPickMode(State.packPickMode)
     PersistentConfig.skipPackAnimation = State.skipPackAnimation == true
     PersistentConfig.instantPacks = State.instantPacks == true
+    PersistentConfig.autoBuyPacks = State.autoBuyPacks == true
+    PersistentConfig.packBuyPrestigePriority = State.packBuyPrestigePriority == true
+    PersistentConfig.packBuyWhitelist = copyPackBuyWhitelistForConfig()
     PersistentConfig.packLogRarityWhitelist = copyPackLogWhitelistForConfig()
     PersistentConfig.autoClaimPlayTimeRewards = State.autoClaimPlayTimeRewards == true
     PersistentConfig.autoClaimDailyReward = State.autoClaimDailyReward == true
@@ -846,6 +912,9 @@ local function buildConfigSnapshot()
         packPickMode = normalizePackPickMode(State.packPickMode),
         skipPackAnimation = State.skipPackAnimation == true,
         instantPacks = State.instantPacks == true,
+        autoBuyPacks = State.autoBuyPacks == true,
+        packBuyPrestigePriority = State.packBuyPrestigePriority == true,
+        packBuyWhitelist = copyPackBuyWhitelistForConfig(),
         packLogRarityWhitelist = copyPackLogWhitelistForConfig(),
         autoClaimPlayTimeRewards = State.autoClaimPlayTimeRewards == true,
         autoClaimDailyReward = State.autoClaimDailyReward == true,
@@ -1115,7 +1184,13 @@ local function setLoanButton(text, enabled)
     setElementLocked(button, not enabled)
 end
 
-local function updateAutomationButtons()
+local formatCompactNumber
+
+local function updateAutomationButtons(allowInstanceAccess)
+    if allowInstanceAccess ~= true then
+        State.uiRefreshRequested = true
+        return
+    end
     if State.autoLoanToggle and type(State.autoLoanToggle.Set) == "function" then
         if State.autoLoanToggle.Value ~= State.autoLoan then
             State.autoLoanToggle:Set(State.autoLoan, false)
@@ -1218,8 +1293,52 @@ local function updateAutomationButtons()
         State.instantPacksToggle:SetDesc(desc)
     end
 
+    if State.autoBuyPacksToggle and type(State.autoBuyPacksToggle.Set) == "function" then
+        if State.autoBuyPacksToggle.Value ~= State.autoBuyPacks then
+            State.autoBuyPacksToggle:Set(State.autoBuyPacks, false)
+        end
+
+        local buyState = Runtime.getPackBuyState and Runtime.getPackBuyState() or nil
+        local desc
+        if State.buyingPacks then
+            desc = "BUYING • pembelian pack sedang diproses."
+        elseif not State.autoBuyPacks then
+            desc = "Beli pack terpilih otomatis memakai coins yang dapat dibelanjakan."
+        elseif buyState and buyState.blockedByPrestige then
+            desc = "SAVING • coins disimpan untuk requirement Prestige."
+        elseif buyState and buyState.nextTier then
+            desc = string.format(
+                "READY • %s • cost %s • budget %s.",
+                tostring(buyState.nextLabel or buyState.nextTier),
+                formatCompactNumber(buyState.nextCost or 0),
+                formatCompactNumber(buyState.spendable or 0)
+            )
+        else
+            desc = "ACTIVE • menunggu coins atau pack whitelist yang dapat dibeli."
+        end
+        State.autoBuyPacksToggle:SetDesc(desc)
+    end
+
+    if State.packBuyPrestigePriorityToggle
+        and type(State.packBuyPrestigePriorityToggle.Set) == "function"
+    then
+        if State.packBuyPrestigePriorityToggle.Value ~= State.packBuyPrestigePriority then
+            State.packBuyPrestigePriorityToggle:Set(State.packBuyPrestigePriority, false)
+        end
+
+        State.packBuyPrestigePriorityToggle:SetDesc(
+            State.packBuyPrestigePriority
+                and "Reserve requirement Coins Prestige; hanya surplus yang dipakai membeli pack."
+                or "Auto Buy dapat memakai seluruh coins yang tersedia."
+        )
+    end
+
+    if Runtime.updatePackShopUI then
+        Runtime.updatePackShopUI(true)
+    end
+
     if Runtime.updatePackUI then
-        Runtime.updatePackUI()
+        Runtime.updatePackUI(true)
     end
 
     if State.autoClaimPlayTimeRewardsToggle
@@ -1675,7 +1794,7 @@ local function setPackPickMode(mode, announce)
     PersistentConfig.packPickMode = State.packPickMode
     State.nextAutoOpenPackAt = 0
     State.packUiDirty = true
-    updateAutomationButtons()
+    State.uiRefreshRequested = true
     requestConfigSave()
 
     if announce ~= false then
@@ -1728,6 +1847,48 @@ Runtime.setInstantPacksEnabled = function(enabled, announce)
     end
 
     return State.instantPacks
+end
+
+Runtime.setAutoBuyPacksEnabled = function(enabled, announce)
+    State.autoBuyPacks = enabled == true
+    PersistentConfig.autoBuyPacks = State.autoBuyPacks
+    State.nextAutoBuyPackAt = 0
+    State.lastPackBuyError = nil
+    State.packUiDirty = true
+    State.uiRefreshRequested = true
+    requestConfigSave()
+
+    if announce ~= false then
+        setStatus(
+            State.autoBuyPacks
+                and "Auto Buy Packs aktif."
+                or "Auto Buy Packs dinonaktifkan.",
+            State.autoBuyPacks and COLORS.success or COLORS.muted
+        )
+    end
+
+    return State.autoBuyPacks
+end
+
+Runtime.setPackBuyPrestigePriorityEnabled = function(enabled, announce)
+    State.packBuyPrestigePriority = enabled == true
+    PersistentConfig.packBuyPrestigePriority = State.packBuyPrestigePriority
+    State.nextAutoBuyPackAt = 0
+    State.nextPackBuyPrestigeRefreshAt = 0
+    State.packUiDirty = true
+    State.uiRefreshRequested = true
+    requestConfigSave()
+
+    if announce ~= false then
+        setStatus(
+            State.packBuyPrestigePriority
+                and "Prestige Priority aktif • requirement Coins disimpan."
+                or "Prestige Priority dinonaktifkan • seluruh coins dapat digunakan.",
+            State.packBuyPrestigePriority and COLORS.success or COLORS.warning
+        )
+    end
+
+    return State.packBuyPrestigePriority
 end
 
 local function setAutoClaimPlayTimeRewardsEnabled(enabled, announce)
@@ -1916,7 +2077,7 @@ local function formatNumber(value)
     return (sign or "") .. reversed
 end
 
-local function formatCompactNumber(value)
+formatCompactNumber = function(value)
     value = tonumber(value) or 0
     local absolute = math.abs(value)
 
@@ -2238,6 +2399,10 @@ local function loadGameModules()
         if success then
             State.cardResolve = result
         end
+    end
+
+    if State.packConfig and Runtime.refreshPackShopTiers then
+        Runtime.refreshPackShopTiers()
     end
 end
 
@@ -2855,6 +3020,18 @@ local function syncConfigurationControls()
         end)
     end
 
+    if State.packBuyWhitelistDropdown and type(State.packBuyWhitelistDropdown.Select) == "function" then
+        local selected = {}
+        for _, tier in ipairs(State.packShopTiers or {}) do
+            if State.packBuyWhitelist[tier] == true then
+                selected[#selected + 1] = State.packShopTierToLabel[tier] or tier
+            end
+        end
+        pcall(function()
+            State.packBuyWhitelistDropdown:Select(selected)
+        end)
+    end
+
     if State.packLogRarityDropdown and type(State.packLogRarityDropdown.Select) == "function" then
         local selected = {}
         for _, rarity in ipairs(RARITY_DISPLAY_ORDER) do
@@ -2990,6 +3167,18 @@ local function applyLoadedConfig(config)
     if config.instantPacks ~= nil then
         State.instantPacks = config.instantPacks == true
     end
+    if config.autoBuyPacks ~= nil then
+        State.autoBuyPacks = config.autoBuyPacks == true
+    end
+    if config.packBuyPrestigePriority ~= nil then
+        State.packBuyPrestigePriority = config.packBuyPrestigePriority == true
+    end
+    if type(config.packBuyWhitelist) == "table" then
+        State.packBuyWhitelist = {}
+        for tier, enabled in pairs(config.packBuyWhitelist) do
+            State.packBuyWhitelist[tostring(tier)] = enabled == true
+        end
+    end
     if type(config.packLogRarityWhitelist) == "table" then
         for _, rarity in ipairs(RARITY_DISPLAY_ORDER) do
             local configured = config.packLogRarityWhitelist[rarity]
@@ -3037,6 +3226,8 @@ local function applyLoadedConfig(config)
     State.nextAutoCollectAt = 0
     State.nextPrestigeCheckAt = 0
     State.nextAutoOpenPackAt = 0
+    State.nextAutoBuyPackAt = 0
+    State.nextPackBuyPrestigeRefreshAt = 0
     State.nextPlayTimeClaimAt = 0
     State.nextDailyRewardClaimAt = 0
     State.nextAutoEquipBestAt = 0
@@ -3162,10 +3353,16 @@ local function updatePrestigeParagraph()
     end
 end
 
-refreshUI = function(forceRebuild)
+refreshUI = function(forceRebuild, allowInstanceAccess)
+    if allowInstanceAccess ~= true then
+        State.uiRefreshRequested = true
+        return
+    end
     if not State.running or not State.window then
         return
     end
+
+    State.uiRefreshRequested = false
 
     if State.pendingStatus then
         local pending = State.pendingStatus
@@ -3223,7 +3420,7 @@ refreshUI = function(forceRebuild)
         State.loanListParagraph:SetDesc(formatLoanRows(rows))
     end
 
-    updateAutomationButtons()
+    updateAutomationButtons(true)
     updateDashboardUI()
     updatePrestigeParagraph()
 
@@ -3839,7 +4036,16 @@ Runtime.formatPackSessionLog = function()
     return table.concat(lines, "\n")
 end
 
-Runtime.updatePackUI = function()
+Runtime.updatePackUI = function(allowInstanceAccess)
+    if allowInstanceAccess ~= true then
+        State.packUiDirty = true
+        State.uiRefreshRequested = true
+        return
+    end
+    if Runtime.updatePackShopUI then
+        Runtime.updatePackShopUI()
+    end
+
     if not State.packUiDirty
         and State.lastPackUiRenderAt
         and os.clock() - State.lastPackUiRenderAt < 1
@@ -3889,6 +4095,731 @@ Runtime.clearPackSessionLog = function(announce)
     if announce ~= false then
         setStatus("Pack session log dibersihkan.", COLORS.success)
     end
+
+    return true
+end
+
+Runtime.refreshPackShopTiers = function()
+    local packConfig = State.packConfig
+    local tiers = {}
+    local seen = {}
+    local discoverySources = {}
+    local visitedTables = {}
+    local scannedTableCount = 0
+
+    local function addTier(value, source)
+        if value == nil then
+            return false
+        end
+
+        local tier = tostring(value)
+        if tier == "" or seen[tier] then
+            return false
+        end
+
+        local config = Runtime.getPackTierConfig and Runtime.getPackTierConfig(tier) or nil
+        if type(config) ~= "table" or (tonumber(config.cost) or 0) <= 0 then
+            return false
+        end
+
+        seen[tier] = true
+        tiers[#tiers + 1] = tier
+        discoverySources[tier] = tostring(source or "unknown")
+        return true
+    end
+
+    local function looksLikePackConfig(value)
+        return type(value) == "table"
+            and (
+                value.cost ~= nil
+                or value.drops ~= nil
+                or value.pick ~= nil
+                or value.displayName ~= nil
+                or value.packTier ~= nil
+            )
+    end
+
+    local function scanTable(source, sourceName, depth)
+        if type(source) ~= "table"
+            or visitedTables[source]
+            or depth > 7
+            or scannedTableCount >= 6000
+        then
+            return
+        end
+
+        visitedTables[source] = true
+        scannedTableCount += 1
+
+        for key, value in pairs(source) do
+            if type(key) == "string" then
+                addTier(key, sourceName .. ".key")
+            end
+
+            if type(value) == "string" then
+                addTier(value, sourceName .. ".value")
+            elseif type(value) == "table" then
+                if looksLikePackConfig(value) then
+                    addTier(
+                        value.packTier
+                            or value.tier
+                            or value.id
+                            or value.key
+                            or (type(key) == "string" and key or nil),
+                        sourceName .. ".config"
+                    )
+                end
+
+                scanTable(value, sourceName .. "." .. tostring(key), depth + 1)
+            end
+        end
+    end
+
+    local function scanFunctionConstants(callback, sourceName)
+        if type(callback) ~= "function" then
+            return
+        end
+
+        local reader = nil
+        if type(getconstants) == "function" then
+            reader = getconstants
+        elseif type(debug) == "table" and type(debug.getconstants) == "function" then
+            reader = debug.getconstants
+        end
+
+        if type(reader) ~= "function" then
+            return
+        end
+
+        local success, constants = pcall(reader, callback)
+        if success and type(constants) == "table" then
+            for index, value in pairs(constants) do
+                if type(value) == "string" then
+                    addTier(value, sourceName .. ".constant." .. tostring(index))
+                end
+            end
+        end
+    end
+
+    local function scanFunctionUpvalues(callback, sourceName)
+        if type(callback) ~= "function" then
+            return
+        end
+
+        local readAll = nil
+        if type(getupvalues) == "function" then
+            readAll = getupvalues
+        elseif type(debug) == "table" and type(debug.getupvalues) == "function" then
+            readAll = debug.getupvalues
+        end
+
+        if readAll then
+            local success, upvalues = pcall(readAll, callback)
+            if success and type(upvalues) == "table" then
+                for key, value in pairs(upvalues) do
+                    if type(value) == "table" then
+                        scanTable(value, sourceName .. ".upvalue." .. tostring(key), 0)
+                    end
+                end
+            end
+            return
+        end
+
+        local getOne = type(debug) == "table" and debug.getupvalue or nil
+        if type(getOne) ~= "function" then
+            return
+        end
+
+        for index = 1, 120 do
+            local success, name, value = pcall(getOne, callback, index)
+            if not success or name == nil then
+                break
+            end
+            if type(value) == "table" then
+                scanTable(value, sourceName .. ".upvalue." .. tostring(name), 0)
+            end
+        end
+    end
+
+    if packConfig then
+        scanTable(packConfig, "PackConfig", 0)
+
+        -- Prestige/limited packs sering berada di local table yang ditangkap
+        -- oleh PackConfig.Get(), bukan di Order atau PositionalOrder.
+        for functionName, callback in pairs(packConfig) do
+            if type(callback) == "function" then
+                local sourceName = "PackConfig." .. tostring(functionName)
+                scanFunctionUpvalues(callback, sourceName)
+                scanFunctionConstants(callback, sourceName)
+
+                local lowered = string.lower(tostring(functionName))
+                if lowered == "getall"
+                    or lowered == "list"
+                    or lowered == "all"
+                    or string.find(lowered, "prestigepack", 1, true)
+                    or string.find(lowered, "shoppack", 1, true)
+                then
+                    local success, result = pcall(callback)
+                    if success and type(result) == "table" then
+                        scanTable(result, sourceName .. ".result", 0)
+                    end
+                end
+            end
+        end
+    end
+
+    -- Beberapa build mengirim daftar pack prestige melalui player data.
+    for _, dataPath in ipairs({
+        "Packs.PrestigePacks",
+        "Packs.Prestige",
+        "Packs.Shop",
+        "Packs.Available",
+        "Packs.Offers",
+        "Packs.LimitedPacks",
+        "Packs.Owned",
+    }) do
+        local dataTable = Runtime.getData and Runtime.getData(dataPath) or nil
+        if type(dataTable) == "table" then
+            scanTable(dataTable, "Data." .. dataPath, 0)
+        end
+    end
+
+    for _, tier in ipairs({
+        "Basic",
+        "Premium",
+        "Elite",
+        "Prestige",
+        "PrestigePack",
+        "Prestige1",
+        "Prestige2",
+        "Prestige3",
+        "Prestige4",
+        "Prestige5",
+    }) do
+        addTier(tier, "fallback")
+    end
+
+    table.sort(tiers, function(a, b)
+        local configA = Runtime.getPackTierConfig(a) or {}
+        local configB = Runtime.getPackTierConfig(b) or {}
+
+        local prestigeA = tonumber(
+            configA.prestige
+                or configA.prestigeRequired
+                or configA.requiredPrestige
+                or configA.minPrestige
+                or configA.prestigeLevel
+        ) or 0
+        local prestigeB = tonumber(
+            configB.prestige
+                or configB.prestigeRequired
+                or configB.requiredPrestige
+                or configB.minPrestige
+                or configB.prestigeLevel
+        ) or 0
+
+        if prestigeA ~= prestigeB then
+            return prestigeA > prestigeB
+        end
+
+        local costA = tonumber(configA.cost) or 0
+        local costB = tonumber(configB.cost) or 0
+        if costA ~= costB then
+            return costA > costB
+        end
+
+        return a < b
+    end)
+
+    State.packShopTiers = tiers
+    State.packShopLabelToTier = {}
+    State.packShopTierToLabel = {}
+    State.packShopDiscoverySources = discoverySources
+    State.packShopDiscoveryScannedTables = scannedTableCount
+
+    for _, tier in ipairs(tiers) do
+        local config = Runtime.getPackTierConfig(tier) or {}
+        local baseLabel = tostring(config.displayName or config.name or tier)
+        if not string.find(string.lower(baseLabel), "pack", 1, true) then
+            baseLabel = baseLabel .. " Pack"
+        end
+
+        local prestigeRequirement = tonumber(
+            config.prestige
+                or config.prestigeRequired
+                or config.requiredPrestige
+                or config.minPrestige
+                or config.prestigeLevel
+        )
+
+        local prestigeText = ""
+        if prestigeRequirement and prestigeRequirement > 0 then
+            prestigeText = string.format(" • P%d", prestigeRequirement)
+        elseif string.find(string.lower(tier), "prestige", 1, true) then
+            prestigeText = " • PRESTIGE"
+        end
+
+        local label = string.format(
+            "%s%s • %s",
+            baseLabel,
+            prestigeText,
+            formatCompactNumber(tonumber(config.cost) or 0)
+        )
+
+        if State.packShopLabelToTier[label] then
+            label = label .. " • " .. tier
+        end
+
+        State.packShopLabelToTier[label] = tier
+        State.packShopTierToLabel[tier] = label
+
+        if State.packBuyWhitelist[tier] == nil then
+            State.packBuyWhitelist[tier] = false
+        end
+    end
+
+    return tiers
+end
+
+Runtime.getPackBuyWhitelistCount = function()
+    local enabled = 0
+    for _, tier in ipairs(State.packShopTiers or {}) do
+        if State.packBuyWhitelist[tier] == true then
+            enabled += 1
+        end
+    end
+    return enabled
+end
+
+Runtime.getPrestigeCoinGate = function(info)
+    if type(info) ~= "table" or type(info.gates) ~= "table" then
+        return nil
+    end
+
+    for _, gate in ipairs(info.gates) do
+        if type(gate) == "table" then
+            local identity = string.lower(table.concat({
+                tostring(gate.kind or ""),
+                tostring(gate.label or ""),
+                tostring(gate.id or ""),
+                tostring(gate.stat or ""),
+                tostring(gate.path or ""),
+            }, " "))
+            if string.find(identity, "coin", 1, true)
+                or string.find(identity, "currency", 1, true)
+                or string.find(identity, "cash", 1, true)
+            then
+                return gate
+            end
+        end
+    end
+
+    return nil
+end
+
+Runtime.getPrestigeCoinBudget = function()
+    local coins = math.max(0, tonumber(Runtime.getData("Coins")) or 0)
+
+    if not State.packBuyPrestigePriority then
+        return {
+            coins = coins,
+            reserve = 0,
+            spendable = coins,
+            coinRequirement = nil,
+            coinRequirementMet = true,
+            infoAvailable = true,
+            blocked = false,
+            reason = "Priority OFF",
+        }
+    end
+
+    local info = State.prestigeInfo
+    if type(info) ~= "table" then
+        return {
+            coins = coins,
+            reserve = 0,
+            spendable = 0,
+            coinRequirement = nil,
+            coinRequirementMet = false,
+            infoAvailable = false,
+            blocked = true,
+            reason = "Waiting Prestige info",
+        }
+    end
+
+    if info.eligible == true and State.autoPrestige then
+        return {
+            coins = coins,
+            reserve = coins,
+            spendable = 0,
+            coinRequirement = coins,
+            coinRequirementMet = true,
+            infoAvailable = true,
+            blocked = true,
+            eligible = true,
+            reason = "Prestige ready",
+        }
+    end
+
+    local gate = Runtime.getPrestigeCoinGate(info)
+    if not gate then
+        return {
+            coins = coins,
+            reserve = 0,
+            spendable = coins,
+            coinRequirement = nil,
+            coinRequirementMet = true,
+            infoAvailable = true,
+            blocked = false,
+            reason = "No coin gate",
+        }
+    end
+
+    local required = math.max(0, tonumber(gate.need) or 0)
+    local spendable = math.max(0, coins - required)
+
+    return {
+        coins = coins,
+        reserve = required,
+        spendable = spendable,
+        coinRequirement = required,
+        coinRequirementMet = coins >= required,
+        infoAvailable = true,
+        blocked = spendable <= 0,
+        gate = gate,
+        reason = coins < required and "Saving for Prestige" or "Prestige reserve secured",
+    }
+end
+
+Runtime.getPickPackPurchaseRemaining = function(tier)
+    if not Runtime.isPickPackTier(tier) then
+        return math.huge
+    end
+
+    local packConfig = State.packConfig
+    local rotation = packConfig
+        and type(packConfig.LimitedRotation) == "table"
+        and packConfig.LimitedRotation[tier]
+        or nil
+
+    local perWindow = math.max(1, tonumber(rotation and rotation.perWindow) or 1)
+    local windowId = nil
+
+    if packConfig and type(packConfig.WindowState) == "function" then
+        local success, windowState = pcall(packConfig.WindowState, tier)
+        if success and type(windowState) == "table" then
+            windowId = windowState.windowId
+        end
+    end
+
+    local limitedPacks = Runtime.getData("Packs.LimitedPacks")
+    local record = type(limitedPacks) == "table" and limitedPacks[tier] or nil
+    local bought = 0
+
+    if type(record) == "table"
+        and (windowId == nil or record.window == windowId)
+    then
+        bought = math.max(0, tonumber(record.count) or 0)
+    end
+
+    return math.max(0, perWindow - bought)
+end
+
+Runtime.getPackBuyCandidates = function(spendable)
+    spendable = math.max(0, tonumber(spendable) or 0)
+    local candidates = {}
+
+    for _, tier in ipairs(State.packShopTiers or {}) do
+        if State.packBuyWhitelist[tier] == true then
+            local config = Runtime.getPackTierConfig(tier)
+            local cost = type(config) == "table" and math.max(0, tonumber(config.cost) or 0) or 0
+            local remaining = Runtime.getPickPackPurchaseRemaining(tier)
+
+            if cost > 0 and cost <= spendable and remaining > 0 then
+                candidates[#candidates + 1] = {
+                    tier = tier,
+                    label = State.packShopTierToLabel[tier] or tier,
+                    config = config,
+                    cost = cost,
+                    pick = Runtime.isPickPackTier(tier),
+                    remaining = remaining,
+                }
+            end
+        end
+    end
+
+    table.sort(candidates, function(a, b)
+        if a.cost ~= b.cost then
+            return a.cost > b.cost
+        end
+        return a.tier < b.tier
+    end)
+
+    return candidates
+end
+
+Runtime.getPackBuyState = function()
+    if #State.packShopTiers == 0 and State.packConfig then
+        Runtime.refreshPackShopTiers()
+    end
+
+    local budget = Runtime.getPrestigeCoinBudget()
+    local candidates = Runtime.getPackBuyCandidates(budget.spendable)
+    local nextPack = candidates[1]
+
+    local nextCount = 0
+    if nextPack and (tonumber(nextPack.cost) or 0) > 0 then
+        nextCount = math.max(
+            0,
+            math.min(
+                math.floor((tonumber(budget.spendable) or 0) / nextPack.cost),
+                AUTO_BUY_PACK_MAX_BATCH
+            )
+        )
+
+        if nextPack.pick then
+            nextCount = math.min(nextCount, math.max(0, tonumber(nextPack.remaining) or 0))
+        end
+    end
+
+    return {
+        enabled = State.autoBuyPacks,
+        running = State.buyingPacks,
+        prestigePriority = State.packBuyPrestigePriority,
+        coins = budget.coins,
+        reserve = budget.reserve,
+        spendable = budget.spendable,
+        coinRequirement = budget.coinRequirement,
+        coinRequirementMet = budget.coinRequirementMet,
+        prestigeInfoAvailable = budget.infoAvailable,
+        blockedByPrestige = budget.blocked,
+        budgetReason = budget.reason,
+        whitelistCount = Runtime.getPackBuyWhitelistCount(),
+        totalPackCount = #State.packShopTiers,
+        discoveryScannedTables = State.packShopDiscoveryScannedTables,
+        discoverySources = State.packShopDiscoverySources,
+        nextTier = nextPack and nextPack.tier or nil,
+        nextLabel = nextPack and nextPack.label or nil,
+        nextCost = nextPack and nextPack.cost or nil,
+        nextIsPick = nextPack and nextPack.pick or false,
+        nextRemaining = nextPack and nextPack.remaining or nil,
+        nextCount = nextCount,
+        maxBatch = AUTO_BUY_PACK_MAX_BATCH,
+        lastBuyAt = State.lastPackBuyAt,
+        lastTier = State.lastPackBuyTier,
+        lastCount = State.lastPackBuyCount,
+        lastSpent = State.lastPackBuySpent,
+        lastError = State.lastPackBuyError,
+        status = State.lastPackBuyStatus,
+    }
+end
+
+Runtime.updatePackShopUI = function(allowInstanceAccess)
+    if allowInstanceAccess ~= true then
+        State.packUiDirty = true
+        State.uiRefreshRequested = true
+        return
+    end
+    local buyState = Runtime.getPackBuyState()
+
+    if State.packShopParagraph and type(State.packShopParagraph.SetDesc) == "function" then
+        local nextText = buyState.nextLabel or "None"
+
+        local priorityText
+        if not buyState.prestigePriority then
+            priorityText = "OFF"
+        elseif not buyState.prestigeInfoAvailable then
+            priorityText = "WAITING"
+        elseif buyState.blockedByPrestige then
+            priorityText = "SAVING"
+        else
+            priorityText = "RESERVED"
+        end
+
+        pcall(function()
+            State.packShopParagraph:SetDesc(string.format(
+                "Coins: %s • Reserve: %s • Spendable: %s\nWhitelist: %d/%d • Next: %s ×%d • Prestige: %s • Scan: %d",
+                formatCompactNumber(buyState.coins or 0),
+                formatCompactNumber(buyState.reserve or 0),
+                formatCompactNumber(buyState.spendable or 0),
+                buyState.whitelistCount or 0,
+                buyState.totalPackCount or 0,
+                nextText,
+                tonumber(buyState.nextCount) or 0,
+                priorityText,
+                tonumber(State.packShopDiscoveryScannedTables) or 0
+            ))
+        end)
+    end
+
+    if State.packBuyButton then
+        local canBuy = not State.buyingPacks
+            and (buyState.whitelistCount or 0) > 0
+            and (buyState.totalPackCount or 0) > 0
+
+        -- Hindari SetTitle dari callback WindUI: pada sebagian executor callback
+        -- berjalan tanpa capability Instance/Plugin.
+        setElementLocked(State.packBuyButton, not canBuy)
+    end
+end
+
+Runtime.buySelectedPacks = function(isAutomatic)
+    if State.buyingPacks then
+        return false, "Pembelian pack sedang berjalan"
+    end
+
+    if State.openingPacks then
+        return false, "Auto Open Packs sedang berjalan"
+    end
+
+    if #State.packShopTiers == 0 then
+        Runtime.refreshPackShopTiers()
+    end
+
+    if Runtime.getPackBuyWhitelistCount() <= 0 then
+        if not isAutomatic then
+            setStatus("Pilih minimal satu pack pada whitelist.", COLORS.warning)
+        end
+        State.lastPackBuyStatus = "no_whitelist"
+        return false, "Pack whitelist kosong"
+    end
+
+    if State.packBuyPrestigePriority then
+        local infoAge = os.clock() - (tonumber(State.prestigeInfoUpdatedAt) or 0)
+        if not State.prestigeInfo or infoAge >= PACK_BUY_PRESTIGE_REFRESH_INTERVAL then
+            local info, infoError = Runtime.fetchPrestigeInfo()
+            if not info then
+                State.lastPackBuyStatus = "waiting_prestige"
+                State.lastPackBuyError = tostring(infoError or "Prestige info unavailable")
+                State.nextAutoBuyPackAt = os.clock() + AUTO_BUY_PACK_RETRY_DELAY
+                updateAutomationButtons()
+                return false, State.lastPackBuyError
+            end
+        end
+    end
+
+    local buyState = Runtime.getPackBuyState()
+    if buyState.blockedByPrestige then
+        State.lastPackBuyStatus = buyState.prestigeInfoAvailable and "saving_prestige" or "waiting_prestige"
+        State.lastPackBuyError = nil
+        State.nextAutoBuyPackAt = os.clock() + AUTO_BUY_PACK_RETRY_DELAY
+        updateAutomationButtons()
+
+        if not isAutomatic then
+            setStatus(
+                buyState.prestigeInfoAvailable
+                    and string.format(
+                        "Auto Buy dijeda • simpan %s Coins untuk Prestige.",
+                        formatCompactNumber(buyState.reserve or 0)
+                    )
+                    or "Auto Buy dijeda • menunggu Prestige info.",
+                COLORS.warning
+            )
+        end
+
+        return false, State.lastPackBuyStatus
+    end
+
+    local candidates = Runtime.getPackBuyCandidates(buyState.spendable)
+    local selected = candidates[1]
+    if not selected then
+        State.lastPackBuyStatus = "waiting_budget"
+        State.lastPackBuyError = nil
+        State.nextAutoBuyPackAt = os.clock() + AUTO_BUY_PACK_RETRY_DELAY
+        updateAutomationButtons()
+
+        if not isAutomatic then
+            setStatus("Belum ada pack whitelist yang dapat dibeli dari budget saat ini.", COLORS.warning)
+        end
+
+        return false, "Tidak ada pack yang affordable"
+    end
+
+    local affordableCount = math.floor((buyState.spendable or 0) / selected.cost)
+    local count = math.max(1, math.min(affordableCount, AUTO_BUY_PACK_MAX_BATCH))
+    if selected.pick then
+        count = math.min(count, math.max(0, tonumber(selected.remaining) or 0))
+    end
+
+    if count <= 0 then
+        State.lastPackBuyStatus = "limited"
+        State.nextAutoBuyPackAt = os.clock() + AUTO_BUY_PACK_RETRY_DELAY
+        return false, "Limit Pick Pack habis"
+    end
+
+    if not tryRediscoverNetworker() then
+        return false, "Networker belum ditemukan"
+    end
+
+    State.buyingPacks = true
+    State.lastPackBuyStatus = "buying"
+    State.lastPackBuyError = nil
+    State.nextAutoBuyPackAt = math.huge
+    updateAutomationButtons()
+
+    task.spawn(function()
+        local purchased = 0
+        local lastError = nil
+
+        if selected.pick then
+            for _ = 1, count do
+                if not State.running or (isAutomatic and not State.autoBuyPacks) then
+                    break
+                end
+
+                local response, errorMessage = callNetworkLoose("BuyPickPack", {
+                    packTier = selected.tier,
+                })
+
+                if not response or errorMessage then
+                    lastError = tostring(errorMessage or "BuyPickPack gagal")
+                    break
+                end
+
+                purchased += 1
+                task.wait(0.15)
+            end
+        else
+            local response, errorMessage = callNetworkLoose("BuyPack", {
+                packTier = selected.tier,
+                count = count,
+            })
+
+            if response and not errorMessage then
+                purchased = count
+            else
+                lastError = tostring(errorMessage or "BuyPack gagal")
+            end
+        end
+
+        State.buyingPacks = false
+        State.lastPackBuyAt = os.time()
+        State.lastPackBuyTier = selected.tier
+        State.lastPackBuyCount = purchased
+        State.lastPackBuySpent = purchased * selected.cost
+        State.lastPackBuyError = lastError
+        State.lastPackBuyStatus = lastError and "error" or (purchased > 0 and "success" or "stopped")
+        State.nextAutoBuyPackAt = os.clock()
+            + (lastError and AUTO_BUY_PACK_RETRY_DELAY or AUTO_BUY_PACK_INTERVAL)
+        State.packUiDirty = true
+        State.uiRefreshRequested = true
+
+        if purchased > 0 and State.autoOpenPacks then
+            State.nextAutoOpenPackAt = 0
+        end
+
+        State.pendingStatus = {
+            text = lastError
+                and ("Buy Pack gagal: " .. lastError)
+                or string.format(
+                    "Bought %d× %s • spent %s Coins.",
+                    purchased,
+                    tostring(selected.label),
+                    formatCompactNumber(purchased * selected.cost)
+                ),
+            color = lastError and COLORS.danger or COLORS.success,
+        }
+    end)
 
     return true
 end
@@ -7134,6 +8065,7 @@ function Runtime.runAutomationTick()
         or State.collectingWorldCupReward
         or State.fillingWorldCupVisual
         or State.pickingSpawnedPacks
+        or State.buyingPacks
         or State.claimingDailyReward
         or State.autoMatchTransaction
     then
@@ -7172,6 +8104,27 @@ function Runtime.runAutomationTick()
     end
 
     ensureMatchPlaybackListeners()
+
+    -- Auto Prestige tetap menang saat seluruh gate sudah siap. Auto Buy tidak
+    -- boleh menghabiskan coins sebelum DoPrestige sempat dijalankan.
+    if (State.autoPrestige or (State.autoBuyPacks and State.packBuyPrestigePriority))
+        and now >= State.nextPrestigeCheckAt
+    then
+        State.nextPrestigeCheckAt = now + PRESTIGE_CHECK_INTERVAL
+
+        local prestigeInfo = Runtime.fetchPrestigeInfo()
+        if State.autoPrestige and prestigeInfo and prestigeInfo.eligible then
+            Runtime.performPrestige(true)
+            return
+        end
+    end
+
+    if State.autoBuyPacks and now >= State.nextAutoBuyPackAt then
+        State.nextAutoBuyPackAt = now + AUTO_BUY_PACK_RETRY_DELAY
+        if Runtime.buySelectedPacks(true) then
+            return
+        end
+    end
 
     if State.autoClaimDailyReward and now >= State.nextDailyRewardClaimAt then
         State.nextDailyRewardClaimAt = now + 5
@@ -7244,17 +8197,6 @@ function Runtime.runAutomationTick()
         State.nextAutoPlayEnsureAt = now + AUTO_PLAY_ENSURE_DELAY
         local started = requestAutoPlayStart()
         if started and State.matchPlaybackActive then
-            return
-        end
-    end
-
-    -- Prestige memiliki prioritas tertinggi ketika seluruh requirement sudah terpenuhi.
-    if State.autoPrestige and now >= State.nextPrestigeCheckAt then
-        State.nextPrestigeCheckAt = now + PRESTIGE_CHECK_INTERVAL
-
-        local prestigeInfo = Runtime.fetchPrestigeInfo()
-        if prestigeInfo and prestigeInfo.eligible then
-            Runtime.performPrestige(true)
             return
         end
     end
@@ -7337,6 +8279,139 @@ function Runtime.loadWindUI()
     return result
 end
 
+Runtime.getThreadIdentityFunctions = function()
+    local setter = nil
+    local getter = nil
+
+    if type(Environment) == "table" then
+        setter = Environment.setthreadidentity
+            or Environment.set_thread_identity
+            or Environment.setidentity
+        getter = Environment.getthreadidentity
+            or Environment.get_thread_identity
+            or Environment.getidentity
+    end
+
+    if type(setter) ~= "function" then
+        setter = type(setthreadidentity) == "function" and setthreadidentity
+            or type(setidentity) == "function" and setidentity
+            or nil
+    end
+
+    if type(getter) ~= "function" then
+        getter = type(getthreadidentity) == "function" and getthreadidentity
+            or type(getidentity) == "function" and getidentity
+            or nil
+    end
+
+    return setter, getter
+end
+
+Runtime.safeWindUICall = function(methodName, callback, ...)
+    if type(callback) ~= "function" then
+        return false, nil
+    end
+
+    local args = table.pack(...)
+    local success, result = pcall(callback, table.unpack(args, 1, args.n))
+    if success then
+        return true, result
+    end
+
+    local firstError = tostring(result)
+    local lowerError = string.lower(firstError)
+    local isCapabilityError = string.find(lowerError, "capability", 1, true) ~= nil
+        or string.find(lowerError, "current thread cannot access", 1, true) ~= nil
+        or string.find(lowerError, "lacking capability", 1, true) ~= nil
+
+    if isCapabilityError then
+        local setter, getter = Runtime.getThreadIdentityFunctions()
+        if type(setter) == "function" then
+            local previousIdentity = nil
+
+            if type(getter) == "function" then
+                local identitySuccess, identity = pcall(getter)
+                if identitySuccess then
+                    previousIdentity = identity
+                end
+            end
+
+            -- Identity 8 is commonly exposed by executors as the highest
+            -- available script context. Failure is caught and never reaches Output.
+            pcall(setter, 8)
+            success, result = pcall(callback, table.unpack(args, 1, args.n))
+
+            if previousIdentity ~= nil then
+                pcall(setter, previousIdentity)
+            end
+
+            if success then
+                return true, result
+            end
+        end
+    end
+
+    State.uiCapabilityFailures += 1
+    State.lastUiCapabilityMethod = tostring(methodName or "unknown")
+    State.lastUiCapabilityError = tostring(result or firstError)
+
+    return false, nil
+end
+
+Runtime.guardWindUIObject = function(object)
+    if type(object) ~= "table" or object.__xSansCapabilityGuarded then
+        return object
+    end
+
+    object.__xSansCapabilityGuarded = true
+
+    local methods = {
+        "SetDesc",
+        "SetTitle",
+        "Set",
+        "Lock",
+        "Unlock",
+        "Select",
+        "Refresh",
+        "Open",
+        "Close",
+        "Toggle",
+        "Destroy",
+    }
+
+    for _, methodName in ipairs(methods) do
+        local original = object[methodName]
+        if type(original) == "function" then
+            object[methodName] = function(selfOrFirst, ...)
+                local arguments
+
+                if selfOrFirst == object then
+                    arguments = table.pack(...)
+                else
+                    arguments = table.pack(selfOrFirst, ...)
+                end
+
+                local success, result = Runtime.safeWindUICall(
+                    methodName,
+                    function()
+                        return original(object, table.unpack(arguments, 1, arguments.n))
+                    end
+                )
+
+                if success then
+                    return result
+                end
+
+                -- Keep chained WindUI calls harmless when the executor does not
+                -- grant Plugin capability to the current callback thread.
+                return object
+            end
+        end
+    end
+
+    return object
+end
+
 function Runtime.getElementBaseFrame(element)
     if type(element) ~= "table" then
         return nil
@@ -7371,22 +8446,105 @@ function Runtime.compactElement(element, titleSize, descSize)
     return element
 end
 
-function Runtime.compactDropdown(dropdown)
-    Runtime.compactElement(dropdown, 15, 13)
+Runtime.applyDropdownTextSize = function(dropdown)
+    if not dropdown then
+        return
+    end
 
-    local control = dropdown and dropdown.UIElements and dropdown.UIElements.Dropdown
+    local selectedSize = tonumber(dropdown.FriendlySelectedTextSize) or 12
+    local itemSize = tonumber(dropdown.FriendlyItemTextSize) or 12
+    local descSize = math.max(9, itemSize - 1)
+
+    local control = dropdown.UIElements and dropdown.UIElements.Dropdown
     if control then
-        control.Size = UDim2.new(0, 184, 0, 36)
+        pcall(function()
+            control.Size = UDim2.new(0, tonumber(dropdown.FriendlyControlWidth) or 184, 0, 36)
 
-        local frame = control:FindFirstChild("Frame")
-        local inner = frame and frame:FindFirstChild("Frame")
-        local label = inner and inner:FindFirstChildWhichIsA("TextLabel")
-        if label then
-            label.TextSize = 14
+            local frame = control:FindFirstChild("Frame")
+            local inner = frame and frame:FindFirstChild("Frame")
+            local label = inner and inner:FindFirstChildWhichIsA("TextLabel")
+            if label then
+                label.TextSize = selectedSize
+            end
+        end)
+    end
+
+    for _, item in pairs(dropdown.Tabs or {}) do
+        pcall(function()
+            local tabItem = item.UIElements and item.UIElements.TabItem
+            local outerFrame = tabItem and tabItem:FindFirstChild("Frame")
+            local titleFrame = outerFrame and outerFrame:FindFirstChild("Title")
+
+            if titleFrame then
+                local titleLabel = titleFrame:FindFirstChildWhichIsA("TextLabel")
+                if titleLabel then
+                    titleLabel.TextSize = itemSize
+                end
+
+                local descLabel = titleFrame:FindFirstChild("Desc")
+                if descLabel and descLabel:IsA("TextLabel") then
+                    descLabel.TextSize = descSize
+                end
+            end
+        end)
+    end
+
+    local menuCanvas = dropdown.UIElements and dropdown.UIElements.MenuCanvas
+    if menuCanvas then
+        pcall(function()
+            for _, descendant in ipairs(menuCanvas:GetDescendants()) do
+                if descendant:IsA("TextBox") then
+                    descendant.TextSize = itemSize
+                end
+            end
+        end)
+    end
+end
+
+Runtime.setDropdownTextSize = function(dropdown, selectedSize, itemSize, controlWidth)
+    if not dropdown then
+        return dropdown
+    end
+
+    dropdown.FriendlySelectedTextSize = tonumber(selectedSize) or 12
+    dropdown.FriendlyItemTextSize = tonumber(itemSize) or 12
+    dropdown.FriendlyControlWidth = tonumber(controlWidth) or 184
+
+    if not dropdown.__friendlyTextWrapped then
+        dropdown.__friendlyTextWrapped = true
+
+        local originalSelect = dropdown.Select
+        if type(originalSelect) == "function" then
+            dropdown.Select = function(selfOrItems, maybeItems)
+                local items = selfOrItems == dropdown and maybeItems or selfOrItems
+                local result = originalSelect(dropdown, items)
+                task.defer(function()
+                    Runtime.applyDropdownTextSize(dropdown)
+                end)
+                return result
+            end
+        end
+
+        local originalRefresh = dropdown.Refresh
+        if type(originalRefresh) == "function" then
+            dropdown.Refresh = function(selfOrValues, maybeValues)
+                local values = selfOrValues == dropdown and maybeValues or selfOrValues
+                local result = originalRefresh(dropdown, values)
+                task.defer(function()
+                    Runtime.applyDropdownTextSize(dropdown)
+                end)
+                return result
+            end
         end
     end
 
+    Runtime.applyDropdownTextSize(dropdown)
     return dropdown
+end
+
+function Runtime.compactDropdown(dropdown)
+    Runtime.compactElement(dropdown, 15, 13)
+    return Runtime.setDropdownTextSize(dropdown, 12, 12, 184)
 end
 
 function Runtime.selectDashboardTab()
@@ -7436,7 +8594,9 @@ end
 function Runtime.uiCard(tab, options)
     options = options or {}
     options.Size = options.Size or "Small"
-    return Runtime.compactElement(tab:Paragraph(options), 14, 12)
+
+    local element = Runtime.compactElement(tab:Paragraph(options), 14, 12)
+    return Runtime.guardWindUIObject(element)
 end
 
 function Runtime.uiButton(container, options)
@@ -7462,15 +8622,17 @@ function Runtime.uiButton(container, options)
     actionButton.__friendlyAction = true
     actionButton.FriendlyLocked = options.Locked == true
 
-    return actionButton
+    return Runtime.guardWindUIObject(actionButton)
 end
 
 function Runtime.uiToggle(tab, options)
-    return Runtime.compactElement(tab:Toggle(options), 14, 12)
+    local element = Runtime.compactElement(tab:Toggle(options), 14, 12)
+    return Runtime.guardWindUIObject(element)
 end
 
 function Runtime.uiDropdown(tab, options)
-    return Runtime.compactDropdown(tab:Dropdown(options))
+    local element = Runtime.compactDropdown(tab:Dropdown(options))
+    return Runtime.guardWindUIObject(element)
 end
 
 function Runtime.createHomeTab(Window)
@@ -7741,6 +8903,102 @@ function Runtime.createPacksTab(Window)
     })
     State.packsTab = tab
 
+    if #State.packShopTiers == 0 then
+        Runtime.refreshPackShopTiers()
+    end
+
+    State.packShopParagraph = Runtime.uiCard(tab, {
+        Title = "Pack Shop",
+        Desc = "Loading...",
+        Image = "shopping-bag",
+        ImageSize = 19,
+    })
+
+    local packShopValues = {}
+    local selectedPackShopValues = {}
+    for _, tier in ipairs(State.packShopTiers) do
+        local label = State.packShopTierToLabel[tier] or tier
+        packShopValues[#packShopValues + 1] = label
+        if State.packBuyWhitelist[tier] == true then
+            selectedPackShopValues[#selectedPackShopValues + 1] = label
+        end
+    end
+
+    local packWhitelistDropdownReady = false
+    State.packBuyWhitelistDropdown = Runtime.uiDropdown(tab, {
+        Title = "Auto Buy Whitelist",
+        Desc = "Pack yang boleh dibeli otomatis.",
+        Values = packShopValues,
+        Value = selectedPackShopValues,
+        Multi = true,
+        AllowNone = true,
+        SearchBarEnabled = true,
+        MenuWidth = 280,
+        Callback = function(selectedValues)
+            if not packWhitelistDropdownReady or State.syncingConfiguration then
+                return
+            end
+
+            local enabled = {}
+            if type(selectedValues) == "table" then
+                for _, selected in ipairs(selectedValues) do
+                    local label = type(selected) == "table" and selected.Title or selected
+                    local tier = State.packShopLabelToTier[tostring(label)]
+                    if tier then
+                        enabled[tier] = true
+                    end
+                end
+            elseif selectedValues ~= nil then
+                local tier = State.packShopLabelToTier[tostring(selectedValues)]
+                if tier then
+                    enabled[tier] = true
+                end
+            end
+
+            for _, tier in ipairs(State.packShopTiers) do
+                State.packBuyWhitelist[tier] = enabled[tier] == true
+            end
+
+            PersistentConfig.packBuyWhitelist = State.packBuyWhitelist
+            State.nextAutoBuyPackAt = 0
+            State.packUiDirty = true
+            State.uiRefreshRequested = true
+            requestConfigSave()
+        end,
+    })
+    Runtime.setDropdownTextSize(State.packBuyWhitelistDropdown, 11, 11, 200)
+    task.delay(0.25, function()
+        packWhitelistDropdownReady = true
+    end)
+
+    State.autoBuyPacksToggle = Runtime.uiToggle(tab, {
+        Title = "Auto Buy Packs",
+        Desc = "Beli pack whitelist secara otomatis.",
+        Icon = "shopping-cart",
+        IconSize = 18,
+        Value = State.autoBuyPacks,
+        Callback = Runtime.setAutoBuyPacksEnabled,
+    })
+
+    State.packBuyPrestigePriorityToggle = Runtime.uiToggle(tab, {
+        Title = "Prestige Priority",
+        Desc = "Simpan Coins requirement Prestige.",
+        Icon = "trophy",
+        IconSize = 18,
+        Value = State.packBuyPrestigePriority,
+        Callback = Runtime.setPackBuyPrestigePriorityEnabled,
+    })
+
+    State.packBuyButton = Runtime.uiButton(tab, {
+        Title = "Buy Packs Now",
+        Icon = "shopping-cart",
+        Callback = function()
+            Runtime.buySelectedPacks(false)
+        end,
+    })
+
+    tab:Space()
+
     State.packSummaryParagraph = Runtime.uiCard(tab, {
         Title = "Pack Session",
         Desc = "Loading...",
@@ -7748,6 +9006,7 @@ function Runtime.createPacksTab(Window)
         ImageSize = 19,
     })
 
+    local packPickDropdownReady = false
     State.packPickModeDropdown = Runtime.uiDropdown(tab, {
         Title = "Pick Pack Selection",
         Desc = "Pilih otomatis satu dari tiga kartu.",
@@ -7755,13 +9014,17 @@ function Runtime.createPacksTab(Window)
         Value = packPickModeLabel(State.packPickMode),
         SearchBarEnabled = false,
         Callback = function(selected)
-            if State.syncingConfiguration then
+            if not packPickDropdownReady or State.syncingConfiguration then
                 return
             end
             local selectedText = type(selected) == "table" and selected.Title or selected
             setPackPickMode(selectedText)
         end,
     })
+    Runtime.setDropdownTextSize(State.packPickModeDropdown, 12, 11, 184)
+    task.delay(0.25, function()
+        packPickDropdownReady = true
+    end)
 
     State.autoOpenPacksToggle = Runtime.uiToggle(tab, {
         Title = "Auto Open Packs",
@@ -7800,6 +9063,7 @@ function Runtime.createPacksTab(Window)
         end
     end
 
+    local packLogDropdownReady = false
     State.packLogRarityDropdown = Runtime.uiDropdown(tab, {
         Title = "Log Rarity",
         Desc = "Rarity yang tampil di session log.",
@@ -7809,7 +9073,7 @@ function Runtime.createPacksTab(Window)
         AllowNone = true,
         SearchBarEnabled = true,
         Callback = function(selectedValues)
-            if State.syncingConfiguration then
+            if not packLogDropdownReady or State.syncingConfiguration then
                 return
             end
 
@@ -7833,6 +9097,10 @@ function Runtime.createPacksTab(Window)
             requestConfigSave()
         end,
     })
+    Runtime.setDropdownTextSize(State.packLogRarityDropdown, 12, 11, 184)
+    task.delay(0.25, function()
+        packLogDropdownReady = true
+    end)
 
     Runtime.uiButton(tab, {
         Title = "Open Packs Now",
@@ -7857,7 +9125,13 @@ function Runtime.createPacksTab(Window)
         ImageSize = 19,
     })
 
-    Runtime.updatePackUI()
+    State.packUiDirty = true
+    State.uiRefreshRequested = true
+    task.defer(function()
+        if State.running then
+            Runtime.updatePackUI()
+        end
+    end)
     return tab
 end
 
@@ -8271,6 +9545,7 @@ function Runtime.buildGui()
         error("WindUI gagal membuat window. Hancurkan window lama lalu jalankan ulang script.")
     end
 
+    Window = Runtime.guardWindUIObject(Window)
     State.window = Window
     Environment.LoanOutGUIWindWindow = Window
 
@@ -8310,6 +9585,9 @@ function Runtime.buildGui()
     setCollectButton("Collect Loans", false)
     setLoanButton("Loan Best", false)
     updateAutomationButtons()
+    if Runtime.updatePackShopUI then
+        Runtime.updatePackShopUI()
+    end
     updateConfigurationVisuals()
     updateDashboardUI()
     updatePrestigeParagraph()
@@ -8518,6 +9796,14 @@ function API.ToggleInstantPacks()
     return Runtime.setInstantPacksEnabled(not State.instantPacks)
 end
 
+function API.ToggleAutoBuyPacks()
+    return Runtime.setAutoBuyPacksEnabled(not State.autoBuyPacks)
+end
+
+function API.TogglePackBuyPrestigePriority()
+    return Runtime.setPackBuyPrestigePriorityEnabled(not State.packBuyPrestigePriority)
+end
+
 
 function API.ToggleAutoClaimPlayTimeRewards()
     setAutoClaimPlayTimeRewardsEnabled(not State.autoClaimPlayTimeRewards)
@@ -8585,6 +9871,14 @@ function API.SetInstantPacks(enabled)
     return Runtime.setInstantPacksEnabled(enabled)
 end
 
+function API.SetAutoBuyPacks(enabled)
+    return Runtime.setAutoBuyPacksEnabled(enabled)
+end
+
+function API.SetPackBuyPrestigePriority(enabled)
+    return Runtime.setPackBuyPrestigePriorityEnabled(enabled)
+end
+
 function API.SetPackPickMode(mode)
     return setPackPickMode(mode)
 end
@@ -8645,6 +9939,69 @@ end
 
 function API.StopAutoPlay()
     return setAutoPlayEnabled(false)
+end
+
+function API.SetPackBuyEnabled(tier, enabled)
+    tier = tostring(tier)
+    local known = false
+
+    for _, knownTier in ipairs(State.packShopTiers) do
+        if knownTier == tier then
+            known = true
+            break
+        end
+    end
+
+    if not known then
+        return false, "Pack tier tidak dikenal"
+    end
+
+    State.packBuyWhitelist[tier] = enabled == true
+    PersistentConfig.packBuyWhitelist = State.packBuyWhitelist
+    State.nextAutoBuyPackAt = 0
+    syncConfigurationControls()
+    updateAutomationButtons()
+    requestConfigSave()
+    return true
+end
+
+function API.SetPackBuyWhitelist(whitelist)
+    if type(whitelist) ~= "table" then
+        return false, "Whitelist harus berupa table"
+    end
+
+    for _, tier in ipairs(State.packShopTiers) do
+        if whitelist[tier] ~= nil then
+            State.packBuyWhitelist[tier] = whitelist[tier] == true
+        end
+    end
+
+    PersistentConfig.packBuyWhitelist = State.packBuyWhitelist
+    State.nextAutoBuyPackAt = 0
+    syncConfigurationControls()
+    updateAutomationButtons()
+    requestConfigSave()
+    return true
+end
+
+function API.GetPackBuyWhitelist()
+    return copyPackBuyWhitelistForConfig()
+end
+
+function API.BuyPacksNow()
+    return Runtime.buySelectedPacks(false)
+end
+
+function API.GetUICapabilityState()
+    return {
+        failures = State.uiCapabilityFailures,
+        lastMethod = State.lastUiCapabilityMethod,
+        lastError = State.lastUiCapabilityError,
+    }
+end
+
+function API.GetPackBuyState()
+    return Runtime.getPackBuyState()
 end
 
 function API.OpenPacksNow()
@@ -8844,6 +10201,10 @@ function API.GetAutoOpenPacksState()
         pickModeLabel = packPickModeLabel(State.packPickMode),
         skipPackAnimation = State.skipPackAnimation,
         instantPacks = State.instantPacks,
+        autoBuyPacks = State.autoBuyPacks,
+        packBuyPrestigePriority = State.packBuyPrestigePriority,
+        packBuyWhitelist = copyPackBuyWhitelistForConfig(),
+        packBuyState = Runtime.getPackBuyState(),
         instantPass = Runtime.getData("Passes.InstantOpen") == true,
         instantFallback = State.lastInstantPackFallback,
         sessionTotal = tonumber(State.packSession.totalOpened) or 0,
@@ -8929,6 +10290,9 @@ function API.GetAutomationState()
         packPickMode = State.packPickMode,
         skipPackAnimation = State.skipPackAnimation,
         instantPacks = State.instantPacks,
+        autoBuyPacks = State.autoBuyPacks,
+        packBuyPrestigePriority = State.packBuyPrestigePriority,
+        packBuyWhitelist = copyPackBuyWhitelistForConfig(),
         packLogRarityWhitelist = copyPackLogWhitelistForConfig(),
         autoClaimPlayTimeRewards = State.autoClaimPlayTimeRewards,
         autoClaimDailyReward = State.autoClaimDailyReward,
@@ -8992,6 +10356,9 @@ function API.GetConfigState()
         autoClaimDailyReward = State.autoClaimDailyReward,
         skipPackAnimation = State.skipPackAnimation,
         instantPacks = State.instantPacks,
+        autoBuyPacks = State.autoBuyPacks,
+        packBuyPrestigePriority = State.packBuyPrestigePriority,
+        packBuyWhitelist = copyPackBuyWhitelistForConfig(),
         packLogRarityWhitelist = copyPackLogWhitelistForConfig(),
         autoJoinWorldCup = State.autoJoinWorldCup,
         autoCollectWorldCupRewards = State.autoCollectWorldCupRewards,
@@ -9027,6 +10394,7 @@ function API.Stop()
     State.antiAfk = false
     State.fillWorldCupVisualBeforeJoin = false
     State.openingPacks = false
+    State.buyingPacks = false
     State.claimingPlayTimeRewards = false
     State.claimingDailyReward = false
     State.equippingBest = false
@@ -9073,9 +10441,9 @@ Environment.LoanOutGUI = API
 loadGameModules()
 initializeConfigurationOptions()
 Runtime.buildGui()
-updateAutomationButtons()
+updateAutomationButtons(true)
 if Runtime.updatePackUI then
-    Runtime.updatePackUI()
+    Runtime.updatePackUI(true)
 end
 
 
@@ -9098,7 +10466,7 @@ task.spawn(function()
     -- Polling-only mode: jangan hubungkan DataChanged milik game. Callback
     -- ReplicatedStorage.Packages.Signal berjalan pada free thread yang tidak
     -- boleh mengakses Instance/WindUI. Semua data dibaca ulang dari loop ini.
-    refreshUI(true)
+    refreshUI(true, true)
 
     while State.running do
         task.wait(POLL_INTERVAL)
@@ -9106,7 +10474,7 @@ task.spawn(function()
         -- Polling-only: seluruh pembacaan data dan perubahan WindUI dilakukan
         -- dari loop milik script ini. Tidak ada callback Signal game yang dapat
         -- memanggil SetDesc/SetTitle dari thread tanpa capability.
-        refreshUI(false)
+        refreshUI(false, true)
         Runtime.runAutomationTick()
     end
 end)
