@@ -628,7 +628,6 @@ local State = {
     tournamentPendingAction = nil,
     tournamentManualJoinRequested = false,
     tournamentTickState = nil,
-    tournamentTeamRequests = 0,
     tournamentEquipRequests = 0,
     tournamentJoinRequests = 0,
     tournamentJoins = 0,
@@ -5049,18 +5048,6 @@ function TournamentRuntime.getState()
     }
 end
 
-function TournamentRuntime.teamContains(team, uuid)
-    uuid = tostring(uuid or "")
-
-    for index = 1, 5 do
-        if tostring(team[index] or "") == uuid then
-            return true, index
-        end
-    end
-
-    return false, nil
-end
-
 function TournamentRuntime.teamMatchesBest(team, best)
     if TournamentRuntime.teamCount(team) ~= 5 or #best < 5 then
         return false
@@ -5110,8 +5097,6 @@ function TournamentRuntime.pendingLabel()
     end
 
     local labels = {
-        team_add = "Adding a card",
-        team_remove = "Removing a card",
         equip_best = "Equipping best team",
         join = "Joining queue",
     }
@@ -5172,7 +5157,8 @@ function TournamentRuntime.updateUI(message, shouldLog)
                     or ("Rebirth " .. tostring(data.minRebirth))
             ),
         "Pending: " .. TournamentRuntime.pendingLabel(),
-        "Team Updates: " .. tostring(State.tournamentTeamRequests),
+        "Equip Requests: "
+            .. tostring(State.tournamentEquipRequests),
         "Joins: " .. tostring(State.tournamentJoins),
         "Failures: " .. tostring(State.tournamentFailures),
         "Status: " .. tostring(State.tournamentLastStatus),
@@ -5247,21 +5233,7 @@ function TournamentRuntime.confirmPending()
     local confirmed = false
     local message
 
-    if pending.kind == "team_add" then
-        confirmed =
-            TournamentRuntime.teamContains(
-                data.team,
-                pending.uuid
-            ) == true
-        message = "Card added to tournament team."
-    elseif pending.kind == "team_remove" then
-        confirmed =
-            TournamentRuntime.teamContains(
-                data.team,
-                pending.uuid
-            ) == false
-        message = "Card removed from tournament team."
-    elseif pending.kind == "equip_best" then
+    if pending.kind == "equip_best" then
         local best = {}
 
         if data.playerData then
@@ -5269,9 +5241,12 @@ function TournamentRuntime.confirmPending()
         end
 
         confirmed =
-            TournamentRuntime.teamMatchesBest(data.team, best)
-            or TournamentRuntime.teamFingerprint(data.team)
-                ~= pending.beforeFingerprint
+            data.teamCount == 5
+            and TournamentRuntime.teamMatchesBest(
+                data.team,
+                best
+            )
+
         message = "Best tournament team equipped."
     elseif pending.kind == "join" then
         confirmed = data.queued == true
@@ -5299,146 +5274,6 @@ function TournamentRuntime.confirmPending()
             "Tournament action was not confirmed.",
             true
         )
-    end
-
-    return false
-end
-
-function TournamentRuntime.sendRemove(slotIndex, uuid)
-    if State.tournamentPendingAction
-        or os.clock() < State.tournamentNextActionAt
-    then
-        return false, "Another action is being processed"
-    end
-
-    local success, errorMessage = pcall(function()
-        TournamentRemote:FireServer(
-            "team_remove",
-            tonumber(slotIndex)
-        )
-    end)
-
-    if not success then
-        State.tournamentFailures += 1
-        TournamentRuntime.updateUI(
-            "Could not update tournament team.",
-            true
-        )
-        return false, tostring(errorMessage)
-    end
-
-    State.tournamentTeamRequests += 1
-    State.tournamentNextActionAt =
-        os.clock() + State.tournamentActionDelay
-
-    TournamentRuntime.setPending("team_remove", {
-        uuid = tostring(uuid),
-        slot = tonumber(slotIndex),
-    })
-
-    TournamentRuntime.updateUI(
-        "Removing one card from the tournament team."
-    )
-
-    return true
-end
-
-function TournamentRuntime.sendAdd(uuid)
-    if State.tournamentPendingAction
-        or os.clock() < State.tournamentNextActionAt
-    then
-        return false, "Another action is being processed"
-    end
-
-    uuid = tostring(uuid or "")
-    if uuid == "" then
-        return false, "Invalid card"
-    end
-
-    local success, errorMessage = pcall(function()
-        TournamentRemote:FireServer("team_add", uuid)
-    end)
-
-    if not success then
-        State.tournamentFailures += 1
-        TournamentRuntime.updateUI(
-            "Could not update tournament team.",
-            true
-        )
-        return false, tostring(errorMessage)
-    end
-
-    State.tournamentTeamRequests += 1
-    State.tournamentNextActionAt =
-        os.clock() + State.tournamentActionDelay
-
-    TournamentRuntime.setPending("team_add", {
-        uuid = uuid,
-    })
-
-    TournamentRuntime.updateUI(
-        "Adding one card to the tournament team."
-    )
-
-    return true
-end
-
-function TournamentRuntime.reconcileBestTeam()
-    local data = TournamentRuntime.getState()
-
-    if not data.ready then
-        TournamentRuntime.updateUI(
-            "Player data is not ready yet."
-        )
-        return false
-    end
-
-    local best = TournamentRuntime.getBestTeam(data.playerData)
-
-    if #best < 5 then
-        TournamentRuntime.updateUI(
-            "At least five cards are required."
-        )
-        return false
-    end
-
-    if TournamentRuntime.teamMatchesBest(data.team, best) then
-        return true
-    end
-
-    local desired = {}
-    for index = 1, 5 do
-        desired[best[index]] = true
-    end
-
-    -- One removal per cycle.
-    for slotIndex = 1, 5 do
-        local currentUuid = data.team[slotIndex]
-
-        if currentUuid and not desired[currentUuid] then
-            TournamentRuntime.sendRemove(
-                slotIndex,
-                currentUuid
-            )
-            return false
-        end
-    end
-
-    local current = {}
-    for index = 1, 5 do
-        if data.team[index] then
-            current[data.team[index]] = true
-        end
-    end
-
-    -- One addition per cycle.
-    for index = 1, 5 do
-        local desiredUuid = best[index]
-
-        if desiredUuid and not current[desiredUuid] then
-            TournamentRuntime.sendAdd(desiredUuid)
-            return false
-        end
     end
 
     return false
@@ -5580,7 +5415,7 @@ function TournamentRuntime.requestManualJoin()
     State.tournamentNextActionAt = 0
 
     TournamentRuntime.updateUI(
-        "Preparing the best team before joining.",
+        "Equipping the best team before joining.",
         true
     )
 
@@ -5596,6 +5431,13 @@ function TournamentRuntime.runJoinStep()
         return
     end
 
+    if not data.ready then
+        TournamentRuntime.updateUI(
+            "Player data is not ready yet."
+        )
+        return
+    end
+
     if not data.unlocked then
         State.tournamentManualJoinRequested = false
         TournamentRuntime.updateUI(
@@ -5604,23 +5446,54 @@ function TournamentRuntime.runJoinStep()
         return
     end
 
-    if not TournamentRuntime.reconcileBestTeam() then
+    local best =
+        TournamentRuntime.getBestTeam(data.playerData)
+
+    if #best < 5 then
+        State.tournamentManualJoinRequested = false
+        TournamentRuntime.updateUI(
+            "At least five cards are required."
+        )
         return
     end
 
-    data = TournamentRuntime.getState()
-
-    if data.queueWindowOpen then
-        TournamentRuntime.sendJoin()
-    elseif State.tournamentManualJoinRequested then
-        State.tournamentManualJoinRequested = false
-        TournamentRuntime.updateUI(
-            "Tournament join window is closed.",
-            true
+    local teamReady =
+        data.teamCount == 5
+        and TournamentRuntime.teamMatchesBest(
+            data.team,
+            best
         )
-    else
-        TournamentRuntime.updateUI()
+
+    if not teamReady then
+        if os.clock() >= State.tournamentNextEquipAt then
+            TournamentRuntime.equipBest(false)
+        else
+            TournamentRuntime.updateUI(
+                "Waiting to equip the best tournament team."
+            )
+        end
+
+        return
     end
+
+    if not data.queueWindowOpen then
+        if State.tournamentManualJoinRequested then
+            State.tournamentManualJoinRequested = false
+
+            TournamentRuntime.updateUI(
+                "Tournament join window is closed.",
+                true
+            )
+        else
+            TournamentRuntime.updateUI(
+                "Best team ready. Waiting for the join window."
+            )
+        end
+
+        return
+    end
+
+    TournamentRuntime.sendJoin()
 end
 
 function TournamentRuntime.tick()
@@ -7777,7 +7650,7 @@ local function buildGui()
     State.autoJoinTournamentToggle =
         TournamentShopTab:Toggle({
             Title = "Auto Join",
-            Desc = "Build the best team one card at a time and join automatically.",
+            Desc = "Equip the best tournament team, wait for confirmation, then join.",
             Icon = "refresh-cw",
             Value = State.autoJoinTournament,
             Callback = TournamentRuntime.setAutoJoin,
@@ -9117,7 +8990,6 @@ function Hub.Tournament.GetState()
         pending = State.tournamentPendingAction
             and State.tournamentPendingAction.kind
             or nil,
-        teamRequests = State.tournamentTeamRequests,
         equipRequests = State.tournamentEquipRequests,
         joinRequests = State.tournamentJoinRequests,
         joins = State.tournamentJoins,
