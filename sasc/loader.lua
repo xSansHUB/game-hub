@@ -4,6 +4,7 @@
 
     Main features:
       - Home overview
+      - Main team auto equip
       - Trophy crafting
       - Summer activities, quests, and shop
       - Spin Wheel and Wish automation
@@ -153,6 +154,13 @@ local PurchaseClient = requirePath(
     "Client",
     "Controllers",
     "PurchaseClient"
+)
+local SlotController = requirePath(
+    ReplicatedStorage,
+    "Source",
+    "Client",
+    "Controllers",
+    "SlotController"
 )
 
 local CraftTrophy = Networker.get_remote("CraftTrophy")
@@ -469,6 +477,22 @@ buildTournamentShopConfigOptions()
 
 local State = {
     running = true,
+    autoEquipBestCards = false,
+    equipBestMode = "income",
+    equipBestPollInterval = 1,
+    equipBestCooldown = 5,
+    equipBestSettleDelay = 2,
+    equipBestBusy = false,
+    equipBestNextAt = 0,
+    equipBestLastSignature = nil,
+    equipBestRequests = 0,
+    equipBestFailures = 0,
+    equipBestLastStatus = "Ready.",
+    equipBestStatusParagraph = nil,
+    equipBestModeDropdown = nil,
+    autoEquipBestCardsToggle = nil,
+    syncingEquipBestModeDropdown = false,
+
     autoCraft = false,
     whitelist = {},
     interval = 1,
@@ -729,6 +753,7 @@ local State = {
 local LOG_FILTER_OPTIONS = {
     "All",
     "Hub",
+    "Team",
     "Trophies",
     "Summer",
     "Spin Wheel",
@@ -778,6 +803,8 @@ local LOG_ROUTINE_PATTERNS = {
     "checking daily rewards",
     "checking reward status",
     "daily rewards updated",
+    "best income team equipped",
+    "best rarity team equipped",
     "player data is loading",
     "all saved codes have been tried",
     "no pending codes",
@@ -1105,6 +1132,9 @@ local function applyWhitelistSelection(selectedValues)
         State.whitelist[trophyName] = enabled[trophyName] == true
     end
 
+    State.equipBestNextAt = 0
+    State.equipBestLastSignature = nil
+    State.equipBestBusy = false
     State.nextCraftAt = 0
     updateStatus("Whitelist diperbarui: " .. formatSelectedTrophies())
 end
@@ -5641,6 +5671,362 @@ function TournamentRuntime.handleTick(payload)
 end
 
 
+local EQUIP_BEST_MODE_INCOME = "income"
+local EQUIP_BEST_MODE_RARITY = "rarity"
+
+local EQUIP_BEST_MODE_OPTIONS = {
+    "Best Income",
+    "Best Rarity",
+}
+
+local function normalizeEquipBestMode(value)
+    local normalized = string.lower(tostring(value or ""))
+
+    if normalized == "rarity"
+        or normalized == "best rarity"
+    then
+        return EQUIP_BEST_MODE_RARITY
+    end
+
+    return EQUIP_BEST_MODE_INCOME
+end
+
+local function equipBestModeLabel(value)
+    if normalizeEquipBestMode(value)
+        == EQUIP_BEST_MODE_RARITY
+    then
+        return "Best Rarity"
+    end
+
+    return "Best Income"
+end
+
+local EquipBestRuntime = {}
+
+function EquipBestRuntime.getOwnedCards()
+    local playerData = getPlayerData()
+    local cards = {}
+    local seen = {}
+
+    local function addCard(card)
+        if type(card) ~= "table" then
+            return
+        end
+
+        local uuid = tostring(card.uuid or "")
+        if uuid == "" or seen[uuid] then
+            return
+        end
+
+        seen[uuid] = true
+        cards[#cards + 1] = card
+    end
+
+    if type(playerData) == "table"
+        and type(playerData.slots) == "table"
+    then
+        for _, slotData in pairs(playerData.slots) do
+            addCard(
+                type(slotData) == "table"
+                    and slotData.card
+                    or nil
+            )
+        end
+    end
+
+    if type(playerData) == "table"
+        and type(playerData.inventory) == "table"
+    then
+        for _, card in ipairs(playerData.inventory) do
+            addCard(card)
+        end
+    end
+
+    return cards, playerData
+end
+
+function EquipBestRuntime.cardSignature(card)
+    local cardId = tostring(card.id or "")
+    local cardData = CardConfig.Cards[cardId]
+    local rarity = tostring(
+        cardData and cardData.Rarity or ""
+    )
+    local income = 0
+
+    pcall(function()
+        income = tonumber(
+            ScalingIncome.getFlatIncome(card)
+        ) or 0
+    end)
+
+    local mutations = {}
+
+    if type(card.mutations) == "table" then
+        for _, mutation in ipairs(card.mutations) do
+            mutations[#mutations + 1] = tostring(mutation)
+        end
+        table.sort(mutations)
+    end
+
+    local trophyName = ""
+    local trophyStars = 0
+
+    if type(card.trophy) == "table" then
+        trophyName = tostring(card.trophy.name or "")
+        trophyStars = tonumber(card.trophy.stars) or 0
+    end
+
+    return table.concat({
+        tostring(card.uuid or ""),
+        cardId,
+        rarity,
+        tostring(income),
+        tostring(card.locked == true),
+        tostring(card.scalingPercent or ""),
+        trophyName,
+        tostring(trophyStars),
+        tostring(card.worldCup or ""),
+        table.concat(mutations, ","),
+    }, ":")
+end
+
+function EquipBestRuntime.getSignature(mode)
+    local cards, playerData = EquipBestRuntime.getOwnedCards()
+    local cardParts = {}
+
+    for _, card in ipairs(cards) do
+        cardParts[#cardParts + 1] =
+            EquipBestRuntime.cardSignature(card)
+    end
+
+    table.sort(cardParts)
+
+    local slotParts = {}
+
+    if type(playerData) == "table"
+        and type(playerData.slots) == "table"
+    then
+        local slotIndexes = {}
+
+        for slotIndex in pairs(playerData.slots) do
+            slotIndexes[#slotIndexes + 1] = slotIndex
+        end
+
+        table.sort(slotIndexes, function(left, right)
+            local leftNumber = tonumber(left)
+            local rightNumber = tonumber(right)
+
+            if leftNumber and rightNumber then
+                return leftNumber < rightNumber
+            end
+
+            return tostring(left) < tostring(right)
+        end)
+
+        for _, slotIndex in ipairs(slotIndexes) do
+            local slotData = playerData.slots[slotIndex]
+            local card = type(slotData) == "table"
+                and slotData.card
+                or nil
+
+            slotParts[#slotParts + 1] =
+                tostring(slotIndex)
+                .. "="
+                .. tostring(card and card.uuid or "")
+        end
+    end
+
+    return table.concat({
+        normalizeEquipBestMode(mode),
+        table.concat(cardParts, "|"),
+        table.concat(slotParts, "|"),
+    }, "#")
+end
+
+function EquipBestRuntime.syncModeDropdown()
+    if State.syncingEquipBestModeDropdown
+        or not State.equipBestModeDropdown
+        or type(State.equipBestModeDropdown.Select) ~= "function"
+    then
+        return
+    end
+
+    State.syncingEquipBestModeDropdown = true
+
+    pcall(function()
+        State.equipBestModeDropdown:Select(
+            equipBestModeLabel(State.equipBestMode)
+        )
+    end)
+
+    State.syncingEquipBestModeDropdown = false
+end
+
+function EquipBestRuntime.updateUI(message, shouldLog)
+    if message ~= nil then
+        State.equipBestLastStatus = tostring(message)
+
+        if shouldLog == true then
+            LogRuntime.append(
+                "Team",
+                State.equipBestLastStatus
+            )
+        end
+    end
+
+    local cards = EquipBestRuntime.getOwnedCards()
+
+    local description = table.concat({
+        "Auto Equip: "
+            .. (State.autoEquipBestCards and "ON" or "OFF"),
+        "Mode: " .. equipBestModeLabel(State.equipBestMode),
+        "Owned Cards: " .. tostring(#cards),
+        "Processing: " .. (State.equipBestBusy and "YES" or "NO"),
+        "Requests: " .. tostring(State.equipBestRequests),
+        "Failures: " .. tostring(State.equipBestFailures),
+        "Status: " .. tostring(State.equipBestLastStatus),
+    }, "\n")
+
+    if State.equipBestStatusParagraph
+        and type(State.equipBestStatusParagraph.SetDesc)
+            == "function"
+    then
+        pcall(function()
+            State.equipBestStatusParagraph:SetDesc(description)
+        end)
+    end
+end
+
+function EquipBestRuntime.setMode(value)
+    State.equipBestMode = normalizeEquipBestMode(value)
+    State.equipBestLastSignature = nil
+    State.equipBestNextAt = 0
+
+    EquipBestRuntime.syncModeDropdown()
+    EquipBestRuntime.updateUI(
+        "Equip mode changed to "
+            .. equipBestModeLabel(State.equipBestMode)
+            .. ".",
+        true
+    )
+
+    return State.equipBestMode
+end
+
+function EquipBestRuntime.setAuto(enabled)
+    State.autoEquipBestCards = enabled == true
+    State.equipBestLastSignature = nil
+    State.equipBestNextAt = 0
+
+    EquipBestRuntime.updateUI(
+        State.autoEquipBestCards
+            and "Auto Equip Best enabled."
+            or "Auto Equip Best disabled.",
+        true
+    )
+
+    return State.autoEquipBestCards
+end
+
+function EquipBestRuntime.equip(mode, force)
+    mode = normalizeEquipBestMode(mode)
+
+    if State.equipBestBusy then
+        return false, "Another team update is being processed"
+    end
+
+    local now = os.clock()
+
+    if force ~= true and now < State.equipBestNextAt then
+        return false, "Equip Best is on cooldown"
+    end
+
+    local cards = EquipBestRuntime.getOwnedCards()
+
+    if #cards <= 0 then
+        EquipBestRuntime.updateUI("No cards are available yet.")
+        return false, "No cards are available"
+    end
+
+    State.equipBestBusy = true
+    State.equipBestNextAt =
+        now + State.equipBestCooldown
+    State.equipBestRequests += 1
+
+    local success, errorMessage = pcall(function()
+        if mode == EQUIP_BEST_MODE_RARITY then
+            SlotController.equipBestRarityCards()
+        else
+            SlotController.equipBestCards()
+        end
+    end)
+
+    if not success then
+        State.equipBestBusy = false
+        State.equipBestFailures += 1
+
+        EquipBestRuntime.updateUI(
+            "Could not update the main team.",
+            true
+        )
+
+        return false, tostring(errorMessage)
+    end
+
+    EquipBestRuntime.updateUI(
+        "Updating the main team with "
+            .. equipBestModeLabel(mode)
+            .. "."
+    )
+
+    task.delay(State.equipBestSettleDelay, function()
+        if not State.running then
+            return
+        end
+
+        State.equipBestBusy = false
+        State.equipBestLastSignature =
+            EquipBestRuntime.getSignature(mode)
+
+        EquipBestRuntime.updateUI(
+            equipBestModeLabel(mode)
+                .. " team equipped.",
+            true
+        )
+    end)
+
+    return true
+end
+
+function EquipBestRuntime.tick()
+    if not State.autoEquipBestCards then
+        if State.equipBestStatusParagraph then
+            EquipBestRuntime.updateUI()
+        end
+        return
+    end
+
+    if State.equipBestBusy
+        or os.clock() < State.equipBestNextAt
+    then
+        EquipBestRuntime.updateUI()
+        return
+    end
+
+    local signature =
+        EquipBestRuntime.getSignature(State.equipBestMode)
+
+    if signature ~= State.equipBestLastSignature then
+        EquipBestRuntime.equip(
+            State.equipBestMode,
+            false
+        )
+    else
+        EquipBestRuntime.updateUI()
+    end
+end
+
+
 local function normalizeWindowKeybind(value)
     local keyName
 
@@ -5659,7 +6045,7 @@ end
 
 
 local ConfigRuntime = {
-    version = 10,
+    version = 11,
     root = "xSansHUB",
     folder = "xSansHUB/SpinASoccerCardHub",
     file = "xSansHUB/SpinASoccerCardHub/" .. tostring(game.PlaceId) .. ".json",
@@ -5744,6 +6130,10 @@ function ConfigRuntime.buildSnapshot(includeSaveMetadata)
         autoSave = State.autoSave == true,
         autoLoad = State.autoLoad == true,
         windowKeybind = normalizeWindowKeybind(State.windowKeybind),
+
+        autoEquipBestCards = State.autoEquipBestCards == true,
+        equipBestMode =
+            normalizeEquipBestMode(State.equipBestMode),
 
         autoCraft = State.autoCraft == true,
         trophyWhitelist = ConfigRuntime.copyBooleanMap(State.whitelist),
@@ -5878,6 +6268,10 @@ function ConfigRuntime.syncControls()
         end
     end
 
+    setToggle(
+        State.autoEquipBestCardsToggle,
+        State.autoEquipBestCards
+    )
     setToggle(State.autoCraftToggle, State.autoCraft)
     setToggle(State.autoClaimSeashellToggle, State.autoClaimSeashell)
     setToggle(State.autoClaimSpinWheelToggle, State.autoClaimSpinWheel)
@@ -5904,6 +6298,7 @@ function ConfigRuntime.syncControls()
     setToggle(State.autoLoadToggle, State.autoLoad)
 
     applyWindowKeybind(State.windowKeybind, true)
+    EquipBestRuntime.syncModeDropdown()
 
     syncWhitelistDropdown()
     syncGemShopWhitelistDropdown()
@@ -5911,6 +6306,7 @@ function ConfigRuntime.syncControls()
     refreshTournamentShopOptions(false)
     syncTournamentShopWhitelistDropdown()
 
+    EquipBestRuntime.updateUI()
     updateStatus()
     updateSeashellStatus()
     updateSpinWheelStatus()
@@ -5969,6 +6365,15 @@ function ConfigRuntime.apply(config, syncUI)
     if config.windowKeybind ~= nil then
         State.windowKeybind =
             normalizeWindowKeybind(config.windowKeybind)
+    end
+
+    if config.autoEquipBestCards ~= nil then
+        State.autoEquipBestCards =
+            config.autoEquipBestCards == true
+    end
+    if config.equipBestMode ~= nil then
+        State.equipBestMode =
+            normalizeEquipBestMode(config.equipBestMode)
     end
 
     if config.autoCraft ~= nil then
@@ -6354,6 +6759,7 @@ function HomeRuntime.getActiveFeatures()
     local features = {}
 
     local entries = {
+        {State.autoEquipBestCards, "Main Team"},
         {State.autoCraft, "Trophies"},
         {State.autoClaimSeashell, "Seashells"},
         {State.autoClaimSpinWheel, "Free Spin"},
@@ -6399,6 +6805,8 @@ function HomeRuntime.update(message)
         "",
         "Active: " .. activeText,
         "",
+        "Main Team Mode: "
+            .. equipBestModeLabel(State.equipBestMode),
         "Gems: " .. formatCompactNumber(getCurrentGems()),
         "Seashells: " .. formatCompactNumber(playerData.seashells or 0),
         "Wish Tickets: " .. formatCompactNumber(wishData.tickets),
@@ -6529,6 +6937,104 @@ local function buildGui()
         Image = "circle-help",
         ImageSize = 19,
         Size = "Small",
+    })
+
+    local TeamTab = Window:Tab({
+        Title = "Team",
+        Icon = "users",
+        IconSize = 16,
+    })
+
+    State.equipBestStatusParagraph = TeamTab:Paragraph({
+        Title = "Main Team",
+        Desc = "Loading...",
+        Image = "users",
+        ImageSize = 19,
+        Size = "Small",
+    })
+
+    State.equipBestModeDropdown = TeamTab:Dropdown({
+        Title = "Auto Equip Mode",
+        Desc = "Choose how the strongest cards are selected.",
+        Values = EQUIP_BEST_MODE_OPTIONS,
+        Value = equipBestModeLabel(State.equipBestMode),
+        Multi = false,
+        AllowNone = false,
+        SearchBarEnabled = false,
+        MenuWidth = 220,
+        Callback = function(selectedValue)
+            if State.syncingEquipBestModeDropdown then
+                return
+            end
+
+            local value = selectedValue
+
+            if type(selectedValue) == "table" then
+                value = selectedValue.Title
+                    or selectedValue.Value
+                    or selectedValue.Name
+                    or selectedValue[1]
+
+                if value == nil then
+                    for candidate, enabled in pairs(selectedValue) do
+                        if enabled == true then
+                            value = candidate
+                            break
+                        end
+                    end
+                end
+            end
+
+            EquipBestRuntime.setMode(value)
+        end,
+    })
+
+    TeamTab:Button({
+        Title = "Equip Best Income",
+        Desc = "Equip the cards with the highest earning power.",
+        Icon = "trending-up",
+        Callback = function()
+            local success, result = EquipBestRuntime.equip(
+                EQUIP_BEST_MODE_INCOME,
+                true
+            )
+
+            notify(
+                "Team",
+                success
+                    and "Updating the team by income."
+                    or tostring(result),
+                success and "trending-up" or "triangle-alert"
+            )
+        end,
+    })
+
+    TeamTab:Button({
+        Title = "Equip Best Rarity",
+        Desc = "Equip the cards with the highest rarity.",
+        Icon = "sparkles",
+        Callback = function()
+            local success, result = EquipBestRuntime.equip(
+                EQUIP_BEST_MODE_RARITY,
+                true
+            )
+
+            notify(
+                "Team",
+                success
+                    and "Updating the team by rarity."
+                    or tostring(result),
+                success and "sparkles" or "triangle-alert"
+            )
+        end,
+    })
+
+    State.autoEquipBestCardsToggle = TeamTab:Toggle({
+        Title = "Auto Equip Best",
+        Desc = "Update the main team when your cards change.",
+        Icon = "refresh-cw",
+        Value = State.autoEquipBestCards,
+        Callback = EquipBestRuntime.setAuto,
     })
 
     local DailyTab = Window:Tab({
@@ -7668,6 +8174,7 @@ local function buildGui()
             or State.configStartupError
             or "Ready."
     )
+    EquipBestRuntime.updateUI("Ready.")
     HomeRuntime.update()
     LogRuntime.append("Hub", "Hub ready.", "info", true)
     LogRuntime.updateUI()
@@ -7706,6 +8213,7 @@ local function buildGui()
 end
 
 local Hub = {
+    Team = {},
     Trophies = {},
     Seashells = {},
     SpinWheel = {},
@@ -7722,6 +8230,74 @@ local Hub = {
     Utilities = {},
     Config = {},
 }
+
+-- Team module ----------------------------------------------------------------
+
+function Hub.Team.SetAutoEquip(enabled)
+    local value = EquipBestRuntime.setAuto(enabled)
+
+    if State.autoEquipBestCardsToggle
+        and type(State.autoEquipBestCardsToggle.Set)
+            == "function"
+    then
+        pcall(function()
+            State.autoEquipBestCardsToggle:Set(value)
+        end)
+    end
+
+    return value
+end
+
+function Hub.Team.ToggleAutoEquip()
+    return Hub.Team.SetAutoEquip(
+        not State.autoEquipBestCards
+    )
+end
+
+function Hub.Team.SetMode(value)
+    return EquipBestRuntime.setMode(value)
+end
+
+function Hub.Team.GetMode()
+    return State.equipBestMode
+end
+
+function Hub.Team.EquipBestIncome()
+    return EquipBestRuntime.equip(
+        EQUIP_BEST_MODE_INCOME,
+        true
+    )
+end
+
+function Hub.Team.EquipBestRarity()
+    return EquipBestRuntime.equip(
+        EQUIP_BEST_MODE_RARITY,
+        true
+    )
+end
+
+function Hub.Team.EquipNow()
+    return EquipBestRuntime.equip(
+        State.equipBestMode,
+        true
+    )
+end
+
+function Hub.Team.GetState()
+    local cards = EquipBestRuntime.getOwnedCards()
+
+    return {
+        autoEquip = State.autoEquipBestCards,
+        mode = State.equipBestMode,
+        modeLabel = equipBestModeLabel(State.equipBestMode),
+        ownedCards = #cards,
+        busy = State.equipBestBusy,
+        requests = State.equipBestRequests,
+        failures = State.equipBestFailures,
+        status = State.equipBestLastStatus,
+    }
+end
+
 
 -- Trophies module ------------------------------------------------------------
 
@@ -8886,6 +9462,7 @@ end
 function Hub.GetState()
     return {
         running = State.running,
+        team = Hub.Team.GetState(),
         trophies = {
             autoCraft = State.autoCraft,
             whitelist = Hub.Trophies.GetWhitelist(),
@@ -8932,6 +9509,8 @@ function Hub.Stop()
     end
 
     State.running = false
+    State.autoEquipBestCards = false
+    State.equipBestBusy = false
     State.autoCraft = false
     State.autoClaimSeashell = false
     State.autoClaimSpinWheel = false
@@ -8998,6 +9577,15 @@ function Hub.Stop()
 end
 
 -- API ringkas untuk penggunaan melalui console.
+Hub.SetAutoEquipBestCards = Hub.Team.SetAutoEquip
+Hub.ToggleAutoEquipBestCards = Hub.Team.ToggleAutoEquip
+Hub.SetEquipBestMode = Hub.Team.SetMode
+Hub.GetEquipBestMode = Hub.Team.GetMode
+Hub.EquipBestCardsNow = Hub.Team.EquipNow
+Hub.EquipBestIncomeNow = Hub.Team.EquipBestIncome
+Hub.EquipBestRarityNow = Hub.Team.EquipBestRarity
+Hub.GetTeamState = Hub.Team.GetState
+
 Hub.SetAutoCraft = Hub.Trophies.SetAutoCraft
 Hub.ToggleAutoCraft = Hub.Trophies.ToggleAutoCraft
 Hub.SetTrophyEnabled = Hub.Trophies.SetEnabled
@@ -9204,6 +9792,14 @@ task.spawn(function()
     if not success then
         State.lastStatus = "GUI error: " .. tostring(errorMessage)
         warn("[SpinASoccerCardHub] " .. tostring(errorMessage))
+    end
+end)
+
+task.spawn(function()
+    while State.running do
+        pcall(EquipBestRuntime.tick)
+
+        task.wait(State.equipBestPollInterval)
     end
 end)
 
