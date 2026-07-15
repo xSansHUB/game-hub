@@ -700,6 +700,11 @@ local State = {
     packControllerResets = 0,
     packAnimationStaleSince = 0,
     packAnimationRecoveryDelay = 5,
+    packLocalHideAvailable = false,
+    packLocalHideApplied = false,
+    packLocalHideFailures = 0,
+    packPreservedUi = nil,
+    packRestoredUiCount = 0,
 
     autoRebirth = false,
     rebirthPollInterval = 0.75,
@@ -6909,17 +6914,151 @@ function PackRuntime.isAnimating()
     return success and result == true
 end
 
-function PackRuntime.releaseInputBlock()
-    pcall(function()
-        Modules.UIService.setBlocked(false)
-    end)
+function PackRuntime.getUpvalueAccess()
+    local getter
+    local setter
+
+    if type(debug) == "table"
+        and type(debug.getupvalue) == "function"
+    then
+        getter = debug.getupvalue
+    elseif type(getupvalue) == "function" then
+        getter = getupvalue
+    end
+
+    if type(debug) == "table"
+        and type(debug.setupvalue) == "function"
+    then
+        setter = debug.setupvalue
+    elseif type(setupvalue) == "function" then
+        setter = setupvalue
+    end
+
+    return getter, setter
+end
+
+function PackRuntime.setLocalHideMode(enabled)
+    enabled = enabled == true
+
+    local callback =
+        Modules.PackAnimationController.isMinimized
+    local getter, setter =
+        PackRuntime.getUpvalueAccess()
+
+    if type(callback) ~= "function"
+        or not getter
+        or not setter
+    then
+        State.packLocalHideAvailable = false
+        State.packLocalHideApplied = false
+        return false, "Local hide access is unavailable"
+    end
+
+    for index = 1, 12 do
+        local success, first, second =
+            pcall(getter, callback, index)
+
+        if not success then
+            break
+        end
+
+        if first == nil and second == nil then
+            break
+        end
+
+        local value =
+            second ~= nil and second or first
+
+        if type(value) == "boolean" then
+            local applied = pcall(
+                setter,
+                callback,
+                index,
+                enabled
+            )
+
+            if applied then
+                local verified, current =
+                    pcall(callback)
+
+                if verified and current == enabled then
+                    State.packLocalHideAvailable = true
+                    State.packLocalHideApplied = enabled
+                    return true
+                end
+            end
+        end
+    end
+
+    State.packLocalHideAvailable = false
+    State.packLocalHideApplied = false
+    State.packLocalHideFailures += 1
+
+    return false, "Could not update local hide mode"
+end
+
+function PackRuntime.captureCurrentUi()
+    local current
 
     pcall(function()
-        Modules.UIService.close(
-            "__PackAnim",
-            true
-        )
+        current = Modules.UIService.getCurrentUI()
     end)
+
+    if current ~= nil
+        and tostring(current) ~= "__PackAnim"
+    then
+        State.packPreservedUi = current
+    elseif current == nil then
+        State.packPreservedUi = nil
+    end
+
+    return current
+end
+
+function PackRuntime.releaseInputBlock()
+    local current
+
+    pcall(function()
+        current = Modules.UIService.getCurrentUI()
+    end)
+
+    if tostring(current) == "__PackAnim" then
+        pcall(function()
+            Modules.UIService.setBlocked(false)
+        end)
+
+        pcall(function()
+            Modules.UIService.close(
+                "__PackAnim",
+                true
+            )
+        end)
+
+        local afterClose
+
+        pcall(function()
+            afterClose =
+                Modules.UIService.getCurrentUI()
+        end)
+
+        if afterClose == nil
+            and State.packPreservedUi ~= nil
+        then
+            local restored = pcall(function()
+                Modules.UIService.open(
+                    State.packPreservedUi
+                )
+            end)
+
+            if restored then
+                State.packRestoredUiCount += 1
+            end
+        end
+    elseif current == nil then
+        pcall(function()
+            Modules.UIService.setBlocked(false)
+        end)
+    end
 
     pcall(function()
         game:GetService("StarterGui")
@@ -6951,6 +7090,10 @@ function PackRuntime.resetControllerState()
     else
         State.packOpenFailures += 1
     end
+
+    PackRuntime.setLocalHideMode(
+        State.skipPackAnimations
+    )
 
     local playerGui =
         LocalPlayer:FindFirstChildOfClass("PlayerGui")
@@ -7621,6 +7764,18 @@ function PackRuntime.updateUI(message, shouldLog)
             .. tostring(State.packUiSuppressCount),
         "Controller Resets: "
             .. tostring(State.packControllerResets),
+        "Local Pre-Hide: "
+            .. (
+                State.packLocalHideApplied
+                    and "ACTIVE"
+                    or (
+                        State.packLocalHideAvailable
+                            and "READY"
+                            or "FALLBACK"
+                    )
+            ),
+        "Restored Menus: "
+            .. tostring(State.packRestoredUiCount),
         "Logged Results: "
             .. tostring(State.packResultsLogged),
         "Filtered Results: "
@@ -7916,6 +8071,11 @@ end
 
 function PackRuntime.requestOpen(packName, force)
     PackRuntime.installUiSuppressor()
+    PackRuntime.captureCurrentUi()
+
+    PackRuntime.setLocalHideMode(
+        State.skipPackAnimations
+    )
 
     pcall(function()
         Modules.PackAnimationController.setAutoOpen(
@@ -8134,6 +8294,10 @@ function PackRuntime.setAutoOpen(enabled)
     PackRuntime.resetControllerState()
 
     if enabled then
+        PackRuntime.setLocalHideMode(
+            State.skipPackAnimations
+        )
+
         pcall(function()
             Modules.PackAnimationController.setAutoOpen(true)
         end)
@@ -8172,6 +8336,9 @@ function PackRuntime.setSkipAnimations(enabled)
     State.skipPackAnimations = enabled == true
 
     PackRuntime.installUiSuppressor()
+    PackRuntime.setLocalHideMode(
+        State.skipPackAnimations
+    )
 
     if not State.skipPackAnimations then
         PackRuntime.releaseInputBlock()
@@ -8232,11 +8399,24 @@ function PackRuntime.installHook()
 end
 
 function PackRuntime.uninstallHook()
+    State.skipPackAnimations = false
+    PackRuntime.setLocalHideMode(false)
     PackRuntime.resetControllerState()
+    State.packPreservedUi = nil
 end
 
 function PackRuntime.tick()
     PackRuntime.installUiSuppressor()
+
+    if State.skipPackAnimations
+        and not State.packLocalHideApplied
+    then
+        PackRuntime.setLocalHideMode(true)
+    elseif not State.skipPackAnimations
+        and State.packLocalHideApplied
+    then
+        PackRuntime.setLocalHideMode(false)
+    end
 
     pcall(function()
         Modules.PackAnimationController.setAutoOpen(
@@ -9145,7 +9325,7 @@ local function normalizeWindowKeybind(value)
 end
 
 local ConfigRuntime = {
-    version = 19,
+    version = 20,
     root = "xSansHUB",
     folder = "xSansHUB/SpinASoccerCardHub",
     file = "xSansHUB/SpinASoccerCardHub/" .. tostring(game.PlaceId) .. ".json",
@@ -10340,8 +10520,8 @@ local function buildGui()
         Title = "Direct Processing",
         Desc = table.concat({
             "Stored packs are opened through OpenPack.",
-            "The local controller chains the next pack without enabling the native server checkbox.",
-            "PackOpeningUI is hidden immediately while completion continues in the background.",
+            "Local pre-hide prevents __PackAnim from replacing an open game menu.",
+            "The UI fallback only closes __PackAnim and never closes another active menu.",
             "The rarity filter affects result logging only.",
         }, "\n"),
         Image = "info",
@@ -12024,6 +12204,14 @@ function Hub.Packs.GetState()
         controllerResets = State.packControllerResets,
         automationGeneration =
             State.packAutomationGeneration,
+        localHideAvailable =
+            State.packLocalHideAvailable,
+        localHideApplied =
+            State.packLocalHideApplied,
+        localHideFailures =
+            State.packLocalHideFailures,
+        restoredMenus =
+            State.packRestoredUiCount,
         loggedResults = State.packResultsLogged,
         filteredResults =
             State.packResultsFiltered,
