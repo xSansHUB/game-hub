@@ -622,10 +622,13 @@ local State = {
     tournamentAutomationPollInterval = 0.35,
     tournamentActionDelay = 0.75,
     tournamentEquipCooldown = 3,
+    tournamentEquipSettleDelay = 1.25,
     tournamentPendingTimeout = 6,
     tournamentNextActionAt = 0,
     tournamentNextEquipAt = 0,
     tournamentPendingAction = nil,
+    tournamentLastEquipSignature = nil,
+    tournamentLastEquipTeamFingerprint = "",
     tournamentManualJoinRequested = false,
     tournamentTickState = nil,
     tournamentEquipRequests = 0,
@@ -5076,6 +5079,85 @@ function TournamentRuntime.teamMatchesBest(team, best)
     return true
 end
 
+function TournamentRuntime.getEquipSignature(data)
+    data = type(data) == "table"
+        and data
+        or TournamentRuntime.getState()
+
+    if not data.ready or not data.playerData then
+        return nil
+    end
+
+    local best, incomeMap =
+        TournamentRuntime.getBestTeam(data.playerData)
+
+    if #best < 5 then
+        return nil
+    end
+
+    local bestParts = {}
+
+    for index = 1, 5 do
+        local uuid = tostring(best[index] or "")
+
+        bestParts[index] = table.concat({
+            uuid,
+            tostring(tonumber(incomeMap[uuid]) or 0),
+        }, "=")
+    end
+
+    return table.concat({
+        table.concat(bestParts, "|"),
+        TournamentRuntime.teamFingerprint(data.team),
+    }, "#")
+end
+
+function TournamentRuntime.markEquipCurrent(data)
+    data = type(data) == "table"
+        and data
+        or TournamentRuntime.getState()
+
+    local signature =
+        TournamentRuntime.getEquipSignature(data)
+
+    if not signature or data.teamCount ~= 5 then
+        return false
+    end
+
+    State.tournamentLastEquipSignature = signature
+    State.tournamentLastEquipTeamFingerprint =
+        TournamentRuntime.teamFingerprint(data.team)
+
+    return true
+end
+
+function TournamentRuntime.isEquipCurrent(data)
+    data = type(data) == "table"
+        and data
+        or TournamentRuntime.getState()
+
+    if data.teamCount ~= 5 or not data.playerData then
+        return false
+    end
+
+    local best =
+        TournamentRuntime.getBestTeam(data.playerData)
+
+    -- Exact comparison is used on the first run.
+    if TournamentRuntime.teamMatchesBest(data.team, best) then
+        TournamentRuntime.markEquipCurrent(data)
+        return true
+    end
+
+    -- After the official Equip Best action has settled, the resulting
+    -- server team is trusted until its input or team composition changes.
+    local signature =
+        TournamentRuntime.getEquipSignature(data)
+
+    return signature ~= nil
+        and signature == State.tournamentLastEquipSignature
+end
+
 function TournamentRuntime.formatTime(seconds)
     local value = math.max(
         0,
@@ -5144,7 +5226,7 @@ function TournamentRuntime.updateUI(message, shouldLog)
         "Team: " .. tostring(data.teamCount) .. "/5",
         "Best Team: "
             .. (
-                TournamentRuntime.teamMatchesBest(data.team, best)
+                TournamentRuntime.isEquipCurrent(data)
                     and "Ready"
                     or "Not Ready"
             ),
@@ -5235,6 +5317,10 @@ function TournamentRuntime.confirmPending()
 
     if pending.kind == "equip_best" then
         local best = {}
+        local teamFingerprint =
+            TournamentRuntime.teamFingerprint(data.team)
+        local elapsed =
+            os.clock() - (tonumber(pending.startedAt) or 0)
 
         if data.playerData then
             best = TournamentRuntime.getBestTeam(data.playerData)
@@ -5242,9 +5328,17 @@ function TournamentRuntime.confirmPending()
 
         confirmed =
             data.teamCount == 5
-            and TournamentRuntime.teamMatchesBest(
-                data.team,
-                best
+            and (
+                TournamentRuntime.teamMatchesBest(
+                    data.team,
+                    best
+                )
+                or teamFingerprint
+                    ~= tostring(
+                        pending.beforeFingerprint or ""
+                    )
+                or elapsed
+                    >= State.tournamentEquipSettleDelay
             )
 
         message = "Best tournament team equipped."
@@ -5259,6 +5353,10 @@ function TournamentRuntime.confirmPending()
     end
 
     if confirmed then
+        if pending.kind == "equip_best" then
+            TournamentRuntime.markEquipCurrent(data)
+        end
+
         TournamentRuntime.clearPending()
         TournamentRuntime.updateUI(message, true)
         return true
@@ -5301,11 +5399,25 @@ function TournamentRuntime.equipBest(force)
         return false, "At least five cards are required"
     end
 
-    if TournamentRuntime.teamMatchesBest(data.team, best) then
+    if TournamentRuntime.isEquipCurrent(data) then
         TournamentRuntime.updateUI(
             "Best tournament team is already equipped."
         )
         return true, "Already equipped"
+    end
+
+    local currentSignature =
+        TournamentRuntime.getEquipSignature(data)
+
+    if force ~= true
+        and currentSignature ~= nil
+        and currentSignature
+            == State.tournamentLastEquipSignature
+    then
+        TournamentRuntime.updateUI(
+            "No tournament team changes detected."
+        )
+        return true, "No changes"
     end
 
     local success, errorMessage = pcall(function()
@@ -5327,7 +5439,9 @@ function TournamentRuntime.equipBest(force)
     State.tournamentNextActionAt =
         now + State.tournamentActionDelay
 
-    TournamentRuntime.setPending("equip_best")
+    TournamentRuntime.setPending("equip_best", {
+        requestedSignature = currentSignature,
+    })
     TournamentRuntime.updateUI(
         "Equipping the best tournament team."
     )
@@ -5458,11 +5572,7 @@ function TournamentRuntime.runJoinStep()
     end
 
     local teamReady =
-        data.teamCount == 5
-        and TournamentRuntime.teamMatchesBest(
-            data.team,
-            best
-        )
+        TournamentRuntime.isEquipCurrent(data)
 
     if not teamReady then
         if os.clock() >= State.tournamentNextEquipAt then
@@ -6212,6 +6322,8 @@ function ConfigRuntime.resetActionCooldowns()
     State.codeNextRedeemAt = 0
     State.tournamentNextActionAt = 0
     State.tournamentNextEquipAt = 0
+    State.tournamentLastEquipSignature = nil
+    State.tournamentLastEquipTeamFingerprint = ""
     State.tournamentManualJoinRequested = false
     TournamentRuntime.clearPending()
     State.nextAntiAfkPulseAt = 0
@@ -8980,7 +9092,7 @@ function Hub.Tournament.GetState()
         team = TournamentRuntime.copyTeam(data.team),
         teamCount = data.teamCount,
         bestTeamReady =
-            TournamentRuntime.teamMatchesBest(data.team, best),
+            TournamentRuntime.isEquipCurrent(data),
         rebirth = data.rebirth,
         minRebirth = data.minRebirth,
         unlocked = data.unlocked,
@@ -8991,6 +9103,10 @@ function Hub.Tournament.GetState()
             and State.tournamentPendingAction.kind
             or nil,
         equipRequests = State.tournamentEquipRequests,
+        equipSignature =
+            State.tournamentLastEquipSignature,
+        equipTeamFingerprint =
+            State.tournamentLastEquipTeamFingerprint,
         joinRequests = State.tournamentJoinRequests,
         joins = State.tournamentJoins,
         failures = State.tournamentFailures,
