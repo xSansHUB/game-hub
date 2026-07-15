@@ -1001,6 +1001,8 @@ local State = {
     logsLastByCategory = {},
     logsSuppressed = 0,
     logsDedupeSeconds = 30,
+    logsSuppressedUiInterval = 2,
+    logsNextSuppressedUiAt = 0,
     logsParagraph = nil,
     logsSummaryParagraph = nil,
     logsFilterDropdown = nil,
@@ -1046,26 +1048,25 @@ local LogRuntime = {}
 
 local LOG_ROUTINE_PATTERNS = {
     "no seashells",
-    "no Index rewards",
+    "no index rewards",
     "no claimable rewards",
-    "no Summer Quests",
-    "no Summer Quests are available yet",
+    "no summer quests",
+    "summer quest data is not available yet",
     "no quests",
     "out of stock",
-    "not available in stock",
     "not available in stock",
     "unavailable.",
     "not available yet",
     "not available in the shop yet",
-    "not available in the shop yet",
+    "whitelisted rewards are not currently available",
     "whitelisted rewards are not available",
     "reward list is not available",
-    "no Wish Tickets",
+    "no wish tickets",
     "no spins",
     "no items",
     "no rewards",
     "waiting for rewards",
-    "waiting for Wish",
+    "waiting for wish",
     "waiting for spin",
     "waiting for automation",
     "is still on cooldown",
@@ -1084,6 +1085,8 @@ local LOG_ROUTINE_PATTERNS = {
     "all saved codes have been tried",
     "no pending codes",
     "required group has not been joined",
+    "keep-alive input sent • periodic",
+    "settings saved successfully",
     "ready.",
 }
 
@@ -1100,12 +1103,35 @@ function LogRuntime.isRoutineMessage(message)
     )
 
     for _, pattern in ipairs(LOG_ROUTINE_PATTERNS) do
-        if string.find(lowered, pattern, 1, true) then
+        local normalizedPattern = string.lower(
+            LogRuntime.normalizeMessage(pattern)
+        )
+
+        if normalizedPattern ~= ""
+            and string.find(
+                lowered,
+                normalizedPattern,
+                1,
+                true
+            )
+        then
             return true
         end
     end
 
     return false
+end
+
+function LogRuntime.suppress()
+    State.logsSuppressed += 1
+
+    local now = os.clock()
+
+    if now >= State.logsNextSuppressedUiAt then
+        State.logsNextSuppressedUiAt =
+            now + State.logsSuppressedUiInterval
+        LogRuntime.updateUI()
+    end
 end
 
 function LogRuntime.getLines()
@@ -1183,8 +1209,7 @@ function LogRuntime.append(category, message, level, keepRoutine)
         and level ~= "error"
         and LogRuntime.isRoutineMessage(message)
     then
-        State.logsSuppressed += 1
-        LogRuntime.updateUI()
+        LogRuntime.suppress()
         return nil
     end
 
@@ -1196,8 +1221,7 @@ function LogRuntime.append(category, message, level, keepRoutine)
         or State.logsDedupeSeconds
 
     if previousAt and now - previousAt < dedupeSeconds then
-        State.logsSuppressed += 1
-        LogRuntime.updateUI()
+        LogRuntime.suppress()
         return nil
     end
 
@@ -1226,6 +1250,7 @@ function LogRuntime.clear()
     table.clear(State.logs)
     table.clear(State.logsLastByCategory)
     State.logsSuppressed = 0
+    State.logsNextSuppressedUiAt = 0
     LogRuntime.updateUI()
 end
 
