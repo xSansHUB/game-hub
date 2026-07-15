@@ -42,6 +42,7 @@
       LoanOutGUI.SetPackBuyWhitelist({Basic = true, Premium = false})
       LoanOutGUI.SetPackBuyPrestigePriority(true/false)
       LoanOutGUI.BuyPacksNow() -- membeli tepat 1 pack dari tier terpilih
+      LoanOutGUI.SetAutoBuyPackQuantityPerCycle(1-25)
       LoanOutGUI.GetUICapabilityState()
       LoanOutGUI.GetPackSessionLog()
       LoanOutGUI.ClearPackSessionLog()
@@ -126,7 +127,7 @@ end
 local GAME_NAME = getCurrentGameName()
 local HUB_TITLE = GAME_NAME
 
-local CONFIG_VERSION = 23
+local CONFIG_VERSION = 24
 local CONFIG_ROOT = "xSansHUB"
 local CONFIG_FOLDER = CONFIG_ROOT .. "/LoanOutManager"
 local CONFIG_FILE = CONFIG_FOLDER .. "/" .. tostring(game.PlaceId) .. ".json"
@@ -200,6 +201,29 @@ local function packPickModeLabel(value)
     end
 
     return "Best Rarity + OVR"
+end
+
+local AUTO_BUY_PACK_QTY_MIN = 1
+local AUTO_BUY_PACK_QTY_MAX = 25
+local AUTO_BUY_PACK_QTY_DEFAULT = 25
+
+local function normalizeAutoBuyPackQuantity(value)
+    local number = tonumber(value)
+
+    if not number and type(value) == "string" then
+        number = tonumber(string.match(value, "%d+"))
+    end
+
+    return math.clamp(
+        math.floor(number or AUTO_BUY_PACK_QTY_DEFAULT),
+        AUTO_BUY_PACK_QTY_MIN,
+        AUTO_BUY_PACK_QTY_MAX
+    )
+end
+
+local function autoBuyPackQuantityLabel(value)
+    local quantity = normalizeAutoBuyPackQuantity(value)
+    return quantity == 1 and "1 Pack" or (tostring(quantity) .. " Packs")
 end
 
 local function configFileExists()
@@ -276,6 +300,10 @@ local function mergeRawConfig(target, source)
     end
     if source.autoBuyPacks ~= nil then
         target.autoBuyPacks = source.autoBuyPacks == true
+    end
+    if source.autoBuyPackQuantityPerCycle ~= nil then
+        target.autoBuyPackQuantityPerCycle =
+            normalizeAutoBuyPackQuantity(source.autoBuyPackQuantityPerCycle)
     end
     if source.packBuyPrestigePriority ~= nil then
         target.packBuyPrestigePriority = source.packBuyPrestigePriority == true
@@ -483,6 +511,8 @@ end
 if PersistentConfig.autoBuyPacks == nil then
     PersistentConfig.autoBuyPacks = false
 end
+PersistentConfig.autoBuyPackQuantityPerCycle =
+    normalizeAutoBuyPackQuantity(PersistentConfig.autoBuyPackQuantityPerCycle)
 if PersistentConfig.packBuyPrestigePriority == nil then
     PersistentConfig.packBuyPrestigePriority = true
 end
@@ -583,6 +613,8 @@ local State = {
     skipPackAnimation = PersistentConfig.skipPackAnimation ~= false,
     instantPacks = PersistentConfig.instantPacks == true,
     autoBuyPacks = PersistentConfig.autoBuyPacks == true,
+    autoBuyPackQuantityPerCycle =
+        normalizeAutoBuyPackQuantity(PersistentConfig.autoBuyPackQuantityPerCycle),
     packBuyPrestigePriority = PersistentConfig.packBuyPrestigePriority ~= false,
     packBuyWhitelist = PersistentConfig.packBuyWhitelist,
     packShopTiers = {},
@@ -755,6 +787,7 @@ local State = {
     skipPackAnimationToggle = nil,
     instantPacksToggle = nil,
     autoBuyPacksToggle = nil,
+    autoBuyPackQuantityDropdown = nil,
     packBuyPrestigePriorityToggle = nil,
     packBuyWhitelistDropdown = nil,
     packBuyButton = nil,
@@ -871,6 +904,8 @@ local function syncPersistentConfig()
     PersistentConfig.skipPackAnimation = State.skipPackAnimation == true
     PersistentConfig.instantPacks = State.instantPacks == true
     PersistentConfig.autoBuyPacks = State.autoBuyPacks == true
+    PersistentConfig.autoBuyPackQuantityPerCycle =
+        normalizeAutoBuyPackQuantity(State.autoBuyPackQuantityPerCycle)
     PersistentConfig.packBuyPrestigePriority = State.packBuyPrestigePriority == true
     PersistentConfig.packBuyWhitelist = copyPackBuyWhitelistForConfig()
     PersistentConfig.packLogRarityWhitelist = copyPackLogWhitelistForConfig()
@@ -913,6 +948,8 @@ local function buildConfigSnapshot()
         skipPackAnimation = State.skipPackAnimation == true,
         instantPacks = State.instantPacks == true,
         autoBuyPacks = State.autoBuyPacks == true,
+        autoBuyPackQuantityPerCycle =
+            normalizeAutoBuyPackQuantity(State.autoBuyPackQuantityPerCycle),
         packBuyPrestigePriority = State.packBuyPrestigePriority == true,
         packBuyWhitelist = copyPackBuyWhitelistForConfig(),
         packLogRarityWhitelist = copyPackLogWhitelistForConfig(),
@@ -1301,15 +1338,22 @@ local function updateAutomationButtons(allowInstanceAccess)
         local buyState = Runtime.getPackBuyState and Runtime.getPackBuyState() or nil
         local desc
         if State.buyingPacks then
-            desc = "BUYING • pembelian pack sedang diproses."
+            desc = string.format(
+                "BUYING • target %d pack per cycle.",
+                State.autoBuyPackQuantityPerCycle
+            )
         elseif not State.autoBuyPacks then
-            desc = "Beli pack terpilih otomatis memakai coins yang dapat dibelanjakan."
+            desc = string.format(
+                "Beli otomatis hingga %d pack per cycle.",
+                State.autoBuyPackQuantityPerCycle
+            )
         elseif buyState and buyState.blockedByPrestige then
             desc = "SAVING • coins disimpan untuk requirement Prestige."
         elseif buyState and buyState.nextTier then
             desc = string.format(
-                "READY • %s • cost %s • budget %s.",
+                "READY • %s • qty %d/cycle • cost %s • budget %s.",
                 tostring(buyState.nextLabel or buyState.nextTier),
+                State.autoBuyPackQuantityPerCycle,
                 formatCompactNumber(buyState.nextCost or 0),
                 formatCompactNumber(buyState.spendable or 0)
             )
@@ -1868,6 +1912,27 @@ Runtime.setAutoBuyPacksEnabled = function(enabled, announce)
     end
 
     return State.autoBuyPacks
+end
+
+Runtime.setAutoBuyPackQuantityPerCycle = function(value, announce)
+    State.autoBuyPackQuantityPerCycle = normalizeAutoBuyPackQuantity(value)
+    PersistentConfig.autoBuyPackQuantityPerCycle = State.autoBuyPackQuantityPerCycle
+    State.nextAutoBuyPackAt = 0
+    State.packUiDirty = true
+    State.uiRefreshRequested = true
+    requestConfigSave()
+
+    if announce ~= false then
+        setStatus(
+            string.format(
+                "Auto Buy quantity: %d pack per cycle.",
+                State.autoBuyPackQuantityPerCycle
+            ),
+            COLORS.success
+        )
+    end
+
+    return State.autoBuyPackQuantityPerCycle
 end
 
 Runtime.setPackBuyPrestigePriorityEnabled = function(enabled, announce)
@@ -3020,6 +3085,16 @@ local function syncConfigurationControls()
         end)
     end
 
+    if State.autoBuyPackQuantityDropdown
+        and type(State.autoBuyPackQuantityDropdown.Select) == "function"
+    then
+        pcall(function()
+            State.autoBuyPackQuantityDropdown:Select(
+                autoBuyPackQuantityLabel(State.autoBuyPackQuantityPerCycle)
+            )
+        end)
+    end
+
     if State.packBuyWhitelistDropdown and type(State.packBuyWhitelistDropdown.Select) == "function" then
         local selected = {}
         for _, tier in ipairs(State.packShopTiers or {}) do
@@ -3169,6 +3244,10 @@ local function applyLoadedConfig(config)
     end
     if config.autoBuyPacks ~= nil then
         State.autoBuyPacks = config.autoBuyPacks == true
+    end
+    if config.autoBuyPackQuantityPerCycle ~= nil then
+        State.autoBuyPackQuantityPerCycle =
+            normalizeAutoBuyPackQuantity(config.autoBuyPackQuantityPerCycle)
     end
     if config.packBuyPrestigePriority ~= nil then
         State.packBuyPrestigePriority = config.packBuyPrestigePriority == true
@@ -4573,6 +4652,7 @@ Runtime.getPackBuyState = function()
             0,
             math.min(
                 math.floor((tonumber(budget.spendable) or 0) / nextPack.cost),
+                normalizeAutoBuyPackQuantity(State.autoBuyPackQuantityPerCycle),
                 AUTO_BUY_PACK_MAX_BATCH
             )
         )
@@ -4604,6 +4684,8 @@ Runtime.getPackBuyState = function()
         nextIsPick = nextPack and nextPack.pick or false,
         nextRemaining = nextPack and nextPack.remaining or nil,
         nextCount = nextCount,
+        autoQuantityPerCycle =
+            normalizeAutoBuyPackQuantity(State.autoBuyPackQuantityPerCycle),
         manualBuyCount = 1,
         maxBatch = AUTO_BUY_PACK_MAX_BATCH,
         lastBuyAt = State.lastPackBuyAt,
@@ -4737,6 +4819,10 @@ Runtime.buySelectedPacks = function(isAutomatic, requestedCount)
     end
 
     local affordableCount = math.floor((buyState.spendable or 0) / selected.cost)
+
+    if requestedCount == nil and isAutomatic then
+        requestedCount = State.autoBuyPackQuantityPerCycle
+    end
 
     local count
     if requestedCount ~= nil then
@@ -8988,6 +9074,34 @@ function Runtime.createPacksTab(Window)
         packWhitelistDropdownReady = true
     end)
 
+    local autoBuyQuantityValues = {}
+    for quantity = AUTO_BUY_PACK_QTY_MIN, AUTO_BUY_PACK_QTY_MAX do
+        autoBuyQuantityValues[#autoBuyQuantityValues + 1] =
+            autoBuyPackQuantityLabel(quantity)
+    end
+
+    local autoBuyQuantityDropdownReady = false
+    State.autoBuyPackQuantityDropdown = Runtime.uiDropdown(tab, {
+        Title = "Auto Buy Qty / Cycle",
+        Desc = "Jumlah maksimum pack yang dibeli setiap cycle.",
+        Values = autoBuyQuantityValues,
+        Value = autoBuyPackQuantityLabel(State.autoBuyPackQuantityPerCycle),
+        SearchBarEnabled = false,
+        MenuWidth = 180,
+        Callback = function(selected)
+            if not autoBuyQuantityDropdownReady or State.syncingConfiguration then
+                return
+            end
+
+            local selectedText = type(selected) == "table" and selected.Title or selected
+            Runtime.setAutoBuyPackQuantityPerCycle(selectedText)
+        end,
+    })
+    Runtime.setDropdownTextSize(State.autoBuyPackQuantityDropdown, 12, 11, 184)
+    task.delay(0.25, function()
+        autoBuyQuantityDropdownReady = true
+    end)
+
     State.autoBuyPacksToggle = Runtime.uiToggle(tab, {
         Title = "Auto Buy Packs",
         Desc = "Beli pack whitelist secara otomatis.",
@@ -9892,6 +10006,14 @@ function API.SetAutoBuyPacks(enabled)
     return Runtime.setAutoBuyPacksEnabled(enabled)
 end
 
+function API.SetAutoBuyPackQuantityPerCycle(quantity)
+    return Runtime.setAutoBuyPackQuantityPerCycle(quantity)
+end
+
+function API.GetAutoBuyPackQuantityPerCycle()
+    return State.autoBuyPackQuantityPerCycle
+end
+
 function API.SetPackBuyPrestigePriority(enabled)
     return Runtime.setPackBuyPrestigePriorityEnabled(enabled)
 end
@@ -10219,6 +10341,7 @@ function API.GetAutoOpenPacksState()
         skipPackAnimation = State.skipPackAnimation,
         instantPacks = State.instantPacks,
         autoBuyPacks = State.autoBuyPacks,
+        autoBuyPackQuantityPerCycle = State.autoBuyPackQuantityPerCycle,
         packBuyPrestigePriority = State.packBuyPrestigePriority,
         packBuyWhitelist = copyPackBuyWhitelistForConfig(),
         packBuyState = Runtime.getPackBuyState(),
@@ -10308,6 +10431,7 @@ function API.GetAutomationState()
         skipPackAnimation = State.skipPackAnimation,
         instantPacks = State.instantPacks,
         autoBuyPacks = State.autoBuyPacks,
+        autoBuyPackQuantityPerCycle = State.autoBuyPackQuantityPerCycle,
         packBuyPrestigePriority = State.packBuyPrestigePriority,
         packBuyWhitelist = copyPackBuyWhitelistForConfig(),
         packLogRarityWhitelist = copyPackLogWhitelistForConfig(),
@@ -10374,6 +10498,7 @@ function API.GetConfigState()
         skipPackAnimation = State.skipPackAnimation,
         instantPacks = State.instantPacks,
         autoBuyPacks = State.autoBuyPacks,
+        autoBuyPackQuantityPerCycle = State.autoBuyPackQuantityPerCycle,
         packBuyPrestigePriority = State.packBuyPrestigePriority,
         packBuyWhitelist = copyPackBuyWhitelistForConfig(),
         packLogRarityWhitelist = copyPackLogWhitelistForConfig(),
