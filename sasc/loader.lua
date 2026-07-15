@@ -1,24 +1,3 @@
---[[
-    Spin A Soccer Card Hub
-    Made for a simple, clean, and user-friendly experience.
-
-    Main features:
-      - Home overview
-      - Main team auto equip
-      - Trophy crafting
-      - Summer activities, quests, and shop
-      - Spin Wheel and Wish automation
-      - Daily rewards
-      - Redeem codes from a trusted list
-      - Index rewards
-      - Gem, Summer, and Tournament shops
-      - Anti AFK
-      - Central session logs
-      - Save and load configuration
-
-    Configurable window keybind
-]]
-
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local MarketplaceService = game:GetService("MarketplaceService")
@@ -30,7 +9,6 @@ local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
 local Environment = if type(getgenv) == "function" then getgenv() else _G
 
--- Hentikan instance sebelumnya agar loop tidak berjalan ganda.
 do
     local previous = Environment.SpinASoccerCardHub
 
@@ -178,16 +156,9 @@ local ClaimAllIndexGems = Networker.get_remote("ClaimAllIndexGems")
 local DailyReward = Networker.get_remote("DailyReward")
 local RedeemCode = Networker.get_remote("RedeemCode")
 
--- ============================================================================
--- REDEEM CODES
--- Tambahkan kode resmi baru di bawah ini menggunakan format "WORD-WORD".
--- Jangan gunakan generator acak atau brute force.
--- ============================================================================
 local REDEEM_CODES = {
     "OWL-HAPPY",
 
-    -- Tambahkan kode baru di bawah baris ini:
-    -- "NEW-CODE",
 }
 
 local REDEEM_CODE_GROUP_ID = 520125566
@@ -200,7 +171,6 @@ local TROPHY_ORDER = {
     "Immortal Chalice",
     "Infinite Diadem",
 }
-
 
 local GEM_SHOP_SPECIAL_LUCKY = "lucky"
 local GEM_SHOP_SPECIAL_SCARLET = "scarlet"
@@ -306,9 +276,6 @@ end
 
 buildSummerShopOptions()
 
--- Tournament Shop whitelist berasal dari TournamentConfig.ShopRewards.
--- ID config bersifat stabil walaupun tiga reward aktif, harga, stock, pack,
--- trophy, atau potion berubah mengikuti tournament dan Rebirth.
 local TournamentShopOptionKeys = {}
 local TournamentShopOptionLabels = {}
 local TournamentShopKeyByLabel = {}
@@ -500,7 +467,7 @@ local State = {
     nextCraftAt = 0,
     attempts = 0,
     lastCraft = "-",
-    lastStatus = "Pilih trophy pada whitelist.",
+    lastStatus = "Choose trophies from the whitelist.",
     window = nil,
     homeStatusParagraph = nil,
     statusParagraph = nil,
@@ -518,7 +485,7 @@ local State = {
     seashellFound = 0,
     seashellTriggered = 0,
     lastSeashell = "-",
-    lastSeashellStatus = "Menunggu Auto Claim.",
+    lastSeashellStatus = "Waiting for Auto Claim.",
     seashellStatusParagraph = nil,
     autoClaimSeashellToggle = nil,
     seashellTriggerTimes = {},
@@ -541,7 +508,7 @@ local State = {
     spinWheelResults = 0,
     spinWheelFailures = 0,
     spinWheelLastReward = "-",
-    spinWheelLastStatus = "Menunggu Spin Wheel.",
+    spinWheelLastStatus = "Waiting for Spin Wheel.",
     spinWheelSessionStartedAt = os.time(),
     spinWheelLog = {},
     spinWheelLogLimit = 40,
@@ -561,7 +528,7 @@ local State = {
     gemShopRequests = 0,
     gemShopFailures = 0,
     gemShopLastItem = "-",
-    gemShopLastStatus = "Pilih item pada whitelist.",
+    gemShopLastStatus = "Choose items from the whitelist.",
     gemShopStatusParagraph = nil,
     gemShopWhitelistDropdown = nil,
     autoBuyGemShopToggle = nil,
@@ -573,7 +540,7 @@ local State = {
     summerQuestClaimRequests = 0,
     summerQuestFailures = 0,
     summerQuestLastClaim = "-",
-    summerQuestLastStatus = "Menunggu Summer Quests.",
+    summerQuestLastStatus = "Waiting for Summer Quests.",
     summerQuestStatusParagraph = nil,
     autoClaimSummerQuestsToggle = nil,
 
@@ -587,7 +554,7 @@ local State = {
     summerShopBuyRequests = 0,
     summerShopFailures = 0,
     summerShopLastItem = "-",
-    summerShopLastStatus = "Pilih item Summer Shop pada whitelist.",
+    summerShopLastStatus = "Choose Summer Shop items from the whitelist.",
     summerShopStatusParagraph = nil,
     summerShopWhitelistDropdown = nil,
     autoBuySummerShopToggle = nil,
@@ -609,7 +576,7 @@ local State = {
     tournamentShopPurchases = 0,
     tournamentShopFailures = 0,
     tournamentShopLastItem = "-",
-    tournamentShopLastStatus = "Pilih reward Tournament Shop pada whitelist.",
+    tournamentShopLastStatus = "Choose Tournament Shop rewards from the whitelist.",
     tournamentShopOptionsFingerprint = "",
     tournamentShopStatusParagraph = nil,
     tournamentShopWhitelistDropdown = nil,
@@ -654,7 +621,7 @@ local State = {
     wishResults = 0,
     wishFailures = 0,
     wishLastReward = "-",
-    wishLastStatus = "Menunggu Wish Tickets.",
+    wishLastStatus = "Waiting for Wish Tickets.",
     wishSessionStartedAt = os.time(),
     wishLog = {},
     wishLogLimit = 50,
@@ -670,7 +637,7 @@ local State = {
     indexRequests = 0,
     indexFailures = 0,
     indexLastClaimable = 0,
-    indexLastStatus = "Menunggu reward Index.",
+    indexLastStatus = "Waiting for Index rewards.",
     indexStatusParagraph = nil,
     autoClaimIndexToggle = nil,
 
@@ -716,7 +683,7 @@ local State = {
     lastAntiAfkAt = 0,
     antiAfkMethod = "disabled",
     lastAntiAfkError = nil,
-    antiAfkLastStatus = "Anti AFK belum aktif.",
+    antiAfkLastStatus = "Anti AFK is not active yet.",
     antiAfkStatusParagraph = nil,
     antiAfkToggle = nil,
     antiAfkIdledConnection = nil,
@@ -772,32 +739,32 @@ local LOG_FILTER_OPTIONS = {
 local LogRuntime = {}
 
 local LOG_ROUTINE_PATTERNS = {
-    "tidak ada seashell",
-    "tidak ada reward index",
-    "tidak ada reward yang dapat",
-    "tidak ada summer quest",
-    "belum ada summer quest",
-    "tidak ada quest",
-    "stock habis",
-    "tidak tersedia pada stock",
-    "tidak tersedia di stock",
-    "tidak tersedia.",
-    "belum tersedia",
-    "belum muncul pada shop",
-    "belum muncul di shop",
-    "reward whitelist belum muncul",
-    "reward list belum muncul",
-    "tidak ada wish tickets",
-    "tidak ada spin",
-    "tidak ada item",
-    "tidak ada reward",
-    "menunggu reward",
-    "menunggu wish",
-    "menunggu spin",
-    "menunggu auto",
-    "masih cooldown",
-    "data pemain belum siap",
-    "playerstore belum",
+    "no seashells",
+    "no Index rewards",
+    "no claimable rewards",
+    "no Summer Quests",
+    "no Summer Quests are available yet",
+    "no quests",
+    "out of stock",
+    "not available in stock",
+    "not available in stock",
+    "unavailable.",
+    "not available yet",
+    "not available in the shop yet",
+    "not available in the shop yet",
+    "whitelisted rewards are not available",
+    "reward list is not available",
+    "no Wish Tickets",
+    "no spins",
+    "no items",
+    "no rewards",
+    "waiting for rewards",
+    "waiting for Wish",
+    "waiting for spin",
+    "waiting for automation",
+    "is still on cooldown",
+    "player data is not ready",
+    "player store is not ready",
     "choose items from",
     "choose rewards from",
     "choose trophies from",
@@ -906,8 +873,6 @@ function LogRuntime.append(category, message, level, keepRoutine)
         return nil
     end
 
-    -- Polling status belongs in each feature's status panel, not in Logs.
-    -- Manual notifications may pass keepRoutine=true so their result is kept.
     if keepRoutine ~= true
         and level ~= "error"
         and LogRuntime.isRoutineMessage(message)
@@ -924,8 +889,6 @@ function LogRuntime.append(category, message, level, keepRoutine)
         and 8
         or State.logsDedupeSeconds
 
-    -- Dedupe is keyed by category + message, so interleaved polling from
-    -- other features cannot cause the same line to be added repeatedly.
     if previousAt and now - previousAt < dedupeSeconds then
         State.logsSuppressed += 1
         LogRuntime.updateUI()
@@ -976,7 +939,6 @@ function LogRuntime.setFilter(value)
 
     return State.logsFilter
 end
-
 
 local function getGameName()
     local fallback = tostring(game.Name or "Spin A Soccer Card Hub")
@@ -1041,7 +1003,7 @@ local function formatSelectedTrophies()
     local selected = getSelectedTrophies()
 
     if #selected == 0 then
-        return "Tidak ada"
+        return "None"
     end
 
     return table.concat(selected, ", ")
@@ -1138,7 +1100,7 @@ local function applyWhitelistSelection(selectedValues)
     State.equipBestLastSignature = nil
     State.equipBestBusy = false
     State.nextCraftAt = 0
-    updateStatus("Whitelist diperbarui: " .. formatSelectedTrophies())
+    updateStatus("Whitelist updated: " .. formatSelectedTrophies())
 end
 
 local function syncWhitelistDropdown()
@@ -1158,7 +1120,7 @@ local function setAllTrophies(enabled)
 
     State.nextCraftAt = 0
     syncWhitelistDropdown()
-    updateStatus(enabled and "Semua trophy dipilih." or "Whitelist dikosongkan.")
+    updateStatus(enabled and "All trophies selected." or "Whitelist cleared.")
 end
 
 local function getCraftShopState(playerData)
@@ -1201,7 +1163,7 @@ end
 local function hasEnoughUnlockedCards(trophyName, playerData)
     local trophy = TrophyConfig.Trophies[trophyName]
     if type(trophy) ~= "table" then
-        return false, "Config trophy tidak ditemukan"
+        return false, "Trophy configuration was not found"
     end
 
     local requirements = trophy.Requirements
@@ -1211,8 +1173,6 @@ local function hasEnoughUnlockedCards(trophyName, playerData)
 
     local byId, byRarity = buildUnlockedCardCounts(playerData)
 
-    -- Proses kartu specific lebih dulu agar kartu yang sama tidak dihitung
-    -- ulang oleh requirement "any" dengan rarity yang sama.
     for _, requirement in ipairs(requirements) do
         if requirement.type == "specific" then
             local cardId = tostring(requirement.cardId or "")
@@ -1221,7 +1181,7 @@ local function hasEnoughUnlockedCards(trophyName, playerData)
 
             if owned < amount then
                 return false, string.format(
-                    "%s kurang (%d/%d)",
+                    "Not enough %s (%d/%d)",
                     cardId,
                     owned,
                     amount
@@ -1247,7 +1207,7 @@ local function hasEnoughUnlockedCards(trophyName, playerData)
 
             if owned < amount then
                 return false, string.format(
-                    "Any %s kurang (%d/%d)",
+                    "Not enough of any %s (%d/%d)",
                     rarity,
                     owned,
                     amount
@@ -1265,11 +1225,11 @@ local function getTrophyAvailability(trophyName, playerData)
     local stocks, crafted = getCraftShopState(playerData)
 
     if crafted[trophyName] == true then
-        return false, "sudah crafted"
+        return false, "already crafted"
     end
 
     if stocks[trophyName] ~= true then
-        return false, "tidak tersedia pada stock"
+        return false, "not available in stock"
     end
 
     return hasEnoughUnlockedCards(trophyName, playerData)
@@ -1281,14 +1241,14 @@ local function craftNextWhitelisted()
     end
 
     if countSelectedTrophies() == 0 then
-        updateStatus("Whitelist kosong. Pilih minimal satu trophy.")
-        return false, "Whitelist kosong"
+        updateStatus("The whitelist is empty. Select at least one trophy.")
+        return false, "Whitelist is empty"
     end
 
     local playerData = getPlayerData()
     if not playerData then
-        updateStatus("Data pemain belum siap.")
-        return false, "Data pemain belum siap"
+        updateStatus("Player data is not ready yet.")
+        return false, "Player data is not ready"
     end
 
     local blockedReasons = {}
@@ -1301,7 +1261,7 @@ local function craftNextWhitelisted()
                 State.nextCraftAt = os.clock() + State.remoteCooldown
                 State.attempts += 1
                 State.lastCraft = trophyName
-                updateStatus("Mengirim CraftTrophy: " .. trophyName)
+                updateStatus("Submitting trophy craft: " .. trophyName)
 
                 local success, errorMessage = pcall(function()
                     CraftTrophy:FireServer(trophyName)
@@ -1309,7 +1269,7 @@ local function craftNextWhitelisted()
 
                 if not success then
                     State.nextCraftAt = os.clock() + 1
-                    updateStatus("Aksi gagal: " .. tostring(errorMessage))
+                    updateStatus("Action failed: " .. tostring(errorMessage))
                     return false, tostring(errorMessage)
                 end
 
@@ -1323,10 +1283,10 @@ local function craftNextWhitelisted()
     updateStatus(
         #blockedReasons > 0
             and table.concat(blockedReasons, " | ")
-            or "Tidak ada trophy yang dapat dicraft."
+            or "No trophies can be crafted."
     )
 
-    return false, "Tidak ada trophy craftable"
+    return false, "No craftable trophies"
 end
 
 local function setAutoCraft(enabled)
@@ -1334,14 +1294,14 @@ local function setAutoCraft(enabled)
     State.nextCraftAt = 0
 
     if State.autoCraft and countSelectedTrophies() == 0 then
-        updateStatus("Auto Craft aktif, tetapi whitelist masih kosong.")
+        updateStatus("Auto Craft is enabled, but the whitelist is still empty.")
         notify(
             "Auto Craft Trophies",
-            "Pilih minimal satu trophy pada dropdown whitelist.",
+            "Select at least one trophy from the whitelist.",
             "triangle-alert"
         )
     else
-        updateStatus(State.autoCraft and "Auto Craft diaktifkan." or "Auto Craft dinonaktifkan.")
+        updateStatus(State.autoCraft and "Auto Craft enabled." or "Auto Craft disabled.")
     end
 
     return State.autoCraft
@@ -1392,8 +1352,8 @@ local function claimAllSeashells(force)
 
     if not folder then
         State.seashellFound = 0
-        updateSeashellStatus("Seashell belum tersedia.")
-        return false, 0, "Seashell belum tersedia"
+        updateSeashellStatus("Seashells are not available yet.")
+        return false, 0, "Seashells are not available yet"
     end
 
     local seashells = folder:GetChildren()
@@ -1401,7 +1361,7 @@ local function claimAllSeashells(force)
     State.seashellLastScan = os.clock()
 
     if #seashells == 0 then
-        updateSeashellStatus("Tidak ada seashell yang tersedia.")
+        updateSeashellStatus("No seashells are available.")
         return true, 0
     end
 
@@ -1410,7 +1370,6 @@ local function claimAllSeashells(force)
     local invalid = 0
     local lastError = nil
 
-    -- Semua remote dikirim dalam siklus yang sama tanpa task.wait antar-seashell.
     for _, seashell in ipairs(seashells) do
         local index = getSeashellIndex(seashell)
 
@@ -1441,7 +1400,7 @@ local function claimAllSeashells(force)
 
     if sent > 0 then
         updateSeashellStatus(string.format(
-            "Mengumpulkan %d dari %d seashell.",
+            "Collecting %d of %d seashells.",
             sent,
             #seashells
         ))
@@ -1449,16 +1408,16 @@ local function claimAllSeashells(force)
     end
 
     if invalid == #seashells then
-        updateSeashellStatus("Nama object tidak memakai format Seashell_<index>.")
-        return false, 0, "Index seashell tidak dapat dibaca"
+        updateSeashellStatus("The object name does not use the Seashell_<index> format.")
+        return false, 0, "Could not read the seashell index"
     end
 
     if lastError then
-        updateSeashellStatus("Aksi gagal: " .. lastError)
+        updateSeashellStatus("Action failed: " .. lastError)
         return false, 0, lastError
     end
 
-    updateSeashellStatus("Semua index masih dalam cooldown.")
+    updateSeashellStatus("All indexes are still on cooldown.")
     return true, 0
 end
 
@@ -1467,13 +1426,12 @@ local function setAutoClaimSeashell(enabled)
 
     updateSeashellStatus(
         State.autoClaimSeashell
-            and "Auto Claim Seashell diaktifkan."
-            or "Auto Claim Seashell dinonaktifkan."
+            and "Auto Claim Seashells enabled."
+            or "Auto Claim Seashells disabled."
     )
 
     return State.autoClaimSeashell
 end
-
 
 local function formatCompactNumber(value)
     local number = tonumber(value) or 0
@@ -1588,7 +1546,7 @@ local function getSpinLogLines()
     end
 
     if #lines == 0 then
-        return {"Belum ada hadiah pada session ini."}
+        return {"No rewards have been collected this session."}
     end
 
     return lines
@@ -1661,7 +1619,7 @@ local function appendSpinWheelLog(reward)
     end
 
     updateSpinWheelLogUI()
-    updateSpinWheelStatus("Spin result diterima: " .. entry.display)
+    updateSpinWheelStatus("Spin result received: " .. entry.display)
 
     return entry
 end
@@ -1673,7 +1631,7 @@ local function clearSpinWheelLog()
     State.spinWheelSessionStartedAt = os.time()
 
     updateSpinWheelLogUI()
-    updateSpinWheelStatus("Session Spin Wheel log di-reset.")
+    updateSpinWheelStatus("Spin Wheel session log cleared.")
 end
 
 local function fetchSpinWheelData(force)
@@ -1692,14 +1650,14 @@ local function fetchSpinWheelData(force)
 
     if not success then
         State.spinWheelFailures += 1
-        updateSpinWheelStatus("Data Spin Wheel gagal dimuat: " .. tostring(result))
+        updateSpinWheelStatus("Could not load Spin Wheel data: " .. tostring(result))
         return false, nil, tostring(result)
     end
 
     if type(result) ~= "table" then
         State.spinWheelFailures += 1
-        updateSpinWheelStatus("Data Spin Wheel tidak valid.")
-        return false, nil, "Data Spin Wheel tidak valid"
+        updateSpinWheelStatus("Spin Wheel data is invalid.")
+        return false, nil, "Spin Wheel data is invalid"
     end
 
     State.spinWheelData = copySpinWheelData(result)
@@ -1713,7 +1671,7 @@ local function claimFreeSpin(force)
     local now = os.clock()
 
     if not force and now < State.spinWheelNextClaimAt then
-        return false, "Claim masih cooldown"
+        return false, "Claim is on cooldown"
     end
 
     local success, data, errorMessage = fetchSpinWheelData(force == true)
@@ -1723,7 +1681,7 @@ local function claimFreeSpin(force)
     end
 
     if data.canClaimFree ~= true then
-        return false, "Free spin belum tersedia"
+        return false, "Free spin is not available yet"
     end
 
     State.spinWheelNextClaimAt = now + State.spinWheelClaimCooldown
@@ -1735,13 +1693,13 @@ local function claimFreeSpin(force)
     if not fired then
         State.spinWheelFailures += 1
         State.spinWheelNextClaimAt = now + 1
-        updateSpinWheelStatus("Claim free spin gagal: " .. tostring(fireError))
+        updateSpinWheelStatus("Free spin claim failed: " .. tostring(fireError))
         return false, tostring(fireError)
     end
 
     State.spinWheelClaimRequests += 1
     State.spinWheelLastDataAt = 0
-    updateSpinWheelStatus("Free Spin sedang diproses.")
+    updateSpinWheelStatus("Free Spin is being processed.")
 
     task.delay(0.5, function()
         if State.running then
@@ -1757,15 +1715,15 @@ local function spinWheelNow(force)
 
     if State.spinWheelPending then
         if (now - State.spinWheelPendingSince) < State.spinWheelPendingTimeout then
-            return false, "Menunggu spin_result"
+            return false, "Waiting for the spin result"
         end
 
         State.spinWheelPending = false
-        updateSpinWheelStatus("Pending spin timeout; mencoba ulang.")
+        updateSpinWheelStatus("Spin confirmation timed out; retrying.")
     end
 
     if not force and now < State.spinWheelNextSpinAt then
-        return false, "Spin masih cooldown"
+        return false, "Spin is on cooldown"
     end
 
     local success, data, errorMessage = fetchSpinWheelData(force == true)
@@ -1775,7 +1733,7 @@ local function spinWheelNow(force)
     end
 
     if (data.totalSpins or 0) <= 0 then
-        return false, "Tidak ada spin tersedia"
+        return false, "No spins are available"
     end
 
     State.spinWheelPending = true
@@ -1790,13 +1748,13 @@ local function spinWheelNow(force)
         State.spinWheelPending = false
         State.spinWheelFailures += 1
         State.spinWheelNextSpinAt = now + 1
-        updateSpinWheelStatus("Spin gagal: " .. tostring(fireError))
+        updateSpinWheelStatus("Spin failed: " .. tostring(fireError))
         return false, tostring(fireError)
     end
 
     State.spinWheelSpinRequests += 1
     State.spinWheelLastDataAt = 0
-    updateSpinWheelStatus("Spin dimulai; menunggu hasil.")
+    updateSpinWheelStatus("Spin started; waiting for the result.")
 
     return true
 end
@@ -1807,8 +1765,8 @@ local function setAutoClaimSpinWheel(enabled)
 
     updateSpinWheelStatus(
         State.autoClaimSpinWheel
-            and "Auto Claim Spin Wheel diaktifkan."
-            or "Auto Claim Spin Wheel dinonaktifkan."
+            and "Auto Claim Spin Wheel enabled."
+            or "Auto Claim Spin Wheel disabled."
     )
 
     return State.autoClaimSpinWheel
@@ -1820,8 +1778,8 @@ local function setAutoSpinWheel(enabled)
 
     updateSpinWheelStatus(
         State.autoSpinWheel
-            and "Auto Spin Wheel diaktifkan."
-            or "Auto Spin Wheel dinonaktifkan."
+            and "Auto Spin Wheel enabled."
+            or "Auto Spin Wheel disabled."
     )
 
     return State.autoSpinWheel
@@ -1838,13 +1796,13 @@ local function onSpinWheelRemote(action, payload)
 
     if type(payload) ~= "table" or payload.success ~= true then
         State.spinWheelFailures += 1
-        updateSpinWheelStatus("Spin result gagal atau tidak valid.")
+        updateSpinWheelStatus("The spin result failed or was invalid.")
         return
     end
 
     if type(payload.reward) ~= "table" then
         State.spinWheelFailures += 1
-        updateSpinWheelStatus("Spin result tidak memiliki reward.")
+        updateSpinWheelStatus("The spin result did not include a reward.")
         return
     end
 
@@ -1856,7 +1814,6 @@ local function onSpinWheelRemote(action, payload)
         end
     end)
 end
-
 
 local function getGemShopStateData()
     local success, state = pcall(function()
@@ -1991,7 +1948,7 @@ local function applyGemShopWhitelistSelection(selectedValues)
     end
 
     State.gemShopNextBuyAt = 0
-    State.gemShopLastStatus = "Whitelist Gem Shop diperbarui."
+    State.gemShopLastStatus = "Gem Shop whitelist updated."
 end
 
 local function syncGemShopWhitelistDropdown()
@@ -2014,15 +1971,15 @@ local function setAllGemShopItems(enabled)
     State.gemShopNextBuyAt = 0
     syncGemShopWhitelistDropdown()
     State.gemShopLastStatus = enabled
-        and "Semua item Gem Shop dipilih."
-        or "Whitelist Gem Shop dikosongkan."
+        and "All Gem Shop items selected."
+        or "Gem Shop whitelist cleared."
 end
 
 local function getLuckyItemDisplay(shopState)
     local luckyItem = shopState and shopState.luckyItem
 
     if type(luckyItem) ~= "table" then
-        return "Tidak tersedia", 0, nil
+        return "Unavailable", 0, nil
     end
 
     local gamepassId = luckyItem.gamepassId
@@ -2085,25 +2042,25 @@ local function getGemShopCandidate(optionKey, shopState, gems)
             and (fixedItems[originalKey] or fixedItems[rawKey])
 
         if type(config) ~= "table" then
-            return nil, "config tidak ditemukan"
+            return nil, "configuration was not found"
         end
 
         if type(itemState) ~= "table" then
-            return nil, "state belum tersedia"
+            return nil, "state is not available yet"
         end
 
         if hasGamepass(config.Id) then
-            return nil, "sudah dimiliki"
+            return nil, "already owned"
         end
 
         if itemState.inStock ~= true then
-            return nil, "stock habis"
+            return nil, "out of stock"
         end
 
         local price = math.max(0, math.floor(tonumber(itemState.price) or 0))
 
         if gems < price then
-            return nil, "gems kurang"
+            return nil, "not enough Gems"
         end
 
         return {
@@ -2119,15 +2076,15 @@ local function getGemShopCandidate(optionKey, shopState, gems)
         local luckyName, price, gamepassId = getLuckyItemDisplay(shopState)
 
         if gamepassId == nil then
-            return nil, "lucky item belum tersedia"
+            return nil, "Lucky Item is not available yet"
         end
 
         if hasGamepass(gamepassId) then
-            return nil, "lucky item sudah dimiliki"
+            return nil, "Lucky Item is already owned"
         end
 
         if gems < price then
-            return nil, "gems kurang"
+            return nil, "not enough Gems"
         end
 
         return {
@@ -2144,11 +2101,11 @@ local function getGemShopCandidate(optionKey, shopState, gems)
         local price = 500
 
         if stock <= 0 then
-            return nil, "stock habis"
+            return nil, "out of stock"
         end
 
         if gems < price then
-            return nil, "gems kurang"
+            return nil, "not enough Gems"
         end
 
         return {
@@ -2160,7 +2117,7 @@ local function getGemShopCandidate(optionKey, shopState, gems)
         }
     end
 
-    return nil, "item tidak dikenal"
+    return nil, "unknown item"
 end
 
 local function sendGemShopPurchase(candidate)
@@ -2172,20 +2129,20 @@ local function sendGemShopPurchase(candidate)
         elseif candidate.purchaseType == "scarlet" then
             BuyGemShopItem:FireServer("scarlet")
         else
-            error("Purchase type tidak dikenal")
+            error("Unknown purchase type")
         end
     end)
 
     if not success then
         State.gemShopFailures += 1
-        updateGemShopStatus("Pembelian gagal: " .. tostring(errorMessage))
+        updateGemShopStatus("Purchase failed: " .. tostring(errorMessage))
         return false, tostring(errorMessage)
     end
 
     State.gemShopRequests += 1
     State.gemShopLastItem = candidate.label
     updateGemShopStatus(
-        "Pembelian diproses: "
+        "Purchase started: "
             .. candidate.label
             .. " ("
             .. formatCompactNumber(candidate.price)
@@ -2197,8 +2154,8 @@ end
 
 local function buyNextGemShopItem(force)
     if countSelectedGemShopItems() == 0 then
-        updateGemShopStatus("Whitelist Gem Shop kosong.")
-        return false, "Whitelist kosong"
+        updateGemShopStatus("The Gem Shop whitelist is empty.")
+        return false, "Whitelist is empty"
     end
 
     local now = os.clock()
@@ -2248,10 +2205,10 @@ local function buyNextGemShopItem(force)
     if #reasons > 0 then
         updateGemShopStatus(table.concat(reasons, " | "))
     else
-        updateGemShopStatus("Semua item whitelist masih dalam cooldown.")
+        updateGemShopStatus("All whitelisted items are still on cooldown.")
     end
 
-    return false, "Tidak ada item yang dapat dibeli"
+    return false, "No items can be purchased"
 end
 
 local function setAutoBuyGemShop(enabled)
@@ -2260,13 +2217,12 @@ local function setAutoBuyGemShop(enabled)
 
     updateGemShopStatus(
         State.autoBuyGemShop
-            and "Auto Buy Gem Shop diaktifkan."
-            or "Auto Buy Gem Shop dinonaktifkan."
+            and "Auto Buy Gem Shop enabled."
+            or "Auto Buy Gem Shop disabled."
     )
 
     return State.autoBuyGemShop
 end
-
 
 local updateSummerShopStatus
 
@@ -2368,15 +2324,14 @@ local function claimSummerQuests(force)
     local quests = getSummerQuestList()
 
     if #quests == 0 then
-        updateSummerQuestStatus("Data Summer Quests belum tersedia.")
-        return false, 0, "Tidak ada quest"
+        updateSummerQuestStatus("Summer Quest data is not available yet.")
+        return false, 0, "None quest"
     end
 
     local now = os.clock()
     local sent = 0
     local lastError = nil
 
-    -- Semua quest yang selesai dapat diklaim pada siklus yang sama.
     for index, quest in ipairs(quests) do
         if isSummerQuestClaimable(quest) then
             local nextAttempt = State.summerQuestNextAttempt[index] or 0
@@ -2404,17 +2359,17 @@ local function claimSummerQuests(force)
 
     if sent > 0 then
         updateSummerQuestStatus(
-            string.format("Memproses %d quest.", sent)
+            string.format("Processing %d quests.", sent)
         )
         return true, sent
     end
 
     if lastError then
-        updateSummerQuestStatus("Claim gagal: " .. lastError)
+        updateSummerQuestStatus("Claim failed: " .. lastError)
         return false, 0, lastError
     end
 
-    updateSummerQuestStatus("Belum ada Summer Quest yang dapat diklaim.")
+    updateSummerQuestStatus("No Summer Quests can be claimed yet.")
     return true, 0
 end
 
@@ -2424,8 +2379,8 @@ local function setAutoClaimSummerQuests(enabled)
 
     updateSummerQuestStatus(
         State.autoClaimSummerQuests
-            and "Auto Claim Summer Quests diaktifkan."
-            or "Auto Claim Summer Quests dinonaktifkan."
+            and "Auto Claim Summer Quests enabled."
+            or "Auto Claim Summer Quests disabled."
     )
 
     return State.autoClaimSummerQuests
@@ -2506,7 +2461,7 @@ local function applySummerShopWhitelistSelection(selectedValues)
     end
 
     State.summerShopNextBuyAt = 0
-    updateSummerShopStatus("Whitelist Summer Shop diperbarui.")
+    updateSummerShopStatus("Summer Shop whitelist updated.")
 end
 
 local function syncSummerShopWhitelistDropdown()
@@ -2532,8 +2487,8 @@ local function setAllSummerShopItems(enabled)
     syncSummerShopWhitelistDropdown()
     updateSummerShopStatus(
         enabled
-            and "Semua item Summer Shop dipilih."
-            or "Whitelist Summer Shop dikosongkan."
+            and "All Summer Shop items selected."
+            or "Summer Shop whitelist cleared."
     )
 end
 
@@ -2544,8 +2499,6 @@ local function ownsSummerShopItem(playerData, item)
 
     local grant = item.grant
 
-    -- Sama seperti SummerShopController: ownership OneTime yang diketahui
-    -- adalah booth skin.
     if type(grant) ~= "table" or grant.kind ~= "boothSkin" then
         return false
     end
@@ -2578,11 +2531,11 @@ end
 
 local function getSummerShopItemAvailability(playerData, item)
     if type(item) ~= "table" then
-        return false, "config tidak valid"
+        return false, "invalid configuration"
     end
 
     if item.NoBuyButton == true then
-        return false, "tidak memiliki tombol Seashell Buy"
+        return false, "does not have a Seashell purchase button"
     end
 
     local id = tostring(item.id or "")
@@ -2591,20 +2544,20 @@ local function getSummerShopItemAvailability(playerData, item)
         math.max(0, math.floor(tonumber(playerData and playerData.seashells) or 0))
 
     if item.OneTime == true and ownsSummerShopItem(playerData, item) then
-        return false, "sudah dimiliki"
+        return false, "already owned"
     end
 
     if item.OneTime ~= true and item.NoStock ~= true then
         local stock = getSummerShopStock(playerData, id)
 
         if stock <= 0 then
-            return false, "stock habis"
+            return false, "out of stock"
         end
     end
 
     if seashells < price then
         return false, string.format(
-            "seashell kurang (%s/%s)",
+            "not enough Seashells (%s/%s)",
             formatCompactNumber(seashells),
             formatCompactNumber(price)
         )
@@ -2649,19 +2602,19 @@ local function buyNextSummerShopItem(force)
     local now = os.clock()
 
     if not force and now < State.summerShopNextBuyAt then
-        return false, "Auto Buy masih cooldown"
+        return false, "Auto Buy is on cooldown"
     end
 
     if countSelectedSummerShopItems() == 0 then
-        updateSummerShopStatus("Whitelist Summer Shop masih kosong.")
-        return false, "Whitelist kosong"
+        updateSummerShopStatus("The Summer Shop whitelist is still empty.")
+        return false, "Whitelist is empty"
     end
 
     local playerData = getPlayerData()
 
     if not playerData then
-        updateSummerShopStatus("Data pemain belum siap.")
-        return false, "Data pemain belum siap"
+        updateSummerShopStatus("Player data is not ready yet.")
+        return false, "Player data is not ready"
     end
 
     local blocked = {}
@@ -2690,7 +2643,7 @@ local function buyNextSummerShopItem(force)
                         State.summerShopNextBuyAt = now + 1
                         State.summerShopItemNextAttempt[id] = now + 1
                         updateSummerShopStatus(
-                            "Buy gagal: " .. tostring(errorMessage)
+                            "Purchase failed: " .. tostring(errorMessage)
                         )
                         return false, tostring(errorMessage)
                     end
@@ -2699,7 +2652,7 @@ local function buyNextSummerShopItem(force)
                     State.summerShopLastItem =
                         tostring(item.displayName or id)
                     updateSummerShopStatus(
-                        "Pembelian diproses: "
+                        "Purchase started: "
                             .. tostring(item.displayName or id)
                     )
                     return true, id
@@ -2716,10 +2669,10 @@ local function buyNextSummerShopItem(force)
     updateSummerShopStatus(
         #blocked > 0
             and table.concat(blocked, " | ")
-            or "Semua item whitelist masih dalam cooldown."
+            or "All whitelisted items are still on cooldown."
     )
 
-    return false, "Tidak ada item yang dapat dibeli"
+    return false, "No items can be purchased"
 end
 
 local function setAutoBuySummerShop(enabled)
@@ -2728,19 +2681,18 @@ local function setAutoBuySummerShop(enabled)
 
     updateSummerShopStatus(
         State.autoBuySummerShop
-            and "Auto Buy Summer Shop diaktifkan."
-            or "Auto Buy Summer Shop dinonaktifkan."
+            and "Auto Buy Summer Shop enabled."
+            or "Auto Buy Summer Shop disabled."
     )
 
     return State.autoBuySummerShop
 end
 
-
 local TOURNAMENT_BUY_FAILURE_MESSAGES = {
-    tokens = "Tournament Tokens tidak cukup",
-    claimed = "Reward sudah pernah dibeli",
-    outofstock = "Stock reward habis",
-    apply_failed = "Server gagal memberikan reward",
+    tokens = "Not enough Tournament Tokens",
+    claimed = "Reward was already purchased",
+    outofstock = "Reward is out of stock",
+    apply_failed = "The server could not grant the reward",
 }
 
 local function getTournamentShopData()
@@ -2898,8 +2850,6 @@ local function tournamentConfigIdFromEntry(entry)
         end
     end
 
-    -- Saat dua config sama-sama berjenis potion, nama potion membedakan
-    -- AdminWeatherPotion dari Potion reguler.
     if kind == "potion" then
         local potionName = normalizeTournamentIdentity(
             payload.potionId
@@ -3103,7 +3053,7 @@ local function applyTournamentShopWhitelistSelection(selectedValues)
 
     State.tournamentShopNextBuyAt = 0
     State.tournamentShopLastStatus =
-        "Reward List diperbarui."
+        "Reward list updated."
 end
 
 local function setAllTournamentShopItems(enabled)
@@ -3114,8 +3064,8 @@ local function setAllTournamentShopItems(enabled)
     State.tournamentShopNextBuyAt = 0
     syncTournamentShopWhitelistDropdown()
     State.tournamentShopLastStatus = enabled
-        and "Semua reward dipilih."
-        or "Whitelist Tournament Shop dikosongkan."
+        and "All rewards selected."
+        or "Tournament Shop whitelist cleared."
 end
 
 local function updateTournamentShopStatus(message)
@@ -3190,39 +3140,37 @@ local function buyNextTournamentShopItem(force)
         if (now - State.tournamentShopPendingSince)
             < State.tournamentShopPendingTimeout
         then
-            return false, "Menunggu pembelian sebelumnya selesai"
+            return false, "Waiting for the previous purchase to finish"
         end
 
         clearTournamentShopPending()
         State.tournamentShopFailures += 1
         State.tournamentShopLastStatus =
-            "Pending purchase timeout; mencoba ulang."
+            "Purchase confirmation timed out; retrying."
     end
 
     if not force and now < State.tournamentShopNextBuyAt then
-        return false, "Buy masih cooldown"
+        return false, "Purchase is on cooldown"
     end
 
     local shopData = refreshTournamentShopOptions(true)
 
     if #TournamentShopCurrentEntries == 0 then
         updateTournamentShopStatus(
-            "Data reward Tournament Shop belum tersedia."
+            "Tournament Shop reward data is not available yet."
         )
-        return false, "Tournament Shop belum tersedia"
+        return false, "Tournament Shop is not available yet"
     end
 
     if countSelectedTournamentShopItems() == 0 then
         updateTournamentShopStatus(
-            "Reward List masih kosong."
+            "The reward list is still empty."
         )
-        return false, "Whitelist kosong"
+        return false, "Whitelist is empty"
     end
 
     local blocked = {}
 
-    -- Iterasi berdasarkan slot aktif. Whitelist tetap memakai ID config,
-    -- sedangkan remote server tetap membutuhkan index slot saat ini.
     for _, entry in ipairs(TournamentShopCurrentEntries) do
         local configId = entry.configId
 
@@ -3238,7 +3186,7 @@ local function buyNextTournamentShopItem(force)
                         now + State.tournamentShopRetryCooldown
                 elseif shopData.tokens < entry.price then
                     blocked[#blocked + 1] =
-                        entry.displayName .. ": tokens kurang"
+                        entry.displayName .. ": not enough Tokens"
                     State.tournamentShopItemNextAttempt[configId] =
                         now + State.tournamentShopRetryCooldown
                 else
@@ -3263,7 +3211,7 @@ local function buyNextTournamentShopItem(force)
                         State.tournamentShopItemNextAttempt[configId] =
                             now + 1
                         updateTournamentShopStatus(
-                            "Buy gagal: " .. tostring(errorMessage)
+                            "Purchase failed: " .. tostring(errorMessage)
                         )
                         return false, tostring(errorMessage)
                     end
@@ -3271,7 +3219,7 @@ local function buyNextTournamentShopItem(force)
                     State.tournamentShopBuyRequests += 1
                     State.tournamentShopLastItem = entry.displayName
                     updateTournamentShopStatus(
-                        "Pembelian diproses: "
+                        "Purchase started: "
                             .. entry.displayName
                             .. " ["
                             .. configId
@@ -3287,10 +3235,10 @@ local function buyNextTournamentShopItem(force)
     updateTournamentShopStatus(
         #blocked > 0
             and table.concat(blocked, " | ")
-            or "Reward whitelist belum muncul pada shop saat ini."
+            or "Whitelisted rewards are not currently available in the shop."
     )
 
-    return false, "Tidak ada reward whitelist yang dapat dibeli"
+    return false, "No whitelisted rewards can be purchased"
 end
 
 local function setAutoBuyTournamentShop(enabled)
@@ -3300,8 +3248,8 @@ local function setAutoBuyTournamentShop(enabled)
 
     updateTournamentShopStatus(
         State.autoBuyTournamentShop
-            and "Auto Buy Tournament Shop diaktifkan."
-            or "Auto Buy Tournament Shop dinonaktifkan."
+            and "Auto Buy Tournament Shop enabled."
+            or "Auto Buy Tournament Shop disabled."
     )
 
     return State.autoBuyTournamentShop
@@ -3338,7 +3286,7 @@ local function onTournamentServerRemote(action, payload)
         State.tournamentShopPurchases += 1
         State.tournamentShopLastItem = displayName
         State.tournamentShopLastStatus = string.format(
-            "Berhasil membeli %s • Stock %s • Next price %s",
+            "Purchased %s • Stock %s • Next price %s",
             displayName,
             tostring(payload.newStock ~= nil and payload.newStock or "?"),
             tostring(payload.newPrice ~= nil and payload.newPrice or "?")
@@ -3348,7 +3296,7 @@ local function onTournamentServerRemote(action, payload)
         local reason = tostring(payload.reason or "unknown")
         State.tournamentShopLastStatus =
             TOURNAMENT_BUY_FAILURE_MESSAGES[reason]
-                or ("Purchase gagal: " .. reason)
+                or ("Purchase failed: " .. reason)
 
         if pendingKey then
             State.tournamentShopItemNextAttempt[pendingKey] =
@@ -3363,8 +3311,6 @@ local function onTournamentServerRemote(action, payload)
         end
     end)
 end
-
-
 
 local IndexRuntime = {}
 
@@ -3388,8 +3334,6 @@ function IndexRuntime.getStats()
         claimedIndexGems = claimedIndexGems,
     }
 
-    -- Sama seperti IndexController: setiap key unlocked yang bernilai true
-    -- dan belum terdapat pada claimedIndexGems dihitung sebagai claimable.
     for claimKey, unlocked in pairs(unlockedCards) do
         if unlocked == true and claimedIndexGems[claimKey] ~= true then
             stats.total += 1
@@ -3441,8 +3385,8 @@ function IndexRuntime.setAutoClaim(enabled)
 
     IndexRuntime.updateStatus(
         State.autoClaimIndex
-            and "Auto Claim Index diaktifkan."
-            or "Auto Claim Index dinonaktifkan."
+            and "Auto Claim Index enabled."
+            or "Auto Claim Index disabled."
     )
 
     return State.autoClaimIndex
@@ -3452,7 +3396,7 @@ function IndexRuntime.claimAll(force)
     local now = os.clock()
 
     if force ~= true and now < State.indexNextClaimAt then
-        return false, "Claim Index masih cooldown"
+        return false, "Index claim is on cooldown"
     end
 
     local stats = IndexRuntime.getStats()
@@ -3466,8 +3410,8 @@ function IndexRuntime.claimAll(force)
 
     if stats.total <= 0 then
         State.indexNextClaimAt = now + State.indexClaimCooldown
-        IndexRuntime.updateStatus("Tidak ada reward Index yang dapat diklaim.")
-        return false, "Tidak ada reward Index"
+        IndexRuntime.updateStatus("No Index rewards can be claimed.")
+        return false, "No Index rewards"
     end
 
     State.indexNextClaimAt = now + State.indexClaimCooldown
@@ -3480,7 +3424,7 @@ function IndexRuntime.claimAll(force)
         State.indexFailures += 1
         State.indexNextClaimAt = now + 1
         IndexRuntime.updateStatus(
-            "Claim Index gagal: " .. tostring(errorMessage)
+            "Index claim failed: " .. tostring(errorMessage)
         )
         return false, tostring(errorMessage)
     end
@@ -3488,14 +3432,13 @@ function IndexRuntime.claimAll(force)
     State.indexRequests += 1
     IndexRuntime.updateStatus(
         string.format(
-            "Memproses %d reward Index.",
+            "Processing %d Index rewards.",
             stats.total
         )
     )
 
     return true, stats.total
 end
-
 
 local WishRuntime = {}
 
@@ -3602,7 +3545,7 @@ function WishRuntime.logLines()
     end
 
     if #lines == 0 then
-        return {"Belum ada hasil Wish pada session ini."}
+        return {"No Wish results have been recorded this session."}
     end
 
     return lines
@@ -3674,7 +3617,7 @@ function WishRuntime.appendLog(result)
     end
 
     WishRuntime.updateLogUI()
-    WishRuntime.updateStatus("Wish berhasil: " .. display)
+    WishRuntime.updateStatus("Wish succeeded: " .. display)
 
     return entry
 end
@@ -3686,7 +3629,7 @@ function WishRuntime.clearLog()
     State.wishSessionStartedAt = os.time()
 
     WishRuntime.updateLogUI()
-    WishRuntime.updateStatus("Wish session log di-reset.")
+    WishRuntime.updateStatus("Wish session log cleared.")
 end
 
 function WishRuntime.setAutoSpin(enabled)
@@ -3695,8 +3638,8 @@ function WishRuntime.setAutoSpin(enabled)
 
     WishRuntime.updateStatus(
         State.autoSpinWishTickets
-            and "Auto Spin Wish Tickets diaktifkan."
-            or "Auto Spin Wish Tickets dinonaktifkan."
+            and "Auto Wish enabled."
+            or "Auto Wish disabled."
     )
 
     return State.autoSpinWishTickets
@@ -3712,8 +3655,8 @@ function WishRuntime.setSkipAnimation(enabled)
 
     WishRuntime.updateStatus(
         State.skipWishAnimation
-            and "Wish animation akan dilewati."
-            or "Wish animation native akan diputar."
+            and "Wish animation will be skipped."
+            or "The native Wish animation will play."
     )
 
     return State.skipWishAnimation
@@ -3735,7 +3678,7 @@ function WishRuntime.playAnimation(result)
         AnimationController.play(result, function()
             State.wishAnimationBusy = false
             State.wishAnimationStartedAt = 0
-            WishRuntime.updateStatus("Wish animation selesai.")
+            WishRuntime.updateStatus("Wish animation completed.")
         end)
     end)
 
@@ -3743,7 +3686,7 @@ function WishRuntime.playAnimation(result)
         State.wishAnimationBusy = false
         State.wishAnimationStartedAt = 0
         WishRuntime.updateStatus(
-            "Wish berhasil, tetapi animation gagal: " .. tostring(errorMessage)
+            "Wish succeeded, but the animation failed: " .. tostring(errorMessage)
         )
         return false, tostring(errorMessage)
     end
@@ -3755,12 +3698,12 @@ function WishRuntime.perform(force)
     local now = os.clock()
 
     if State.wishPending then
-        return false, "Wish request masih diproses"
+        return false, "A Wish request is still being processed"
     end
 
     if State.wishAnimationBusy then
         if now - State.wishAnimationStartedAt < 30 then
-            return false, "Menunggu Wish animation selesai"
+            return false, "Waiting for the Wish animation to finish"
         end
 
         State.wishAnimationBusy = false
@@ -3768,7 +3711,7 @@ function WishRuntime.perform(force)
     end
 
     if force ~= true and now < State.wishNextAt then
-        return false, "Wish masih cooldown"
+        return false, "Wish is on cooldown"
     end
 
     local data = WishRuntime.getData()
@@ -3783,23 +3726,23 @@ function WishRuntime.perform(force)
         State.wishNextAt = now + 5
         WishRuntime.updateStatus(
             string.format(
-                "Wish terkunci: membutuhkan Rebirth %d.",
+                "Wish is locked and requires Rebirth %d.",
                 data.minRebirth
             )
         )
-        return false, "Wish belum terbuka"
+        return false, "Wish is not unlocked yet"
     end
 
     if data.tickets <= 0 then
         State.wishNextAt = now + 3
-        WishRuntime.updateStatus("Tidak ada Wish Tickets.")
-        return false, "Tidak ada Wish Tickets"
+        WishRuntime.updateStatus("No Wish Tickets are available.")
+        return false, "No Wish Tickets are available"
     end
 
     State.wishPending = true
     State.wishRequests += 1
     State.wishNextAt = now + State.wishRequestCooldown
-    WishRuntime.updateStatus("Memproses Wish...")
+    WishRuntime.updateStatus("Processing Wish...")
 
     local success, result = pcall(function()
         return PerformWish:InvokeServer()
@@ -3810,14 +3753,14 @@ function WishRuntime.perform(force)
     if not success then
         State.wishFailures += 1
         State.wishNextAt = os.clock() + State.wishRateLimitCooldown
-        WishRuntime.updateStatus("Wish gagal: " .. tostring(result))
+        WishRuntime.updateStatus("Wish failed: " .. tostring(result))
         return false, tostring(result)
     end
 
     if type(result) ~= "table" then
         State.wishFailures += 1
-        WishRuntime.updateStatus("Hasil Wish tidak valid.")
-        return false, "Hasil Wish tidak valid"
+        WishRuntime.updateStatus("The Wish result is invalid.")
+        return false, "The Wish result is invalid"
     end
 
     if result.ok ~= true then
@@ -3829,21 +3772,21 @@ function WishRuntime.perform(force)
 
         if reason == "no_tickets" then
             State.wishNextAt = os.clock() + 3
-            WishRuntime.updateStatus("Server: tidak ada Wish Tickets.")
-            return false, "Tidak ada Wish Tickets"
+            WishRuntime.updateStatus("Server: no Wish Tickets are available.")
+            return false, "No Wish Tickets are available"
         elseif reason == "locked_rebirth" then
             State.wishNextAt = os.clock() + 5
             WishRuntime.updateStatus(
-                "Server: Wish belum terbuka untuk Rebirth saat ini."
+                "Server: Wish is not unlocked for the current Rebirth."
             )
-            return false, "Wish belum terbuka"
+            return false, "Wish is not unlocked yet"
         elseif reason == "rate_limited" then
             State.wishNextAt = os.clock() + State.wishRateLimitCooldown
-            WishRuntime.updateStatus("Server rate limit; mencoba lagi nanti.")
+            WishRuntime.updateStatus("Server rate limit reached; retrying later.")
             return false, "Rate limited"
         end
 
-        WishRuntime.updateStatus("Wish gagal: " .. reason)
+        WishRuntime.updateStatus("Wish failed: " .. reason)
         return false, reason
     end
 
@@ -3856,7 +3799,6 @@ function WishRuntime.perform(force)
 
     return true, entry.display
 end
-
 
 local AntiAfkRuntime = {
     virtualUser = nil,
@@ -3878,7 +3820,7 @@ function AntiAfkRuntime.updateStatus(message)
         LogRuntime.append("Anti AFK", State.antiAfkLastStatus)
     end
 
-    local lastPulse = "Belum pernah"
+    local lastPulse = "Never"
     if State.lastAntiAfkAt > 0 then
         lastPulse = os.date("%H:%M:%S", State.lastAntiAfkAt)
     end
@@ -4027,7 +3969,7 @@ function AntiAfkRuntime.pulse(source, force)
     end
 
     if State.antiAfkBusy then
-        return false, "Anti AFK pulse sedang berjalan"
+        return false, "An Anti AFK pulse is already running"
     end
 
     State.antiAfkBusy = true
@@ -4066,7 +4008,7 @@ function AntiAfkRuntime.pulse(source, force)
             #errors > 0 and table.concat(errors, " | ") or nil
 
         AntiAfkRuntime.updateStatus(
-            "Keep-alive berhasil"
+            "Keep-alive succeeded"
                 .. (source and (" • " .. tostring(source)) or "")
         )
         return true, State.antiAfkMethod
@@ -4077,7 +4019,7 @@ function AntiAfkRuntime.pulse(source, force)
         #errors > 0 and table.concat(errors, " | ")
         or "No supported virtual input method"
 
-    AntiAfkRuntime.updateStatus("Semua metode keep-alive gagal.")
+    AntiAfkRuntime.updateStatus("All keep-alive methods failed.")
     return false, State.lastAntiAfkError
 end
 
@@ -4088,10 +4030,10 @@ function AntiAfkRuntime.setEnabled(enabled)
     if not State.antiAfk then
         State.antiAfkMethod = "disabled"
         State.lastAntiAfkError = nil
-        AntiAfkRuntime.updateStatus("Anti AFK dinonaktifkan.")
+        AntiAfkRuntime.updateStatus("Anti AFK disabled.")
     else
         AntiAfkRuntime.updateStatus(
-            "Anti AFK aktif; menguji metode keep-alive."
+            "Anti AFK enabled; testing keep-alive methods."
         )
 
         task.defer(function()
@@ -4103,7 +4045,6 @@ function AntiAfkRuntime.setEnabled(enabled)
 
     return State.antiAfk
 end
-
 
 local ServerRuntime = {}
 
@@ -4170,7 +4111,6 @@ function ServerRuntime.getState()
         jobId = tostring(game.JobId or ""),
     }
 end
-
 
 local CodesRuntime = {}
 
@@ -4336,7 +4276,7 @@ function CodesRuntime.redeem(code, force)
     State.codeLastCode = code
 
     local success, errorMessage = pcall(function()
-        -- CodesController sends lowercase text to the server.
+
         RedeemCode:FireServer(string.lower(code))
     end)
 
@@ -4352,8 +4292,6 @@ function CodesRuntime.redeem(code, force)
         return false, tostring(errorMessage)
     end
 
-    -- The provided client controller does not receive a redemption result.
-    -- Store this as attempted/submitted, not as a confirmed successful reward.
     State.codeAttempted[code] = true
     State.codeRequests += 1
 
@@ -4432,7 +4370,6 @@ function CodesRuntime.clearHistory()
         true
     )
 end
-
 
 local DailyRewardRuntime = {}
 
@@ -4853,7 +4790,6 @@ function DailyRewardRuntime.tick()
     end
 end
 
-
 local TournamentRuntime = {}
 
 function TournamentRuntime.copyTeam(team)
@@ -5143,14 +5079,11 @@ function TournamentRuntime.isEquipCurrent(data)
     local best =
         TournamentRuntime.getBestTeam(data.playerData)
 
-    -- Exact comparison is used on the first run.
     if TournamentRuntime.teamMatchesBest(data.team, best) then
         TournamentRuntime.markEquipCurrent(data)
         return true
     end
 
-    -- After the official Equip Best action has settled, the resulting
-    -- server team is trusted until its input or team composition changes.
     local signature =
         TournamentRuntime.getEquipSignature(data)
 
@@ -5199,11 +5132,6 @@ function TournamentRuntime.updateUI(message, shouldLog)
     end
 
     local data = TournamentRuntime.getState()
-    local best = {}
-
-    if data.playerData then
-        best = TournamentRuntime.getBestTeam(data.playerData)
-    end
 
     local description = table.concat({
         "Auto Join: "
@@ -5653,7 +5581,6 @@ function TournamentRuntime.handleTick(payload)
     TournamentRuntime.updateUI()
 end
 
-
 local EQUIP_BEST_MODE_INCOME = "income"
 local EQUIP_BEST_MODE_RARITY = "rarity"
 
@@ -6009,7 +5936,6 @@ function EquipBestRuntime.tick()
     end
 end
 
-
 local function normalizeWindowKeybind(value)
     local keyName
 
@@ -6025,7 +5951,6 @@ local function normalizeWindowKeybind(value)
 
     return "G"
 end
-
 
 local ConfigRuntime = {
     version = 11,
@@ -6094,9 +6019,7 @@ function ConfigRuntime.ensureFolders()
                     return false, tostring(errorMessage)
                 end
             elseif not success then
-                -- Beberapa executor error saat folder sudah ada tetapi tidak
-                -- menyediakan isfolder. Dalam kasus itu, lanjut dan biarkan
-                -- writefile menjadi validasi terakhir.
+
             end
         end
     end
@@ -6184,7 +6107,7 @@ function ConfigRuntime.read()
     end
 
     if not ConfigRuntime.fileExists() then
-        return nil, "Config belum tersimpan"
+        return nil, "No saved settings were found"
     end
 
     local readSuccess, raw = pcall(readfile, ConfigRuntime.file)
@@ -6198,7 +6121,7 @@ function ConfigRuntime.read()
 
     if not decodeSuccess or type(decoded) ~= "table" then
         return nil, decodeSuccess
-            and "Format config tidak valid"
+            and "The saved settings format is invalid"
             or tostring(decoded)
     end
 
@@ -6211,7 +6134,7 @@ function ConfigRuntime.updateStatus(message)
         LogRuntime.append("Config", State.configLastStatus)
     end
 
-    local savedText = "Belum pernah"
+    local savedText = "Never"
     if State.configLastSavedAt and State.configLastSavedAt > 0 then
         savedText = os.date("%H:%M:%S", State.configLastSavedAt)
     end
@@ -6336,7 +6259,7 @@ end
 
 function ConfigRuntime.apply(config, syncUI)
     if type(config) ~= "table" then
-        return false, "Format config tidak valid"
+        return false, "The saved settings format is invalid"
     end
 
     State.configLoading = true
@@ -6602,13 +6525,11 @@ end
 function ConfigRuntime.setAutoSave(enabled)
     State.autoSave = enabled == true
 
-    -- Perubahan pilihan Auto Save disimpan langsung, termasuk ketika toggle
-    -- sedang dimatikan.
     if State.configSupported then
         ConfigRuntime.save()
     else
         ConfigRuntime.updateStatus(
-            "Auto Save berubah, tetapi file config tidak didukung."
+            "Auto Save changed, but file storage is unavailable."
         )
     end
 
@@ -6618,13 +6539,11 @@ end
 function ConfigRuntime.setAutoLoad(enabled)
     State.autoLoad = enabled == true
 
-    -- Metadata Auto Load harus langsung tersimpan agar startup berikutnya tahu
-    -- apakah isi config perlu diterapkan.
     if State.configSupported then
         ConfigRuntime.save()
     else
         ConfigRuntime.updateStatus(
-            "Auto Load berubah, tetapi file config tidak didukung."
+            "Auto Load changed, but file storage is unavailable."
         )
     end
 
@@ -6668,8 +6587,6 @@ function ConfigRuntime.initialize()
         return false, readError
     end
 
-    -- Auto Save/Auto Load selalu dibaca sebagai metadata. Isi config lainnya
-    -- hanya diterapkan saat Auto Load aktif.
     if config.autoSave ~= nil then
         State.autoSave = config.autoSave == true
     end
@@ -6825,7 +6742,7 @@ local function loadWindUI()
     end)
 
     if not success or type(result) ~= "table" then
-        error("Gagal memuat WindUI: " .. tostring(result))
+        error("Could not load WindUI: " .. tostring(result))
     end
 
     return result
@@ -6869,7 +6786,7 @@ local function buildGui()
     })
 
     if not Window then
-        error("WindUI gagal membuat window.")
+        error("WindUI could not create the window.")
     end
 
     State.window = Window
@@ -7186,7 +7103,7 @@ local function buildGui()
 
     TrophyTab:Button({
         Title = "Select All",
-        Desc = "Pilih seluruh trophy.",
+        Desc = "Select all trophies.",
         Icon = "list-checks",
         Callback = function()
             setAllTrophies(true)
@@ -7195,7 +7112,7 @@ local function buildGui()
 
     TrophyTab:Button({
         Title = "Clear All",
-        Desc = "Kosongkan whitelist trophy.",
+        Desc = "Clear the trophy whitelist.",
         Icon = "list-x",
         Callback = function()
             setAllTrophies(false)
@@ -7210,7 +7127,7 @@ local function buildGui()
             local crafted, result = craftNextWhitelisted()
 
             if crafted then
-                notify("Craft Trophy", "Craft diproses: " .. tostring(result), "trophy")
+                notify("Craft Trophy", "Craft started: " .. tostring(result), "trophy")
             else
                 notify("Craft Trophy", tostring(result), "triangle-alert")
             end
@@ -7249,11 +7166,11 @@ local function buildGui()
             local success, _, errorMessage = fetchSpinWheelData(true)
 
             if success then
-                notify("Spin Wheel", "Data berhasil diperbarui.", "circle-dot")
+                notify("Spin Wheel", "Data updated successfully.", "circle-dot")
             else
                 notify(
                     "Spin Wheel",
-                    tostring(errorMessage or "Gagal mengambil data."),
+                    tostring(errorMessage or "Could not retrieve data."),
                     "triangle-alert"
                 )
             end
@@ -7269,7 +7186,7 @@ local function buildGui()
 
             notify(
                 "Spin Wheel",
-                success and "Free Spin sedang diproses."
+                success and "Free Spin is being processed."
                     or tostring(errorMessage),
                 success and "gift" or "triangle-alert"
             )
@@ -7285,7 +7202,7 @@ local function buildGui()
 
             notify(
                 "Spin Wheel",
-                success and "Spin dimulai."
+                success and "Spin started."
                     or tostring(errorMessage),
                 success and "rotate-cw" or "triangle-alert"
             )
@@ -7314,7 +7231,7 @@ local function buildGui()
 
     State.spinWheelLogParagraph = SpinWheelTab:Paragraph({
         Title = "Session Rewards",
-        Desc = "Belum ada hadiah pada session ini.",
+        Desc = "No rewards have been collected this session.",
         Image = "scroll-text",
         ImageSize = 19,
         Size = "Small",
@@ -7326,7 +7243,7 @@ local function buildGui()
         Icon = "trash-2",
         Callback = function()
             clearSpinWheelLog()
-            notify("Spin Wheel", "Session log berhasil di-reset.", "trash-2")
+            notify("Spin Wheel", "Session log cleared.", "trash-2")
         end,
     })
 
@@ -7354,7 +7271,7 @@ local function buildGui()
             notify(
                 "Wish",
                 success
-                    and ("Wish berhasil: " .. tostring(result))
+                    and ("Wish succeeded: " .. tostring(result))
                     or tostring(result),
                 success and "sparkles" or "triangle-alert"
             )
@@ -7381,7 +7298,7 @@ local function buildGui()
 
     State.wishLogParagraph = WishTab:Paragraph({
         Title = "Session Rewards",
-        Desc = "Belum ada hasil Wish pada session ini.",
+        Desc = "No Wish results have been recorded this session.",
         Image = "scroll-text",
         ImageSize = 19,
         Size = "Small",
@@ -7393,7 +7310,7 @@ local function buildGui()
         Icon = "trash-2",
         Callback = function()
             WishRuntime.clearLog()
-            notify("Wish", "Wish session log di-reset.", "trash-2")
+            notify("Wish", "Wish session log cleared.", "trash-2")
         end,
     })
 
@@ -7422,7 +7339,7 @@ local function buildGui()
                 "Index",
                 success
                     and string.format(
-                        "%d reward sedang diproses.",
+                        "%d rewards are being processed.",
                         tonumber(result) or 0
                     )
                     or tostring(result),
@@ -7472,7 +7389,7 @@ local function buildGui()
 
     GemShopTab:Button({
         Title = "Select All",
-        Desc = "Pilih seluruh fixed item, Lucky Item, dan Scarlet Pack.",
+        Desc = "Select all fixed items, the Lucky Item, and the Scarlet Pack.",
         Icon = "list-checks",
         Callback = function()
             setAllGemShopItems(true)
@@ -7482,7 +7399,7 @@ local function buildGui()
 
     GemShopTab:Button({
         Title = "Clear All",
-        Desc = "Kosongkan whitelist Gem Shop.",
+        Desc = "Clear the Gem Shop whitelist.",
         Icon = "list-x",
         Callback = function()
             setAllGemShopItems(false)
@@ -7499,7 +7416,7 @@ local function buildGui()
 
             notify(
                 "Gem Shop",
-                success and ("Pembelian diproses: " .. tostring(result))
+                success and ("Purchase started: " .. tostring(result))
                     or tostring(result),
                 success and "shopping-cart" or "triangle-alert"
             )
@@ -7511,7 +7428,7 @@ local function buildGui()
         Desc = "Update balance, items, and stock.",
         Icon = "refresh-cw",
         Callback = function()
-            updateGemShopStatus("Gem Shop berhasil di-refresh.")
+            updateGemShopStatus("Gem Shop refreshed.")
         end,
     })
 
@@ -7560,15 +7477,15 @@ local function buildGui()
             if success and amount > 0 then
                 notify(
                     "Claim Seashells",
-                    string.format("%d request collect berhasil dikirim.", amount),
+                    string.format("%d collection requests were sent.", amount),
                     "shell"
                 )
             elseif success then
-                notify("Claim Seashells", "Tidak ada seashell tersedia.", "info")
+                notify("Claim Seashells", "No seashells are available.", "info")
             else
                 notify(
                     "Claim Seashells",
-                    tostring(errorMessage or "Tidak ada seashell yang berhasil."),
+                    tostring(errorMessage or "No seashells were collected."),
                     "triangle-alert"
                 )
             end
@@ -7605,19 +7522,19 @@ local function buildGui()
             if success and amount > 0 then
                 notify(
                     "Summer Quests",
-                    tostring(amount) .. " quest diproses.",
+                    tostring(amount) .. " quests are being processed.",
                     "gift"
                 )
             elseif success then
                 notify(
                     "Summer Quests",
-                    "Belum ada quest yang dapat diklaim.",
+                    "No quests can be claimed yet.",
                     "info"
                 )
             else
                 notify(
                     "Summer Quests",
-                    tostring(errorMessage or "Claim gagal."),
+                    tostring(errorMessage or "Claim failed."),
                     "triangle-alert"
                 )
             end
@@ -7682,7 +7599,7 @@ local function buildGui()
             notify(
                 "Summer Shop",
                 success
-                    and ("Pembelian diproses: " .. tostring(result))
+                    and ("Purchase started: " .. tostring(result))
                     or tostring(result),
                 success and "shopping-cart" or "triangle-alert"
             )
@@ -7823,7 +7740,7 @@ local function buildGui()
             notify(
                 "Tournament Shop",
                 success
-                    and ("Pembelian diproses: " .. tostring(result))
+                    and ("Purchase started: " .. tostring(result))
                     or tostring(result),
                 success and "shopping-cart" or "triangle-alert"
             )
@@ -7836,7 +7753,7 @@ local function buildGui()
         Icon = "refresh-cw",
         Callback = function()
             refreshTournamentShopOptions(true)
-            updateTournamentShopStatus("Tournament Shop berhasil di-refresh.")
+            updateTournamentShopStatus("Tournament Shop refreshed.")
         end,
     })
 
@@ -7966,7 +7883,6 @@ local function buildGui()
         end,
     })
 
-    -- Apply the captured value as soon as WindUI finishes key selection.
     task.spawn(function()
         local observed = State.windowKeybind
 
@@ -8017,7 +7933,7 @@ local function buildGui()
             notify(
                 "Anti AFK",
                 success
-                    and ("Pulse berhasil: " .. tostring(result))
+                    and ("Pulse succeeded: " .. tostring(result))
                     or tostring(result),
                 success and "shield-check" or "triangle-alert"
             )
@@ -8150,8 +8066,8 @@ local function buildGui()
     updateTournamentShopStatus("Choose rewards from the Reward List.")
     AntiAfkRuntime.updateStatus(
         State.antiAfk
-            and "Anti AFK dimuat dari config."
-            or "Anti AFK belum aktif."
+            and "Anti AFK loaded from saved settings."
+            or "Anti AFK is not active yet."
     )
     ConfigRuntime.updateStatus(
         State.configStartupLoaded
@@ -8180,7 +8096,6 @@ local function buildGui()
         return false
     end
 
-    -- Select once immediately and once after UI tasks settle.
     selectHomeTab()
 
     task.defer(function()
@@ -8215,8 +8130,6 @@ local Hub = {
     Utilities = {},
     Config = {},
 }
-
--- Team module ----------------------------------------------------------------
 
 function Hub.Team.SetAutoEquip(enabled)
     local value = EquipBestRuntime.setAuto(enabled)
@@ -8283,9 +8196,6 @@ function Hub.Team.GetState()
     }
 end
 
-
--- Trophies module ------------------------------------------------------------
-
 function Hub.Trophies.SetAutoCraft(enabled)
     local value = setAutoCraft(enabled)
 
@@ -8306,19 +8216,19 @@ function Hub.Trophies.SetEnabled(trophyName, enabled)
     trophyName = tostring(trophyName)
 
     if not TrophyConfig.Trophies[trophyName] then
-        return false, "Trophy tidak dikenal"
+        return false, "Unknown trophy"
     end
 
     State.whitelist[trophyName] = enabled == true
     syncWhitelistDropdown()
-    updateStatus("Whitelist diperbarui.")
+    updateStatus("Whitelist updated.")
 
     return true
 end
 
 function Hub.Trophies.SetWhitelist(whitelist)
     if type(whitelist) ~= "table" then
-        return false, "Whitelist harus berupa table"
+        return false, "Whitelist must be a table"
     end
 
     table.clear(State.whitelist)
@@ -8328,7 +8238,7 @@ function Hub.Trophies.SetWhitelist(whitelist)
     end
 
     syncWhitelistDropdown()
-    updateStatus("Whitelist diperbarui.")
+    updateStatus("Whitelist updated.")
 
     return true
 end
@@ -8354,8 +8264,6 @@ end
 function Hub.Trophies.CraftNow()
     return craftNextWhitelisted()
 end
-
--- Seashells module -----------------------------------------------------------
 
 function Hub.Seashells.SetAutoClaim(enabled)
     local value = setAutoClaimSeashell(enabled)
@@ -8388,9 +8296,6 @@ function Hub.Seashells.GetState()
         status = State.lastSeashellStatus,
     }
 end
-
-
--- Spin Wheel module ----------------------------------------------------------
 
 function Hub.SpinWheel.SetAutoClaim(enabled)
     local value = setAutoClaimSpinWheel(enabled)
@@ -8478,10 +8383,6 @@ function Hub.SpinWheel.GetState()
     }
 end
 
-
-
--- Wish module ----------------------------------------------------------------
-
 function Hub.Wish.SetAutoSpin(enabled)
     local value = WishRuntime.setAutoSpin(enabled)
 
@@ -8564,11 +8465,6 @@ function Hub.Wish.GetState()
     }
 end
 
-
-
-
--- Daily Rewards module -------------------------------------------------------
-
 function Hub.DailyRewards.SetAutoClaim(enabled)
     local value = DailyRewardRuntime.setAutoClaim(enabled)
 
@@ -8624,10 +8520,6 @@ function Hub.DailyRewards.GetState()
         lastStatus = State.dailyRewardLastStatus,
     }
 end
-
-
-
--- Codes module ---------------------------------------------------------------
 
 function Hub.Codes.SetAutoRedeem(enabled)
     local value = CodesRuntime.setAutoRedeem(enabled)
@@ -8685,9 +8577,6 @@ function Hub.Codes.GetState()
     }
 end
 
-
--- Index module ---------------------------------------------------------------
-
 function Hub.Index.SetAutoClaim(enabled)
     local value = IndexRuntime.setAutoClaim(enabled)
 
@@ -8724,9 +8613,6 @@ function Hub.Index.GetState()
     }
 end
 
-
--- Gem Shop module ------------------------------------------------------------
-
 function Hub.GemShop.SetAutoBuy(enabled)
     local value = setAutoBuyGemShop(enabled)
 
@@ -8749,20 +8635,20 @@ function Hub.GemShop.SetItemEnabled(itemKeyOrLabel, enabled)
     local key = gemShopKeyFromSelection(itemKeyOrLabel)
 
     if not key then
-        return false, "Item Gem Shop tidak dikenal"
+        return false, "Unknown Gem Shop item"
     end
 
     State.gemShopWhitelist[key] = enabled == true
     State.gemShopNextBuyAt = 0
     syncGemShopWhitelistDropdown()
-    updateGemShopStatus("Whitelist Gem Shop diperbarui.")
+    updateGemShopStatus("Gem Shop whitelist updated.")
 
     return true
 end
 
 function Hub.GemShop.SetWhitelist(whitelist)
     if type(whitelist) ~= "table" then
-        return false, "Whitelist harus berupa table"
+        return false, "Whitelist must be a table"
     end
 
     table.clear(State.gemShopWhitelist)
@@ -8775,7 +8661,7 @@ function Hub.GemShop.SetWhitelist(whitelist)
 
     State.gemShopNextBuyAt = 0
     syncGemShopWhitelistDropdown()
-    updateGemShopStatus("Whitelist Gem Shop diperbarui.")
+    updateGemShopStatus("Gem Shop whitelist updated.")
 
     return true
 end
@@ -8818,7 +8704,7 @@ function Hub.GemShop.BuyNow()
 end
 
 function Hub.GemShop.Refresh()
-    updateGemShopStatus("Gem Shop berhasil di-refresh.")
+    updateGemShopStatus("Gem Shop refreshed.")
     return true
 end
 
@@ -8842,9 +8728,6 @@ function Hub.GemShop.GetState()
         scarletStock = getScarletStock(),
     }
 end
-
-
--- Summer Quests module -------------------------------------------------------
 
 function Hub.SummerQuests.SetAutoClaim(enabled)
     local value = setAutoClaimSummerQuests(enabled)
@@ -8886,8 +8769,6 @@ function Hub.SummerQuests.GetState()
     }
 end
 
--- Summer Shop module ---------------------------------------------------------
-
 function Hub.SummerShop.SetAutoBuy(enabled)
     local value = setAutoBuySummerShop(enabled)
 
@@ -8910,19 +8791,19 @@ function Hub.SummerShop.SetItemEnabled(itemId, enabled)
     itemId = tostring(itemId)
 
     if not SummerShopConfigById[itemId] then
-        return false, "Item Summer Shop tidak dikenal"
+        return false, "Unknown Summer Shop item"
     end
 
     State.summerShopWhitelist[itemId] = enabled == true
     syncSummerShopWhitelistDropdown()
-    updateSummerShopStatus("Whitelist Summer Shop diperbarui.")
+    updateSummerShopStatus("Summer Shop whitelist updated.")
 
     return true
 end
 
 function Hub.SummerShop.SetWhitelist(whitelist)
     if type(whitelist) ~= "table" then
-        return false, "Whitelist harus berupa table"
+        return false, "Whitelist must be a table"
     end
 
     table.clear(State.summerShopWhitelist)
@@ -8932,7 +8813,7 @@ function Hub.SummerShop.SetWhitelist(whitelist)
     end
 
     syncSummerShopWhitelistDropdown()
-    updateSummerShopStatus("Whitelist Summer Shop diperbarui.")
+    updateSummerShopStatus("Summer Shop whitelist updated.")
 
     return true
 end
@@ -8982,7 +8863,7 @@ end
 function Hub.SummerShop.Refresh()
     buildSummerShopOptions()
     syncSummerShopWhitelistDropdown()
-    updateSummerShopStatus("Summer Shop berhasil di-refresh.")
+    updateSummerShopStatus("Summer Shop refreshed.")
     return true
 end
 
@@ -9003,9 +8884,6 @@ function Hub.SummerShop.GetState()
         status = State.summerShopLastStatus,
     }
 end
-
-
--- Tournament module ----------------------------------------------------------
 
 function Hub.Tournament.SetAutoJoin(enabled)
     local value = TournamentRuntime.setAutoJoin(enabled)
@@ -9076,11 +8954,6 @@ end
 
 function Hub.Tournament.GetState()
     local data = TournamentRuntime.getState()
-    local best = {}
-
-    if data.playerData then
-        best = TournamentRuntime.getBestTeam(data.playerData)
-    end
 
     return {
         autoJoin = State.autoJoinTournament,
@@ -9114,9 +8987,6 @@ function Hub.Tournament.GetState()
     }
 end
 
-
--- Tournament Shop module -----------------------------------------------------
-
 function Hub.TournamentShop.SetAutoBuy(enabled)
     local value = setAutoBuyTournamentShop(enabled)
 
@@ -9141,13 +9011,13 @@ function Hub.TournamentShop.SetItemEnabled(id, enabled)
     id = tournamentConfigIdFromSavedKey(id)
 
     if not id or not TournamentShopConfigById[id] then
-        return false, "Reward tidak tersedia"
+        return false, "Reward is unavailable"
     end
 
     State.tournamentShopWhitelist[id] = enabled == true
     syncTournamentShopWhitelistDropdown()
     updateTournamentShopStatus(
-        "Reward List diperbarui."
+        "Reward list updated."
     )
 
     return true
@@ -9155,7 +9025,7 @@ end
 
 function Hub.TournamentShop.SetWhitelist(whitelist)
     if type(whitelist) ~= "table" then
-        return false, "Whitelist harus berupa table"
+        return false, "Whitelist must be a table"
     end
 
     table.clear(State.tournamentShopWhitelist)
@@ -9171,7 +9041,7 @@ function Hub.TournamentShop.SetWhitelist(whitelist)
 
     syncTournamentShopWhitelistDropdown()
     updateTournamentShopStatus(
-        "Reward List diperbarui."
+        "Reward list updated."
     )
 
     return true
@@ -9254,7 +9124,7 @@ end
 function Hub.TournamentShop.Refresh()
     refreshTournamentShopOptions(true)
     updateTournamentShopStatus(
-        "Tournament Shop berhasil di-refresh."
+        "Tournament Shop refreshed."
     )
     return true
 end
@@ -9278,11 +9148,6 @@ function Hub.TournamentShop.GetState()
         status = State.tournamentShopLastStatus,
     }
 end
-
-
-
-
--- Logs module ----------------------------------------------------------------
 
 function Hub.Logs.Get()
     local result = {}
@@ -9323,9 +9188,6 @@ function Hub.Logs.GetState()
         dedupeSeconds = State.logsDedupeSeconds,
     }
 end
-
-
--- Utilities module -----------------------------------------------------------
 
 function Hub.Utilities.SetAntiAfk(enabled)
     local value = AntiAfkRuntime.setEnabled(enabled)
@@ -9369,9 +9231,6 @@ end
 function Hub.Utilities.GetServerState()
     return ServerRuntime.getState()
 end
-
-
--- Configuration module -------------------------------------------------------
 
 function Hub.Config.Save()
     return ConfigRuntime.save()
@@ -9427,7 +9286,6 @@ function Hub.Config.GetKeybind()
     return State.windowKeybind
 end
 
-
 function Hub.Config.GetState()
     return {
         supported = State.configSupported,
@@ -9444,8 +9302,6 @@ function Hub.Config.GetState()
         status = State.configLastStatus,
     }
 end
-
--- General hub API ------------------------------------------------------------
 
 function Hub.GetState()
     return {
@@ -9564,7 +9420,6 @@ function Hub.Stop()
     end
 end
 
--- API ringkas untuk penggunaan melalui console.
 Hub.SetAutoEquipBestCards = Hub.Team.SetAutoEquip
 Hub.ToggleAutoEquipBestCards = Hub.Team.ToggleAutoEquip
 Hub.SetEquipBestMode = Hub.Team.SetMode
@@ -9698,7 +9553,7 @@ do
         State.spinWheelConnection = connectionOrError
     else
         State.spinWheelLastStatus =
-            "Gagal memasang listener spin_result: " .. tostring(connectionOrError)
+            "Could not attach the spin-result listener: " .. tostring(connectionOrError)
     end
 end
 
@@ -9762,7 +9617,7 @@ do
         State.antiAfkIdledConnection = connectionOrError
     else
         State.lastAntiAfkError =
-            "Gagal memasang Idled listener: " .. tostring(connectionOrError)
+            "Could not attach the idle listener: " .. tostring(connectionOrError)
     end
 end
 
