@@ -127,7 +127,7 @@ end
 local GAME_NAME = getCurrentGameName()
 local HUB_TITLE = GAME_NAME
 
-local CONFIG_VERSION = 24
+local CONFIG_VERSION = 25
 local CONFIG_ROOT = "xSansHUB"
 local CONFIG_FOLDER = CONFIG_ROOT .. "/LoanOutManager"
 local CONFIG_FILE = CONFIG_FOLDER .. "/" .. tostring(game.PlaceId) .. ".json"
@@ -688,6 +688,9 @@ local State = {
     lastPackBuySpent = 0,
     lastPackBuyError = nil,
     lastPackBuyStatus = "idle",
+    lastPackBuyAttemptedTiers = {},
+    lastPackBuySkippedTiers = {},
+    lastPackBuyAvailableCandidates = 0,
     lastPackLogUpdateAt = 0,
     lastEquipBestSignature = nil,
     lastEquipBestAt = 0,
@@ -4604,24 +4607,219 @@ Runtime.getPickPackPurchaseRemaining = function(tier)
     return math.max(0, perWindow - bought)
 end
 
+Runtime.readPackStockRecord = function(record)
+    if record == nil then
+        return {
+            known = false,
+            available = true,
+            remaining = math.huge,
+            reason = nil,
+        }
+    end
+
+    if type(record) == "boolean" then
+        return {
+            known = true,
+            available = record,
+            remaining = record and math.huge or 0,
+            reason = record and nil or "Unavailable",
+        }
+    end
+
+    if type(record) == "number" then
+        local remaining = math.max(0, math.floor(record))
+        return {
+            known = true,
+            available = remaining > 0,
+            remaining = remaining,
+            reason = remaining > 0 and nil or "Out of stock",
+        }
+    end
+
+    if type(record) ~= "table" then
+        return {
+            known = false,
+            available = true,
+            remaining = math.huge,
+            reason = nil,
+        }
+    end
+
+    local unavailable = record.soldOut == true
+        or record.outOfStock == true
+        or record.disabled == true
+        or record.locked == true
+        or record.available == false
+        or record.enabled == false
+        or record.active == false
+        or record.inStock == false
+
+    local remaining = tonumber(
+        record.stockRemaining
+            or record.remainingStock
+            or record.availableStock
+            or record.stock
+            or record.remaining
+            or record.quantity
+    )
+
+    if remaining ~= nil then
+        remaining = math.max(0, math.floor(remaining))
+        unavailable = unavailable or remaining <= 0
+    end
+
+    return {
+        known = unavailable or remaining ~= nil
+            or record.available ~= nil
+            or record.enabled ~= nil
+            or record.active ~= nil
+            or record.inStock ~= nil,
+        available = not unavailable,
+        remaining = remaining ~= nil and remaining or math.huge,
+        reason = unavailable
+            and tostring(record.reason or record.message or "Out of stock")
+            or nil,
+    }
+end
+
+Runtime.getPackStockState = function(tier, config)
+    local result = {
+        known = false,
+        available = true,
+        remaining = math.huge,
+        reason = nil,
+        source = "unknown",
+    }
+
+    local function merge(record, source)
+        local state = Runtime.readPackStockRecord(record)
+        if not state.known then
+            return
+        end
+
+        result.known = true
+        result.source = source
+
+        if not state.available then
+            result.available = false
+            result.remaining = 0
+            result.reason = state.reason or "Out of stock"
+            return
+        end
+
+        result.remaining = math.min(result.remaining, state.remaining or math.huge)
+    end
+
+    if type(config) == "table" then
+        merge({
+            soldOut = config.soldOut,
+            outOfStock = config.outOfStock,
+            disabled = config.disabled,
+            locked = config.locked,
+            available = config.available,
+            enabled = config.enabled,
+            active = config.active,
+            inStock = config.inStock,
+            stockRemaining = config.stockRemaining,
+            remainingStock = config.remainingStock,
+            availableStock = config.availableStock,
+            stock = config.stock,
+            reason = config.reason,
+        }, "PackConfig")
+    end
+
+    for _, path in ipairs({
+        "Packs.Stock",
+        "Packs.Stocks",
+        "Packs.ShopStock",
+        "Packs.ShopStocks",
+        "Packs.Available",
+        "Packs.Shop",
+        "Packs.Offers",
+    }) do
+        local container = Runtime.getData(path)
+        if type(container) == "table" then
+            local record = container[tier]
+
+            if record == nil then
+                for _, value in pairs(container) do
+                    if type(value) == "table"
+                        and tostring(value.packTier or value.tier or value.id or "") == tostring(tier)
+                    then
+                        record = value
+                        break
+                    end
+                end
+            end
+
+            if record ~= nil then
+                merge(record, path)
+            end
+        end
+
+        if result.available == false then
+            break
+        end
+    end
+
+    local pickRemaining = Runtime.getPickPackPurchaseRemaining(tier)
+    if pickRemaining ~= math.huge then
+        result.known = true
+        result.source = "PickPackLimit"
+        result.remaining = math.min(result.remaining, pickRemaining)
+
+        if pickRemaining <= 0 then
+            result.available = false
+            result.reason = "Pick Pack limit habis"
+        end
+    end
+
+    if result.remaining <= 0 then
+        result.available = false
+        result.reason = result.reason or "Out of stock"
+    end
+
+    return result
+end
+
 Runtime.getPackBuyCandidates = function(spendable)
     spendable = math.max(0, tonumber(spendable) or 0)
     local candidates = {}
+    local skipped = {}
 
     for _, tier in ipairs(State.packShopTiers or {}) do
         if State.packBuyWhitelist[tier] == true then
             local config = Runtime.getPackTierConfig(tier)
-            local cost = type(config) == "table" and math.max(0, tonumber(config.cost) or 0) or 0
-            local remaining = Runtime.getPickPackPurchaseRemaining(tier)
+            local cost = type(config) == "table"
+                and math.max(0, tonumber(config.cost) or 0)
+                or 0
+            local stock = Runtime.getPackStockState(tier, config)
 
-            if cost > 0 and cost <= spendable and remaining > 0 then
+            if cost <= 0 then
+                skipped[#skipped + 1] = {
+                    tier = tier,
+                    reason = "Invalid cost",
+                }
+            elseif cost > spendable then
+                skipped[#skipped + 1] = {
+                    tier = tier,
+                    reason = "Budget belum cukup",
+                }
+            elseif stock.available == false then
+                skipped[#skipped + 1] = {
+                    tier = tier,
+                    reason = stock.reason or "Out of stock",
+                }
+            else
                 candidates[#candidates + 1] = {
                     tier = tier,
                     label = State.packShopTierToLabel[tier] or tier,
                     config = config,
                     cost = cost,
                     pick = Runtime.isPickPackTier(tier),
-                    remaining = remaining,
+                    remaining = stock.remaining,
+                    stockKnown = stock.known,
+                    stockSource = stock.source,
                 }
             end
         end
@@ -4633,6 +4831,9 @@ Runtime.getPackBuyCandidates = function(spendable)
         end
         return a.tier < b.tier
     end)
+
+    State.lastPackBuySkippedTiers = skipped
+    State.lastPackBuyAvailableCandidates = #candidates
 
     return candidates
 end
@@ -4657,8 +4858,11 @@ Runtime.getPackBuyState = function()
             )
         )
 
-        if nextPack.pick then
-            nextCount = math.min(nextCount, math.max(0, tonumber(nextPack.remaining) or 0))
+        if nextPack.remaining ~= math.huge then
+            nextCount = math.min(
+                nextCount,
+                math.max(0, tonumber(nextPack.remaining) or 0)
+            )
         end
     end
 
@@ -4694,6 +4898,9 @@ Runtime.getPackBuyState = function()
         lastSpent = State.lastPackBuySpent,
         lastError = State.lastPackBuyError,
         status = State.lastPackBuyStatus,
+        availableCandidates = State.lastPackBuyAvailableCandidates,
+        attemptedTiers = State.lastPackBuyAttemptedTiers,
+        skippedTiers = State.lastPackBuySkippedTiers,
     }
 end
 
@@ -4721,16 +4928,16 @@ Runtime.updatePackShopUI = function(allowInstanceAccess)
 
         pcall(function()
             State.packShopParagraph:SetDesc(string.format(
-                "Coins: %s • Reserve: %s • Spendable: %s\nWhitelist: %d/%d • Next: %s ×%d • Prestige: %s • Scan: %d",
+                "Coins: %s • Reserve: %s • Spendable: %s\nWhitelist: %d/%d • Buyable: %d • Next: %s ×%d • Prestige: %s",
                 formatCompactNumber(buyState.coins or 0),
                 formatCompactNumber(buyState.reserve or 0),
                 formatCompactNumber(buyState.spendable or 0),
                 buyState.whitelistCount or 0,
                 buyState.totalPackCount or 0,
+                buyState.availableCandidates or 0,
                 nextText,
                 tonumber(buyState.nextCount) or 0,
-                priorityText,
-                tonumber(State.packShopDiscoveryScannedTables) or 0
+                priorityText
             ))
         end)
     end
@@ -4783,7 +4990,9 @@ Runtime.buySelectedPacks = function(isAutomatic, requestedCount)
 
     local buyState = Runtime.getPackBuyState()
     if buyState.blockedByPrestige then
-        State.lastPackBuyStatus = buyState.prestigeInfoAvailable and "saving_prestige" or "waiting_prestige"
+        State.lastPackBuyStatus = buyState.prestigeInfoAvailable
+            and "saving_prestige"
+            or "waiting_prestige"
         State.lastPackBuyError = nil
         State.nextAutoBuyPackAt = os.clock() + AUTO_BUY_PACK_RETRY_DELAY
         updateAutomationButtons()
@@ -4804,51 +5013,32 @@ Runtime.buySelectedPacks = function(isAutomatic, requestedCount)
     end
 
     local candidates = Runtime.getPackBuyCandidates(buyState.spendable)
-    local selected = candidates[1]
-    if not selected then
-        State.lastPackBuyStatus = "waiting_budget"
+    if #candidates == 0 then
+        State.lastPackBuyStatus = "waiting_stock_or_budget"
         State.lastPackBuyError = nil
         State.nextAutoBuyPackAt = os.clock() + AUTO_BUY_PACK_RETRY_DELAY
         updateAutomationButtons()
 
         if not isAutomatic then
-            setStatus("Belum ada pack whitelist yang dapat dibeli dari budget saat ini.", COLORS.warning)
+            setStatus(
+                "Tidak ada pack whitelist yang sedang stock dan terjangkau.",
+                COLORS.warning
+            )
         end
 
-        return false, "Tidak ada pack yang affordable"
+        return false, "Tidak ada pack stock yang affordable"
     end
-
-    local affordableCount = math.floor((buyState.spendable or 0) / selected.cost)
 
     if requestedCount == nil and isAutomatic then
         requestedCount = State.autoBuyPackQuantityPerCycle
     end
-
-    local count
-    if requestedCount ~= nil then
-        count = math.max(
-            1,
-            math.min(
-                affordableCount,
-                math.floor(tonumber(requestedCount) or 1)
-            )
+    requestedCount = math.max(
+        1,
+        math.min(
+            math.floor(tonumber(requestedCount) or 1),
+            AUTO_BUY_PACK_MAX_BATCH
         )
-    else
-        count = math.max(
-            1,
-            math.min(affordableCount, AUTO_BUY_PACK_MAX_BATCH)
-        )
-    end
-
-    if selected.pick then
-        count = math.min(count, math.max(0, tonumber(selected.remaining) or 0))
-    end
-
-    if count <= 0 then
-        State.lastPackBuyStatus = "limited"
-        State.nextAutoBuyPackAt = os.clock() + AUTO_BUY_PACK_RETRY_DELAY
-        return false, "Limit Pick Pack habis"
-    end
+    )
 
     if not tryRediscoverNetworker() then
         return false, "Networker belum ditemukan"
@@ -4857,51 +5047,128 @@ Runtime.buySelectedPacks = function(isAutomatic, requestedCount)
     State.buyingPacks = true
     State.lastPackBuyStatus = "buying"
     State.lastPackBuyError = nil
+    State.lastPackBuyAttemptedTiers = {}
     State.nextAutoBuyPackAt = math.huge
     updateAutomationButtons()
 
     task.spawn(function()
         local purchased = 0
-        local lastError = nil
+        local selectedResult = nil
+        local attemptErrors = {}
 
-        if selected.pick then
-            for _ = 1, count do
-                if not State.running or (isAutomatic and not State.autoBuyPacks) then
-                    break
-                end
-
-                local response, errorMessage = callNetworkLoose("BuyPickPack", {
-                    packTier = selected.tier,
-                })
-
-                if not response or errorMessage then
-                    lastError = tostring(errorMessage or "BuyPickPack gagal")
-                    break
-                end
-
-                purchased += 1
-                task.wait(0.15)
+        for _, selected in ipairs(candidates) do
+            if not State.running or (isAutomatic and not State.autoBuyPacks) then
+                break
             end
-        else
-            local response, errorMessage = callNetworkLoose("BuyPack", {
-                packTier = selected.tier,
-                count = count,
-            })
 
-            if response and not errorMessage then
-                purchased = count
-            else
-                lastError = tostring(errorMessage or "BuyPack gagal")
+            State.lastPackBuyAttemptedTiers[#State.lastPackBuyAttemptedTiers + 1] =
+                selected.tier
+
+            local affordableCount = math.floor(
+                (tonumber(buyState.spendable) or 0) / selected.cost
+            )
+            local desiredCount = math.min(requestedCount, affordableCount)
+
+            if selected.remaining ~= math.huge then
+                desiredCount = math.min(
+                    desiredCount,
+                    math.max(0, tonumber(selected.remaining) or 0)
+                )
+            end
+
+            if desiredCount > 0 then
+                if selected.pick then
+                    for _ = 1, desiredCount do
+                        if not State.running
+                            or (isAutomatic and not State.autoBuyPacks)
+                        then
+                            break
+                        end
+
+                        local response, errorMessage = callNetworkLoose(
+                            "BuyPickPack",
+                            {packTier = selected.tier}
+                        )
+
+                        if not response or errorMessage then
+                            attemptErrors[#attemptErrors + 1] = string.format(
+                                "%s: %s",
+                                selected.tier,
+                                tostring(errorMessage or "stock unavailable")
+                            )
+                            break
+                        end
+
+                        purchased += 1
+                        selectedResult = selected
+                        task.wait(0.15)
+                    end
+                else
+                    local attemptCount = desiredCount
+                    local attemptedCounts = {}
+
+                    while attemptCount >= 1 and not attemptedCounts[attemptCount] do
+                        attemptedCounts[attemptCount] = true
+
+                        local response, errorMessage = callNetworkLoose("BuyPack", {
+                            packTier = selected.tier,
+                            count = attemptCount,
+                        })
+
+                        if response and not errorMessage then
+                            local actualCount = type(response) == "table"
+                                and tonumber(
+                                    response.count
+                                        or response.purchased
+                                        or response.bought
+                                )
+                                or nil
+
+                            purchased = math.max(
+                                1,
+                                math.floor(actualCount or attemptCount)
+                            )
+                            selectedResult = selected
+                            break
+                        end
+
+                        attemptErrors[#attemptErrors + 1] = string.format(
+                            "%s ×%d: %s",
+                            selected.tier,
+                            attemptCount,
+                            tostring(errorMessage or "stock unavailable")
+                        )
+
+                        if attemptCount == 1 then
+                            break
+                        end
+
+                        attemptCount = math.max(1, math.floor(attemptCount / 2))
+                    end
+                end
+            end
+
+            if purchased > 0 then
+                break
             end
         end
 
+        local lastError = purchased <= 0
+            and (#attemptErrors > 0 and table.concat(attemptErrors, " | ")
+                or "Semua pack whitelist sedang out of stock")
+            or nil
+
         State.buyingPacks = false
         State.lastPackBuyAt = os.time()
-        State.lastPackBuyTier = selected.tier
+        State.lastPackBuyTier = selectedResult and selectedResult.tier or nil
         State.lastPackBuyCount = purchased
-        State.lastPackBuySpent = purchased * selected.cost
+        State.lastPackBuySpent = selectedResult
+            and purchased * selectedResult.cost
+            or 0
         State.lastPackBuyError = lastError
-        State.lastPackBuyStatus = lastError and "error" or (purchased > 0 and "success" or "stopped")
+        State.lastPackBuyStatus = lastError
+            and "all_candidates_failed"
+            or (purchased > 0 and "success" or "stopped")
         State.nextAutoBuyPackAt = os.clock()
             + (lastError and AUTO_BUY_PACK_RETRY_DELAY or AUTO_BUY_PACK_INTERVAL)
         State.packUiDirty = true
@@ -4913,14 +5180,14 @@ Runtime.buySelectedPacks = function(isAutomatic, requestedCount)
 
         State.pendingStatus = {
             text = lastError
-                and ("Buy Pack gagal: " .. lastError)
+                and ("Auto Buy menunggu stock: " .. lastError)
                 or string.format(
                     "Bought %d× %s • spent %s Coins.",
                     purchased,
-                    tostring(selected.label),
-                    formatCompactNumber(purchased * selected.cost)
+                    tostring(selectedResult.label),
+                    formatCompactNumber(purchased * selectedResult.cost)
                 ),
-            color = lastError and COLORS.danger or COLORS.success,
+            color = lastError and COLORS.warning or COLORS.success,
         }
     end)
 
