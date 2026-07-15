@@ -5,11 +5,12 @@
     Main features:
       - Home overview
       - Trophy crafting
-      - Seashell collection
+      - Summer activities, quests, and shop
       - Spin Wheel and Wish automation
       - Index rewards
       - Gem, Summer, and Tournament shops
       - Anti AFK
+      - Central session logs
       - Save and load configuration
 
     Configurable window keybind
@@ -18,6 +19,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local MarketplaceService = game:GetService("MarketplaceService")
+local TeleportService = game:GetService("TeleportService")
 local Workspace = game:GetService("Workspace")
 local HttpService = game:GetService("HttpService")
 local UserInputService = game:GetService("UserInputService")
@@ -446,10 +448,8 @@ local State = {
     statusParagraph = nil,
 
     windowKeybind = "G",
-    keybindDropdown = nil,
+    windowKeybindControl = nil,
     keybindTag = nil,
-    keybindConnection = nil,
-    syncingKeybindDropdown = false,
     whitelistDropdown = nil,
     autoCraftToggle = nil,
 
@@ -605,6 +605,20 @@ local State = {
     antiAfkToggle = nil,
     antiAfkIdledConnection = nil,
 
+    rejoining = false,
+    lastRejoinStatus = "Ready.",
+
+    logs = {},
+    logsLimit = 250,
+    logsDisplayLimit = 80,
+    logsFilter = "All",
+    logsLastByCategory = {},
+    logsSuppressed = 0,
+    logsDedupeSeconds = 30,
+    logsParagraph = nil,
+    logsSummaryParagraph = nil,
+    logsFilterDropdown = nil,
+
     autoSave = true,
     autoLoad = true,
     configSupported = type(readfile) == "function" and type(writefile) == "function",
@@ -620,6 +634,219 @@ local State = {
     autoSaveToggle = nil,
     autoLoadToggle = nil,
 }
+
+local LOG_FILTER_OPTIONS = {
+    "All",
+    "Hub",
+    "Trophies",
+    "Summer",
+    "Spin Wheel",
+    "Wish",
+    "Index",
+    "Gem Shop",
+    "Tournament",
+    "Anti AFK",
+    "Config",
+}
+
+local LogRuntime = {}
+
+local LOG_ROUTINE_PATTERNS = {
+    "tidak ada seashell",
+    "tidak ada reward index",
+    "tidak ada reward yang dapat",
+    "tidak ada summer quest",
+    "belum ada summer quest",
+    "tidak ada quest",
+    "stock habis",
+    "tidak tersedia pada stock",
+    "tidak tersedia di stock",
+    "tidak tersedia.",
+    "belum tersedia",
+    "belum muncul pada shop",
+    "belum muncul di shop",
+    "reward whitelist belum muncul",
+    "reward list belum muncul",
+    "tidak ada wish tickets",
+    "tidak ada spin",
+    "tidak ada item",
+    "tidak ada reward",
+    "menunggu reward",
+    "menunggu wish",
+    "menunggu spin",
+    "menunggu auto",
+    "masih cooldown",
+    "data pemain belum siap",
+    "playerstore belum",
+    "choose items from",
+    "choose rewards from",
+    "choose trophies from",
+    "ready.",
+}
+
+function LogRuntime.normalizeMessage(message)
+    return tostring(message or "")
+        :gsub("^%s+", "")
+        :gsub("%s+$", "")
+        :gsub("%s+", " ")
+end
+
+function LogRuntime.isRoutineMessage(message)
+    local lowered = string.lower(
+        LogRuntime.normalizeMessage(message)
+    )
+
+    for _, pattern in ipairs(LOG_ROUTINE_PATTERNS) do
+        if string.find(lowered, pattern, 1, true) then
+            return true
+        end
+    end
+
+    return false
+end
+
+function LogRuntime.getLines()
+    local lines = {}
+    local shown = 0
+    local selectedFilter = tostring(State.logsFilter or "All")
+
+    for index = #State.logs, 1, -1 do
+        local entry = State.logs[index]
+
+        if selectedFilter == "All"
+            or tostring(entry.category) == selectedFilter
+        then
+            lines[#lines + 1] = string.format(
+                "[%s] [%s] %s",
+                tostring(entry.time),
+                tostring(entry.category),
+                tostring(entry.message)
+            )
+            shown += 1
+
+            if shown >= State.logsDisplayLimit then
+                break
+            end
+        end
+    end
+
+    if #lines == 0 then
+        lines[1] = "No important activity yet."
+    end
+
+    return lines
+end
+
+function LogRuntime.updateUI()
+    if State.logsSummaryParagraph
+        and type(State.logsSummaryParagraph.SetDesc) == "function"
+    then
+        pcall(function()
+            State.logsSummaryParagraph:SetDesc(table.concat({
+                "Entries: " .. tostring(#State.logs),
+                "Noise Filtered: " .. tostring(State.logsSuppressed),
+                "Filter: " .. tostring(State.logsFilter),
+                "Showing: latest " .. tostring(State.logsDisplayLimit),
+                "Routine idle messages are hidden.",
+            }, "\n"))
+        end)
+    end
+
+    if State.logsParagraph
+        and type(State.logsParagraph.SetDesc) == "function"
+    then
+        pcall(function()
+            State.logsParagraph:SetDesc(
+                table.concat(LogRuntime.getLines(), "\n")
+            )
+        end)
+    end
+end
+
+function LogRuntime.append(category, message, level, keepRoutine)
+    if message == nil then
+        return nil
+    end
+
+    category = tostring(category or "Hub")
+    message = LogRuntime.normalizeMessage(message)
+    level = tostring(level or "info")
+
+    if message == "" then
+        return nil
+    end
+
+    -- Polling status belongs in each feature's status panel, not in Logs.
+    -- Manual notifications may pass keepRoutine=true so their result is kept.
+    if keepRoutine ~= true
+        and level ~= "error"
+        and LogRuntime.isRoutineMessage(message)
+    then
+        State.logsSuppressed += 1
+        LogRuntime.updateUI()
+        return nil
+    end
+
+    local now = os.clock()
+    local dedupeKey = category .. "\0" .. message
+    local previousAt = State.logsLastByCategory[dedupeKey]
+    local dedupeSeconds = level == "error"
+        and 8
+        or State.logsDedupeSeconds
+
+    -- Dedupe is keyed by category + message, so interleaved polling from
+    -- other features cannot cause the same line to be added repeatedly.
+    if previousAt and now - previousAt < dedupeSeconds then
+        State.logsSuppressed += 1
+        LogRuntime.updateUI()
+        return nil
+    end
+
+    State.logsLastByCategory[dedupeKey] = now
+
+    local entry = {
+        id = #State.logs + 1,
+        timestamp = os.time(),
+        time = os.date("%H:%M:%S"),
+        category = category,
+        level = level,
+        message = message,
+    }
+
+    State.logs[#State.logs + 1] = entry
+
+    while #State.logs > State.logsLimit do
+        table.remove(State.logs, 1)
+    end
+
+    LogRuntime.updateUI()
+    return entry
+end
+
+function LogRuntime.clear()
+    table.clear(State.logs)
+    table.clear(State.logsLastByCategory)
+    State.logsSuppressed = 0
+    LogRuntime.updateUI()
+end
+
+function LogRuntime.setFilter(value)
+    local selected = tostring(value or "All")
+    local valid = false
+
+    for _, option in ipairs(LOG_FILTER_OPTIONS) do
+        if option == selected then
+            valid = true
+            break
+        end
+    end
+
+    State.logsFilter = valid and selected or "All"
+    LogRuntime.updateUI()
+
+    return State.logsFilter
+end
+
 
 local function getGameName()
     local fallback = tostring(game.Name or "Spin A Soccer Card Hub")
@@ -693,6 +920,7 @@ end
 local function updateStatus(message)
     if message ~= nil then
         State.lastStatus = tostring(message)
+        LogRuntime.append("Trophies", State.lastStatus)
     end
 
     local description = table.concat({
@@ -711,6 +939,13 @@ local function updateStatus(message)
 end
 
 local function notify(title, content, icon)
+    LogRuntime.append(
+        tostring(title or "Hub"),
+        tostring(content or ""),
+        icon == "triangle-alert" and "error" or "info",
+        true
+    )
+
     local windUI = State.windUI
     if windUI and type(windUI.Notify) == "function" then
         pcall(function()
@@ -999,6 +1234,7 @@ end
 local function updateSeashellStatus(message)
     if message ~= nil then
         State.lastSeashellStatus = tostring(message)
+        LogRuntime.append("Summer", "Seashells • " .. State.lastSeashellStatus)
     end
 
     local description = table.concat({
@@ -1242,6 +1478,7 @@ end
 local function updateSpinWheelStatus(message)
     if message ~= nil then
         State.spinWheelLastStatus = tostring(message)
+        LogRuntime.append("Spin Wheel", State.spinWheelLastStatus)
     end
 
     local data = State.spinWheelData or {}
@@ -1676,6 +1913,7 @@ end
 local function updateGemShopStatus(message)
     if message ~= nil then
         State.gemShopLastStatus = tostring(message)
+        LogRuntime.append("Gem Shop", State.gemShopLastStatus)
     end
 
     local shopState = getGemShopStateData()
@@ -1969,6 +2207,7 @@ end
 local function updateSummerQuestStatus(message)
     if message ~= nil then
         State.summerQuestLastStatus = tostring(message)
+        LogRuntime.append("Summer", "Quests • " .. State.summerQuestLastStatus)
     end
 
     local stats = getSummerQuestStats()
@@ -2244,6 +2483,7 @@ end
 updateSummerShopStatus = function(message)
     if message ~= nil then
         State.summerShopLastStatus = tostring(message)
+        LogRuntime.append("Summer", "Shop • " .. State.summerShopLastStatus)
     end
 
     local playerData = getPlayerData()
@@ -2748,6 +2988,7 @@ end
 local function updateTournamentShopStatus(message)
     if message ~= nil then
         State.tournamentShopLastStatus = tostring(message)
+        LogRuntime.append("Tournament", State.tournamentShopLastStatus)
     end
 
     local shopData = getTournamentShopData()
@@ -3034,6 +3275,7 @@ end
 function IndexRuntime.updateStatus(message)
     if message ~= nil then
         State.indexLastStatus = tostring(message)
+        LogRuntime.append("Index", State.indexLastStatus)
     end
 
     local stats = IndexRuntime.getStats()
@@ -3248,6 +3490,7 @@ end
 function WishRuntime.updateStatus(message)
     if message ~= nil then
         State.wishLastStatus = tostring(message)
+        LogRuntime.append("Wish", State.wishLastStatus)
     end
 
     local data = WishRuntime.getData()
@@ -3499,6 +3742,7 @@ end)
 function AntiAfkRuntime.updateStatus(message)
     if message ~= nil then
         State.antiAfkLastStatus = tostring(message)
+        LogRuntime.append("Anti AFK", State.antiAfkLastStatus)
     end
 
     local lastPulse = "Belum pernah"
@@ -3569,26 +3813,45 @@ function AntiAfkRuntime.tryVirtualInputMouse()
     return success, success and nil or tostring(errorMessage)
 end
 
+function AntiAfkRuntime.getSafePulseKey()
+    local blockedKey = normalizeWindowKeybind(State.windowKeybind)
+    local candidates = {
+        "F15",
+        "F14",
+        "F13",
+        "LeftBracket",
+        "RightBracket",
+        "BackSlash",
+        "RightControl",
+        "LeftControl",
+    }
+
+    for _, keyName in ipairs(candidates) do
+        local keyCode = Enum.KeyCode[keyName]
+
+        if keyCode and keyName ~= blockedKey then
+            return keyCode
+        end
+    end
+
+    return nil
+end
+
 function AntiAfkRuntime.tryVirtualInputKey()
     local manager = AntiAfkRuntime.virtualInputManager
     if not manager then
         return false, "VirtualInputManager unavailable"
     end
 
+    local keyCode = AntiAfkRuntime.getSafePulseKey()
+    if not keyCode then
+        return false, "No safe key available"
+    end
+
     local success, errorMessage = pcall(function()
-        manager:SendKeyEvent(
-            true,
-            Enum.KeyCode.RightControl,
-            false,
-            game
-        )
+        manager:SendKeyEvent(true, keyCode, false, game)
         task.wait(0.04)
-        manager:SendKeyEvent(
-            false,
-            Enum.KeyCode.RightControl,
-            false,
-            game
-        )
+        manager:SendKeyEvent(false, keyCode, false, game)
     end)
 
     return success, success and nil or tostring(errorMessage)
@@ -3709,8 +3972,75 @@ function AntiAfkRuntime.setEnabled(enabled)
 end
 
 
+local ServerRuntime = {}
+
+function ServerRuntime.rejoin()
+    if State.rejoining then
+        return false, "Rejoin is already in progress."
+    end
+
+    State.rejoining = true
+    State.lastRejoinStatus = "Rejoining current server..."
+    LogRuntime.append(
+        "Hub",
+        State.lastRejoinStatus,
+        "info",
+        true
+    )
+
+    task.spawn(function()
+        local success, errorMessage = pcall(function()
+            local jobId = tostring(game.JobId or "")
+
+            if jobId ~= "" then
+                TeleportService:TeleportToPlaceInstance(
+                    game.PlaceId,
+                    jobId,
+                    LocalPlayer
+                )
+            else
+                TeleportService:Teleport(
+                    game.PlaceId,
+                    LocalPlayer
+                )
+            end
+        end)
+
+        if not success then
+            State.rejoining = false
+            State.lastRejoinStatus =
+                "Rejoin failed: " .. tostring(errorMessage)
+
+            LogRuntime.append(
+                "Hub",
+                State.lastRejoinStatus,
+                "error",
+                true
+            )
+
+            notify(
+                "Rejoin",
+                State.lastRejoinStatus,
+                "triangle-alert"
+            )
+        end
+    end)
+
+    return true, State.lastRejoinStatus
+end
+
+function ServerRuntime.getState()
+    return {
+        rejoining = State.rejoining,
+        status = State.lastRejoinStatus,
+        placeId = game.PlaceId,
+        jobId = tostring(game.JobId or ""),
+    }
+end
+
+
 local ConfigRuntime = {
-    version = 5,
+    version = 6,
     root = "xSansHUB",
     folder = "xSansHUB/SpinASoccerCardHub",
     file = "xSansHUB/SpinASoccerCardHub/" .. tostring(game.PlaceId) .. ".json",
@@ -3875,6 +4205,7 @@ end
 function ConfigRuntime.updateStatus(message)
     if message ~= nil then
         State.configLastStatus = tostring(message)
+        LogRuntime.append("Config", State.configLastStatus)
     end
 
     local savedText = "Belum pernah"
@@ -3931,8 +4262,7 @@ function ConfigRuntime.syncControls()
     setToggle(State.autoSaveToggle, State.autoSave)
     setToggle(State.autoLoadToggle, State.autoLoad)
 
-    KeybindRuntime.syncDropdown()
-    KeybindRuntime.updateTag()
+    applyWindowKeybind(State.windowKeybind, true)
 
     syncWhitelistDropdown()
     syncGemShopWhitelistDropdown()
@@ -4260,61 +4590,23 @@ function ConfigRuntime.initialize()
     return true
 end
 
-local WINDOW_KEYBIND_OPTIONS = {
-    "G",
-    "F",
-    "H",
-    "J",
-    "K",
-    "L",
-    "M",
-    "N",
-    "RightShift",
-    "RightControl",
-    "LeftControl",
-    "LeftAlt",
-    "Insert",
-    "Home",
-    "End",
-    "PageUp",
-    "PageDown",
-}
-
-local WindowKeybindOptionSet = {}
-for _, keyName in ipairs(WINDOW_KEYBIND_OPTIONS) do
-    WindowKeybindOptionSet[keyName] = true
-end
-
 local function normalizeWindowKeybind(value)
-    local keyName = tostring(value or "G")
+    local keyName
 
-    if WindowKeybindOptionSet[keyName] and Enum.KeyCode[keyName] then
+    if typeof(value) == "EnumItem" then
+        keyName = value.Name
+    else
+        keyName = tostring(value or "G")
+    end
+
+    if Enum.KeyCode[keyName] then
         return keyName
     end
 
     return "G"
 end
 
-local KeybindRuntime = {}
-
-function KeybindRuntime.syncDropdown()
-    if State.syncingKeybindDropdown
-        or not State.keybindDropdown
-        or type(State.keybindDropdown.Select) ~= "function"
-    then
-        return
-    end
-
-    State.syncingKeybindDropdown = true
-
-    pcall(function()
-        State.keybindDropdown:Select(State.windowKeybind)
-    end)
-
-    State.syncingKeybindDropdown = false
-end
-
-function KeybindRuntime.updateTag()
+local function updateWindowKeybindTag()
     if State.keybindTag
         and type(State.keybindTag.SetTitle) == "function"
     then
@@ -4326,54 +4618,34 @@ function KeybindRuntime.updateTag()
     end
 end
 
-function KeybindRuntime.set(value)
+local function applyWindowKeybind(value, syncControl)
     local keyName = normalizeWindowKeybind(value)
+    local keyCode = Enum.KeyCode[keyName]
+
     State.windowKeybind = keyName
 
-    KeybindRuntime.syncDropdown()
-    KeybindRuntime.updateTag()
+    if State.window
+        and keyCode
+        and type(State.window.SetToggleKey) == "function"
+    then
+        pcall(function()
+            State.window:SetToggleKey(keyCode)
+        end)
+    end
 
+    if syncControl ~= false
+        and State.windowKeybindControl
+        and type(State.windowKeybindControl.Set) == "function"
+        and State.windowKeybindControl.Value ~= keyName
+    then
+        pcall(function()
+            State.windowKeybindControl:Set(keyName)
+        end)
+    end
+
+    updateWindowKeybindTag()
     return keyName
 end
-
-function KeybindRuntime.matches(input)
-    if not input
-        or input.UserInputType ~= Enum.UserInputType.Keyboard
-    then
-        return false
-    end
-
-    local keyCode = Enum.KeyCode[State.windowKeybind]
-    return keyCode ~= nil and input.KeyCode == keyCode
-end
-
-function KeybindRuntime.connect()
-    if State.keybindConnection then
-        pcall(function()
-            State.keybindConnection:Disconnect()
-        end)
-        State.keybindConnection = nil
-    end
-
-    State.keybindConnection = UserInputService.InputBegan:Connect(
-        function(input, gameProcessed)
-            if not State.running
-                or gameProcessed
-                or UserInputService:GetFocusedTextBox() ~= nil
-                or not KeybindRuntime.matches(input)
-            then
-                return
-            end
-
-            if State.window and type(State.window.Toggle) == "function" then
-                pcall(function()
-                    State.window:Toggle()
-                end)
-            end
-        end
-    )
-end
-
 
 local HomeRuntime = {}
 
@@ -4462,7 +4734,7 @@ local function buildGui()
         Folder = "xSansHUB_SpinASoccerCardHub",
         Icon = "layout-dashboard",
         Theme = "Indigo",
-        ToggleKey = Enum.KeyCode.Unknown,
+        ToggleKey = Enum.KeyCode[State.windowKeybind] or Enum.KeyCode.G,
         Size = UDim2.fromOffset(720, 520),
         MinSize = Vector2.new(620, 440),
         MaxSize = Vector2.new(900, 680),
@@ -4500,8 +4772,6 @@ local function buildGui()
         Icon = "keyboard",
         Border = true,
     })
-
-    KeybindRuntime.connect()
 
     local HomeTab = Window:Tab({
         Title = "Home",
@@ -4616,55 +4886,6 @@ local function buildGui()
         Icon = "refresh-cw",
         Value = State.autoCraft,
         Callback = setAutoCraft,
-    })
-
-    local SeashellTab = Window:Tab({
-        Title = "Seashells",
-        Icon = "shell",
-        IconSize = 16,
-    })
-
-    State.seashellStatusParagraph = SeashellTab:Paragraph({
-        Title = "Seashell Status",
-        Desc = "Loading...",
-        Image = "activity",
-        ImageSize = 19,
-        Size = "Small",
-    })
-
-    SeashellTab:Button({
-        Title = "Collect Now",
-        Desc = "Collect every available seashell.",
-        Icon = "hand",
-        Callback = function()
-            local success, amount, errorMessage = claimAllSeashells(true)
-
-            if success and amount > 0 then
-                notify(
-                    "Claim Seashells",
-                    string.format("%d request collect berhasil dikirim.", amount),
-                    "shell"
-                )
-            elseif success then
-                notify("Claim Seashells", "Tidak ada seashell tersedia.", "info")
-            else
-                notify(
-                    "Claim Seashells",
-                    tostring(errorMessage or "Tidak ada seashell yang berhasil."),
-                    "triangle-alert"
-                )
-            end
-        end,
-    })
-
-    SeashellTab:Space()
-
-    State.autoClaimSeashellToggle = SeashellTab:Toggle({
-        Title = "Auto Collect",
-        Desc = "Collect seashells as they appear.",
-        Icon = "refresh-cw",
-        Value = State.autoClaimSeashell,
-        Callback = setAutoClaimSeashell,
     })
 
     local SpinWheelTab = Window:Tab({
@@ -4982,6 +5203,51 @@ local function buildGui()
         IconSize = 16,
     })
 
+    State.seashellStatusParagraph = SummerTab:Paragraph({
+        Title = "Seashells",
+        Desc = "Loading...",
+        Image = "activity",
+        ImageSize = 19,
+        Size = "Small",
+    })
+
+    SummerTab:Button({
+        Title = "Collect Seashells",
+        Desc = "Collect every available seashell.",
+        Icon = "hand",
+        Callback = function()
+            local success, amount, errorMessage = claimAllSeashells(true)
+
+            if success and amount > 0 then
+                notify(
+                    "Claim Seashells",
+                    string.format("%d request collect berhasil dikirim.", amount),
+                    "shell"
+                )
+            elseif success then
+                notify("Claim Seashells", "Tidak ada seashell tersedia.", "info")
+            else
+                notify(
+                    "Claim Seashells",
+                    tostring(errorMessage or "Tidak ada seashell yang berhasil."),
+                    "triangle-alert"
+                )
+            end
+        end,
+    })
+
+    SummerTab:Space()
+
+    State.autoClaimSeashellToggle = SummerTab:Toggle({
+        Title = "Auto Collect Seashells",
+        Desc = "Collect seashells as they appear.",
+        Icon = "refresh-cw",
+        Value = State.autoClaimSeashell,
+        Callback = setAutoClaimSeashell,
+    })
+
+    SummerTab:Space()
+
     State.summerQuestStatusParagraph = SummerTab:Paragraph({
         Title = "Summer Quests",
         Desc = "Loading...",
@@ -5189,6 +5455,79 @@ local function buildGui()
         Size = "Small",
     })
 
+    local LogsTab = Window:Tab({
+        Title = "Logs",
+        Icon = "scroll-text",
+        IconSize = 16,
+    })
+
+    State.logsSummaryParagraph = LogsTab:Paragraph({
+        Title = "Session Logs",
+        Desc = "Loading...",
+        Image = "activity",
+        ImageSize = 19,
+        Size = "Small",
+    })
+
+    State.logsFilterDropdown = LogsTab:Dropdown({
+        Title = "Filter",
+        Desc = "Show logs from one feature or all features.",
+        Values = LOG_FILTER_OPTIONS,
+        Value = State.logsFilter,
+        Multi = false,
+        AllowNone = false,
+        SearchBarEnabled = false,
+        MenuWidth = 240,
+        Callback = function(selectedValue)
+            local value = selectedValue
+
+            if type(selectedValue) == "table" then
+                value = selectedValue.Title
+                    or selectedValue.Value
+                    or selectedValue.Name
+                    or selectedValue[1]
+
+                if value == nil then
+                    for candidate, enabled in pairs(selectedValue) do
+                        if enabled == true then
+                            value = candidate
+                            break
+                        end
+                    end
+                end
+            end
+
+            LogRuntime.setFilter(value)
+        end,
+    })
+
+    State.logsParagraph = LogsTab:Paragraph({
+        Title = "Important Activity",
+        Desc = "No important activity yet.",
+        Image = "list",
+        ImageSize = 19,
+        Size = "Small",
+    })
+
+    LogsTab:Button({
+        Title = "Refresh Logs",
+        Desc = "Refresh the current log view.",
+        Icon = "refresh-cw",
+        Callback = function()
+            LogRuntime.updateUI()
+        end,
+    })
+
+    LogsTab:Button({
+        Title = "Clear Logs",
+        Desc = "Clear important activity from this session.",
+        Icon = "trash-2",
+        Callback = function()
+            LogRuntime.clear()
+            LogRuntime.append("Hub", "Session logs cleared.", "info", true)
+        end,
+    })
+
     local SettingsTab = Window:Tab({
         Title = "Settings",
         Icon = "settings",
@@ -5210,44 +5549,42 @@ local function buildGui()
 
     SettingsTab:Space()
 
-    State.keybindDropdown = SettingsTab:Dropdown({
+    State.windowKeybindControl = SettingsTab:Keybind({
         Title = "Window Keybind",
-        Desc = "Choose the key used to show or hide the hub.",
-        Values = WINDOW_KEYBIND_OPTIONS,
+        Desc = "Click, then press the key used to show or hide the hub.",
         Value = State.windowKeybind,
-        Multi = false,
-        AllowNone = false,
-        SearchBarEnabled = false,
-        MenuWidth = 220,
-        Callback = function(selectedValue)
-            if State.syncingKeybindDropdown then
-                return
-            end
+        Callback = function(keyName)
+            local normalized = applyWindowKeybind(keyName, false)
 
-            local keyName = selectedValue
-
-            if type(selectedValue) == "table" then
-                keyName = selectedValue.Title
-                    or selectedValue.Value
-                    or selectedValue.Name
-                    or selectedValue[1]
-
-                if keyName == nil then
-                    for candidate, enabled in pairs(selectedValue) do
-                        if enabled == true then
-                            keyName = candidate
-                            break
-                        end
-                    end
-                end
-            end
-
-            keyName = KeybindRuntime.set(keyName)
             ConfigRuntime.updateStatus(
-                "Window keybind changed to " .. keyName .. "."
+                "Window keybind changed to " .. normalized .. "."
             )
         end,
     })
+
+    -- Apply the captured value as soon as WindUI finishes key selection.
+    task.spawn(function()
+        local observed = State.windowKeybind
+
+        while State.running
+            and State.windowKeybindControl
+            and State.window == Window
+        do
+            local current = normalizeWindowKeybind(
+                State.windowKeybindControl.Value
+            )
+
+            if current ~= observed then
+                observed = applyWindowKeybind(current, false)
+
+                ConfigRuntime.updateStatus(
+                    "Window keybind changed to " .. observed .. "."
+                )
+            end
+
+            task.wait(0.1)
+        end
+    end)
 
     State.antiAfkStatusParagraph = SettingsTab:Paragraph({
         Title = "Anti AFK",
@@ -5280,6 +5617,29 @@ local function buildGui()
                     or tostring(result),
                 success and "shield-check" or "triangle-alert"
             )
+        end,
+    })
+
+    SettingsTab:Button({
+        Title = "Rejoin Server",
+        Desc = "Reconnect to the current server.",
+        Icon = "rotate-cw",
+        Callback = function()
+            local success, message = ServerRuntime.rejoin()
+
+            if success then
+                notify(
+                    "Rejoin",
+                    "Rejoining current server...",
+                    "rotate-cw"
+                )
+            else
+                notify(
+                    "Rejoin",
+                    tostring(message),
+                    "triangle-alert"
+                )
+            end
         end,
     })
 
@@ -5393,17 +5753,32 @@ local function buildGui()
             or "Config siap."
     )
     HomeRuntime.update()
+    LogRuntime.append("Hub", "Hub ready.", "info", true)
+    LogRuntime.updateUI()
+
+    local function selectHomeTab()
+        if type(HomeTab.Select) == "function" then
+            return pcall(function()
+                HomeTab:Select()
+            end)
+        end
+
+        if type(Window.SelectTab) == "function" then
+            return pcall(function()
+                Window:SelectTab(HomeTab.Index or 1)
+            end)
+        end
+
+        return false
+    end
+
+    -- Select once immediately and once after UI tasks settle.
+    selectHomeTab()
 
     task.defer(function()
         pcall(fetchSpinWheelData, true)
-
-        -- Home is created first and is the default tab. Select it explicitly
-        -- when the installed WindUI build supports SelectTab.
-        if type(Window.SelectTab) == "function" then
-            pcall(function()
-                Window:SelectTab(HomeTab)
-            end)
-        end
+        task.wait()
+        selectHomeTab()
     end)
 
     WindUI:Notify({
@@ -5424,6 +5799,7 @@ local Hub = {
     SummerQuests = {},
     SummerShop = {},
     TournamentShop = {},
+    Logs = {},
     Utilities = {},
     Config = {},
 }
@@ -6195,6 +6571,50 @@ end
 
 
 
+
+-- Logs module ----------------------------------------------------------------
+
+function Hub.Logs.Get()
+    local result = {}
+
+    for index, entry in ipairs(State.logs) do
+        result[index] = {
+            id = entry.id,
+            timestamp = entry.timestamp,
+            time = entry.time,
+            category = entry.category,
+            level = entry.level,
+            message = entry.message,
+        }
+    end
+
+    return result
+end
+
+function Hub.Logs.Clear()
+    LogRuntime.clear()
+end
+
+function Hub.Logs.Add(category, message, level)
+    return LogRuntime.append(category, message, level, true)
+end
+
+function Hub.Logs.SetFilter(value)
+    return LogRuntime.setFilter(value)
+end
+
+function Hub.Logs.GetState()
+    return {
+        count = #State.logs,
+        suppressed = State.logsSuppressed,
+        filter = State.logsFilter,
+        limit = State.logsLimit,
+        displayLimit = State.logsDisplayLimit,
+        dedupeSeconds = State.logsDedupeSeconds,
+    }
+end
+
+
 -- Utilities module -----------------------------------------------------------
 
 function Hub.Utilities.SetAntiAfk(enabled)
@@ -6230,6 +6650,14 @@ function Hub.Utilities.GetAntiAfkState()
         error = State.lastAntiAfkError,
         status = State.antiAfkLastStatus,
     }
+end
+
+function Hub.Utilities.Rejoin()
+    return ServerRuntime.rejoin()
+end
+
+function Hub.Utilities.GetServerState()
+    return ServerRuntime.getState()
 end
 
 
@@ -6276,10 +6704,12 @@ function Hub.Config.ToggleAutoLoad()
 end
 
 function Hub.Config.SetKeybind(value)
-    local keyName = KeybindRuntime.set(value)
+    local keyName = applyWindowKeybind(value, true)
+
     ConfigRuntime.updateStatus(
         "Window keybind changed to " .. keyName .. "."
     )
+
     return keyName
 end
 
@@ -6287,15 +6717,6 @@ function Hub.Config.GetKeybind()
     return State.windowKeybind
 end
 
-function Hub.Config.GetKeybindOptions()
-    local result = {}
-
-    for index, keyName in ipairs(WINDOW_KEYBIND_OPTIONS) do
-        result[index] = keyName
-    end
-
-    return result
-end
 
 function Hub.Config.GetState()
     return {
@@ -6332,7 +6753,9 @@ function Hub.GetState()
         summerQuests = Hub.SummerQuests.GetState(),
         summerShop = Hub.SummerShop.GetState(),
         tournamentShop = Hub.TournamentShop.GetState(),
+        logs = Hub.Logs.GetState(),
         antiAfk = Hub.Utilities.GetAntiAfkState(),
+        server = Hub.Utilities.GetServerState(),
         config = Hub.Config.GetState(),
     }
 end
@@ -6390,13 +6813,6 @@ function Hub.Stop()
             State.antiAfkIdledConnection:Disconnect()
         end)
         State.antiAfkIdledConnection = nil
-    end
-
-    if State.keybindConnection then
-        pcall(function()
-            State.keybindConnection:Disconnect()
-        end)
-        State.keybindConnection = nil
     end
 
     if State.window and type(State.window.Destroy) == "function" then
@@ -6462,10 +6878,17 @@ Hub.ToggleAutoBuyTournamentShop = Hub.TournamentShop.ToggleAutoBuy
 Hub.SetTournamentShopWhitelist = Hub.TournamentShop.SetWhitelist
 Hub.BuyTournamentShopNow = Hub.TournamentShop.BuyNow
 
+Hub.GetLogs = Hub.Logs.Get
+Hub.ClearLogs = Hub.Logs.Clear
+Hub.AddLog = Hub.Logs.Add
+Hub.SetLogsFilter = Hub.Logs.SetFilter
+
 Hub.SetAntiAfk = Hub.Utilities.SetAntiAfk
 Hub.ToggleAntiAfk = Hub.Utilities.ToggleAntiAfk
 Hub.PulseAntiAfk = Hub.Utilities.PulseAntiAfk
 Hub.GetAntiAfkState = Hub.Utilities.GetAntiAfkState
+Hub.Rejoin = Hub.Utilities.Rejoin
+Hub.GetServerState = Hub.Utilities.GetServerState
 
 Hub.SaveConfig = Hub.Config.Save
 Hub.LoadConfig = Hub.Config.Load
@@ -6475,7 +6898,6 @@ Hub.SetAutoLoad = Hub.Config.SetAutoLoad
 Hub.ToggleAutoLoad = Hub.Config.ToggleAutoLoad
 Hub.SetKeybind = Hub.Config.SetKeybind
 Hub.GetKeybind = Hub.Config.GetKeybind
-Hub.GetKeybindOptions = Hub.Config.GetKeybindOptions
 Hub.GetConfigState = Hub.Config.GetState
 
 do
