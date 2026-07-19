@@ -12,6 +12,8 @@ local SkillRuntime = {}
 local IndexRuntime = {}
 local RollRuntime = {}
 local PotionRuntime = {}
+local PotionShopRuntime = {}
+local ShooterRuntime = {}
 local LootRuntime = {}
 local LogRuntime = {}
 local AntiAfkRuntime = {}
@@ -24,7 +26,7 @@ local GAME_NAME = "Roll To Defend"
 local CONFIG_ROOT = "xSansHUB"
 local CONFIG_FOLDER = CONFIG_ROOT .. "/RollToDefend"
 local WINDUI_URL = "https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"
-local BUILD_NUMBER = 13
+local BUILD_NUMBER = 20
 local LOG_LIMIT = 150
 local DISPLAY_LOG_LIMIT = 40
 local LOG_ROUTINE_PATTERNS = {
@@ -53,6 +55,7 @@ local ModuleDefinitions = {
     GameSettingsState = {"Game", "Tables", "GameSettingsState"},
     UnitTable = {"Game", "Tables", "UnitTable"},
     ItemTable = {"Game", "Tables", "ItemTable"},
+    PowerUpTable = {"Game", "Tables", "PowerUpTable"},
     ColorData = {"Game", "Tables", "ColorData"},
     FrameController = {"Game", "Controllers", "InterfaceController", "_uipackage", "UIFeatures", "FrameController"},
     CutsceneController = {"Game", "Controllers", "InterfaceController", "RollSystem", "CutsceneController"},
@@ -71,7 +74,13 @@ local RemoteDefinitions = {
     RollResult = {"RollEvents", "RollResult"},
     AutoRollState = {"RollEvents", "AutoRollState"},
     UseItem = {"ItemRemotes", "UseItem"},
+    PurchasePotion = {"PotionShopRemotes", "PurchasePotion"},
+    RequestPotionStock = {"PotionShopRemotes", "RequestStock"},
+    PotionStockChanged = {"PotionShopRemotes", "StockChanged"},
+    PotionPurchaseResult = {"PotionShopRemotes", "PurchaseResult"},
+    FireShot = {"SharpShooterRemotes", "FireShot"},
     SpawnLoot = {"SpawnLoot"},
+    SpawnPowerUp = {"SpawnPowerUp"},
 }
 
 local BooleanSettingDefinitions = {
@@ -82,6 +91,8 @@ local BooleanSettingDefinitions = {
     {state = "autoClaimIndex", control = "autoClaimIndexToggle", stop = true},
     {state = "autoRoll", control = "autoRollToggle", stop = true},
     {state = "autoUsePotions", control = "autoUsePotionsToggle", stop = true},
+    {state = "autoBuyPotions", control = "autoBuyPotionsToggle", stop = true},
+    {state = "autoShoot", control = "autoShootToggle", stop = true},
     {state = "autoCollectLoot", control = "autoCollectLootToggle", stop = true},
     {state = "antiAfk", control = "antiAfkToggle", stop = true},
     {state = "autoSave", control = "autoSaveToggle"},
@@ -97,6 +108,7 @@ local MapSettingDefinitions = {
     {state = "skillUpgradeWhitelist", control = "skillUpgradeWhitelistDropdown"},
     {state = "rollLogRarityWhitelist", control = "rollLogRarityWhitelistDropdown"},
     {state = "potionWhitelist", control = "potionWhitelistDropdown"},
+    {state = "potionBuyWhitelist", control = "potionBuyWhitelistDropdown"},
 }
 
 ConfigRuntime.version = BUILD_NUMBER
@@ -124,6 +136,7 @@ Services.Players = game:GetService("Players")
 Services.ReplicatedStorage = game:GetService("ReplicatedStorage")
 Services.HttpService = game:GetService("HttpService")
 Services.RunService = game:GetService("RunService")
+Services.CollectionService = game:GetService("CollectionService")
 Services.Workspace = game:GetService("Workspace")
 Services.VirtualUser = game:GetService("VirtualUser")
 local virtualInputSuccess, virtualInputService = pcall(game.GetService, game, "VirtualInputManager")
@@ -234,18 +247,52 @@ State.potionFailures = 0
 State.potionLastStatus = "Idle"
 State.potionLastUsedId = nil
 State.potionTotalUsed = 0
+State.autoBuyPotions = false
+State.potionBuyWhitelist = {}
+State.potionShopPollInterval = 0.25
+State.potionShopPurchaseCooldown = 0.65
+State.potionShopRetryCooldown = 2
+State.potionShopPendingTimeout = 8
+State.potionShopNextAt = 0
+State.potionShopRequestNextAt = 0
+State.potionShopRequestCooldown = 5
+State.potionShopPending = false
+State.potionShopPendingSince = 0
+State.potionShopPendingIndex = nil
+State.potionShopPendingId = nil
+State.potionShopPendingStockBefore = nil
+State.potionShopStock = nil
+State.potionShopResetAt = 0
+State.potionShopStockReceivedAt = 0
+State.potionShopRevision = 0
+State.potionShopFailures = 0
+State.potionShopLastStatus = "Idle"
+State.potionShopLastPurchasedId = nil
+State.potionShopTotalPurchased = 0
+State.potionShopLastDisplayAt = 0
+State.autoShoot = false
+State.shootPollInterval = 0.05
+State.shootNextAt = 0
+State.shootFailures = 0
+State.shootLastStatus = "Idle"
+State.shootLastTarget = nil
+State.shootLastDistance = nil
+State.shootTotalShots = 0
 State.autoCollectLoot = false
 State.lootCollectPollInterval = 0.1
 State.lootCollectNextAt = 0
 State.lootCollectCooldown = 0.08
 State.lootCollectMaxCoinsPerCycle = 20
 State.lootCollectMaxItemsPerCycle = 10
+State.lootCollectMaxPowerUpsPerCycle = 10
 State.lootCollectFailures = 0
 State.lootCollectLastStatus = "Idle"
 State.lootCollectLastCoinCount = 0
 State.lootCollectLastItemCount = 0
+State.lootCollectLastPowerUpCount = 0
 State.lootCollectTotalCoins = 0
 State.lootCollectTotalItems = 0
+State.lootCollectTotalPowerUps = 0
 State.antiAfk = false
 State.antiAfkInterval = 45
 State.antiAfkNextAt = 0
@@ -270,6 +317,10 @@ State.autoRollToggle = nil
 State.rollLogRarityWhitelistDropdown = nil
 State.autoUsePotionsToggle = nil
 State.potionWhitelistDropdown = nil
+State.autoBuyPotionsToggle = nil
+State.potionBuyWhitelistDropdown = nil
+State.potionShopStockParagraph = nil
+State.autoShootToggle = nil
 State.autoCollectLootToggle = nil
 State.antiAfkToggle = nil
 State.autoSaveToggle = nil
@@ -296,9 +347,13 @@ State.skillZonesChangedConnection = nil
 State.skillTempTutorialChangedConnection = nil
 State.indexDataChangedConnection = nil
 State.indexRewardsChangedConnection = nil
+State.powerUpIndexChangedConnection = nil
 State.rollResultConnection = nil
 State.itemsChangedConnection = nil
 State.itemEffectsChangedConnection = nil
+State.potionShopStockChangedConnection = nil
+State.potionShopPurchaseResultConnection = nil
+State.potionShopCurrencyChangedConnection = nil
 State.antiAfkIdledConnection = nil
 State.antiAfkHeartbeatConnection = nil
 
@@ -324,9 +379,13 @@ ConnectionRuntime.fields = {
     "skillTempTutorialChangedConnection",
     "indexDataChangedConnection",
     "indexRewardsChangedConnection",
+    "powerUpIndexChangedConnection",
     "rollResultConnection",
     "itemsChangedConnection",
     "itemEffectsChangedConnection",
+    "potionShopStockChangedConnection",
+    "potionShopPurchaseResultConnection",
+    "potionShopCurrencyChangedConnection",
     "antiAfkIdledConnection",
     "antiAfkHeartbeatConnection",
 }
@@ -395,8 +454,26 @@ local startupSuccess, startupError = pcall(function()
     if not Remotes.UseItem:IsA("RemoteEvent") then
         error("ItemRemotes.UseItem is not a RemoteEvent")
     end
+    if not Remotes.PurchasePotion:IsA("RemoteEvent") then
+        error("PotionShopRemotes.PurchasePotion is not a RemoteEvent")
+    end
+    if not Remotes.RequestPotionStock:IsA("RemoteEvent") then
+        error("PotionShopRemotes.RequestStock is not a RemoteEvent")
+    end
+    if not Remotes.PotionStockChanged:IsA("RemoteEvent") then
+        error("PotionShopRemotes.StockChanged is not a RemoteEvent")
+    end
+    if not Remotes.PotionPurchaseResult:IsA("RemoteEvent") then
+        error("PotionShopRemotes.PurchaseResult is not a RemoteEvent")
+    end
+    if not Remotes.FireShot:IsA("RemoteEvent") then
+        error("SharpShooterRemotes.FireShot is not a RemoteEvent")
+    end
     if not Remotes.SpawnLoot:IsA("RemoteEvent") then
         error("SpawnLoot is not a RemoteEvent")
+    end
+    if not Remotes.SpawnPowerUp:IsA("RemoteEvent") then
+        error("SpawnPowerUp is not a RemoteEvent")
     end
     if type(Modules.CoinPickupSystem.Init) == "function" then
         Modules.CoinPickupSystem.Init(Remotes.SpawnLoot)
@@ -598,6 +675,8 @@ function ConfigRuntime.syncControls()
     SkillRuntime.refreshWhitelistControl()
     RollRuntime.refreshRarityControl()
     PotionRuntime.refreshWhitelistControl()
+    PotionShopRuntime.refreshWhitelistControl()
+    PotionShopRuntime.refreshStockParagraph(true)
     if State.window then
         pcall(function()
             State.window:SetToggleKey(Enum.KeyCode[State.windowKeybind])
@@ -644,8 +723,16 @@ function ConfigRuntime.apply(snapshot)
     table.clear(State.potionWhitelist)
     if type(snapshot.potionWhitelist) == "table" then
         for itemId, enabled in pairs(snapshot.potionWhitelist) do
-            if enabled == true and RuntimeName.PotionIdSet[itemId] then
+            if enabled == true and type(itemId) == "string" then
                 State.potionWhitelist[itemId] = true
+            end
+        end
+    end
+    table.clear(State.potionBuyWhitelist)
+    if type(snapshot.potionBuyWhitelist) == "table" then
+        for itemId, enabled in pairs(snapshot.potionBuyWhitelist) do
+            if enabled == true and type(itemId) == "string" then
+                State.potionBuyWhitelist[itemId] = true
             end
         end
     end
@@ -662,6 +749,13 @@ function ConfigRuntime.apply(snapshot)
     State.potionPendingSource = nil
     State.potionNextAt = 0
     State.potionLastStatus = State.autoUsePotions and "Ready" or "Disabled"
+    State.potionShopPending = false
+    State.potionShopPendingSince = 0
+    State.potionShopPendingIndex = nil
+    State.potionShopPendingId = nil
+    State.potionShopPendingStockBefore = nil
+    State.potionShopNextAt = 0
+    State.potionShopLastStatus = State.autoBuyPotions and "Ready" or "Disabled"
     State.equipBestPending = false
     State.equipBestPendingSince = 0
     State.equipBestNextAt = 0
@@ -2091,6 +2185,20 @@ function IndexRuntime.getCategories()
 end
 
 function IndexRuntime.getUnlockedEntryCount(indexData, category)
+    if category == "powerups" then
+        local powerUpIndex = Modules.DataController:Get("PowerUpIndex")
+        local success, entries = pcall(Modules.PowerUpTable.GetAll)
+        if not success or type(entries) ~= "table" then
+            return 0
+        end
+        local count = 0
+        for _, entry in ipairs(entries) do
+            if type(entry) == "table" and type(entry.id) == "string" and type(powerUpIndex) == "table" and powerUpIndex[entry.id] == true then
+                count = count + 1
+            end
+        end
+        return count
+    end
     local success, entries = pcall(Modules.Mutations.GetUnitsForMutation, category)
     if not success or type(entries) ~= "table" then
         return 0
@@ -2290,6 +2398,11 @@ function IndexRuntime.connectDataListeners()
     end)
     State.indexRewardsChangedConnection = Modules.DataController:OnChanged("IndexRewards", function()
         if State.autoClaimIndex and not IndexRuntime.confirmFromState() then
+            State.indexClaimNextAt = 0
+        end
+    end)
+    State.powerUpIndexChangedConnection = Modules.DataController:OnChanged("PowerUpIndex", function()
+        if State.autoClaimIndex then
             State.indexClaimNextAt = 0
         end
     end)
@@ -2958,42 +3071,79 @@ function PotionRuntime.extractDuration(info, depth)
     return nil
 end
 
-function PotionRuntime.registerDefinition(itemId, aliases, fallbackName, order)
-    local infoSuccess, info = pcall(Modules.ItemTable.GetItem, itemId)
-    local name = fallbackName or itemId
-    if infoSuccess and type(info) == "table" then
-        local configuredName = info.name or info.Name or info.displayName or info.DisplayName
-        if type(configuredName) == "string" and configuredName ~= "" then
-            name = configuredName
+function PotionRuntime.getItemInfo(itemId)
+    if type(itemId) ~= "string" or itemId == "" then
+        return nil
+    end
+    local itemTable = Modules.ItemTable
+    local getter = type(itemTable) == "table" and itemTable.GetItem or nil
+    if type(getter) ~= "function" then
+        return nil
+    end
+    local success, info = pcall(getter, itemId)
+    if (not success or type(info) ~= "table") and type(itemTable) == "table" then
+        success, info = pcall(getter, itemTable, itemId)
+    end
+    if success and type(info) == "table" then
+        return info
+    end
+    return nil
+end
+
+function PotionRuntime.getRawItemId(value)
+    if type(value) ~= "table" then
+        return nil
+    end
+    for _, field in ipairs({
+        "What",
+        "what",
+        "ItemID",
+        "ItemId",
+        "itemId",
+        "itemID",
+        "ItemType",
+        "itemType",
+        "ItemName",
+        "itemName",
+        "ID",
+        "Id",
+        "id",
+        "Name",
+        "name",
+        "Key",
+        "key",
+        "Item",
+        "item",
+    }) do
+        local candidate = value[field]
+        if type(candidate) == "string" and candidate ~= "" then
+            return candidate
         end
     end
-    local label = name
-    if RuntimeName.PotionIdByLabel[label] then
-        label = string.format("%s [%s]", name, itemId)
+    return nil
+end
+
+function PotionRuntime.isPotionCandidate(itemId, info, fallbackName, authoritative)
+    if authoritative == true then
+        return type(itemId) == "string" and itemId ~= ""
     end
-    local aliasSet = {}
-    local aliasList = {}
-    local function addAlias(value)
-        if type(value) ~= "string" or value == "" then
-            return
-        end
-        local normalized = PotionRuntime.normalizeToken(value)
-        if normalized == "" or aliasSet[normalized] then
-            return
-        end
-        aliasSet[normalized] = true
-        table.insert(aliasList, value)
-    end
-    addAlias(itemId)
-    addAlias(name)
-    addAlias(fallbackName)
-    if type(aliases) == "table" then
-        for _, alias in ipairs(aliases) do
-            addAlias(alias)
-        end
-    end
-    if infoSuccess and type(info) == "table" then
+    local texts = {itemId, fallbackName}
+    if type(info) == "table" then
         for _, field in ipairs({
+            "name",
+            "Name",
+            "displayName",
+            "DisplayName",
+            "description",
+            "Description",
+            "category",
+            "Category",
+            "type",
+            "Type",
+            "itemType",
+            "ItemType",
+            "class",
+            "Class",
             "effect",
             "Effect",
             "effectKey",
@@ -3007,18 +3157,125 @@ function PotionRuntime.registerDefinition(itemId, aliases, fallbackName, order)
             "itemEffect",
             "ItemEffect",
         }) do
-            addAlias(info[field])
+            table.insert(texts, info[field])
         end
+    end
+    local hasConsumableType = false
+    local hasEffectHint = false
+    for _, text in ipairs(texts) do
+        if type(text) == "string" then
+            local normalized = PotionRuntime.normalizeToken(text)
+            if string.find(normalized, "potion", 1, true) or string.find(normalized, "elixir", 1, true) or string.find(normalized, "tonic", 1, true) then
+                return true
+            end
+            if string.find(normalized, "consumable", 1, true) or string.find(normalized, "usable", 1, true) then
+                hasConsumableType = true
+            end
+            if string.find(normalized, "effect", 1, true) or string.find(normalized, "boost", 1, true) then
+                hasEffectHint = true
+            end
+        end
+    end
+    if type(info) == "table" then
+        if info.Consumable == true or info.consumable == true or info.Usable == true or info.usable == true then
+            hasConsumableType = true
+        end
+        if info.Effect ~= nil or info.effect ~= nil or info.ItemEffect ~= nil or info.itemEffect ~= nil or info.Boost ~= nil or info.boost ~= nil then
+            hasEffectHint = true
+        end
+    end
+    return hasConsumableType and hasEffectHint
+end
+
+function PotionRuntime.updateDefinitionLabel(itemId, name)
+    local definition = RuntimeName.PotionDefinitions[itemId]
+    if not definition or type(name) ~= "string" or name == "" or definition.name == name then
+        return
+    end
+    local oldLabel = definition.label
+    local label = name
+    local collision = RuntimeName.PotionIdByLabel[label]
+    if collision and collision ~= itemId then
+        label = string.format("%s [%s]", name, itemId)
+    end
+    RuntimeName.PotionIdByLabel[oldLabel] = nil
+    RuntimeName.PotionIdByNormalized[PotionRuntime.normalizeToken(oldLabel)] = nil
+    definition.name = name
+    definition.label = label
+    RuntimeName.PotionIdByLabel[label] = itemId
+    RuntimeName.PotionLabelById[itemId] = label
+    RuntimeName.PotionIdByNormalized[PotionRuntime.normalizeToken(itemId)] = itemId
+    RuntimeName.PotionIdByNormalized[PotionRuntime.normalizeToken(name)] = itemId
+    RuntimeName.PotionIdByNormalized[PotionRuntime.normalizeToken(label)] = itemId
+    for index, registeredId in ipairs(RuntimeName.PotionIds or {}) do
+        if registeredId == itemId then
+            RuntimeName.PotionLabels[index] = label
+            break
+        end
+    end
+end
+
+function PotionRuntime.registerDefinition(itemId, aliases, fallbackName, order, infoOverride, source)
+    itemId = type(itemId) == "string" and itemId or tostring(itemId or "")
+    if itemId == "" then
+        return false
+    end
+    local info = type(infoOverride) == "table" and infoOverride or PotionRuntime.getItemInfo(itemId)
+    local name = fallbackName or itemId
+    if type(info) == "table" then
+        local configuredName = info.name or info.Name or info.displayName or info.DisplayName or info.PotionName
+        if type(configuredName) == "string" and configuredName ~= "" then
+            name = configuredName
+        end
+    end
+    local existing = RuntimeName.PotionDefinitions[itemId]
+    local function addAlias(definition, value)
+        if type(value) ~= "string" or value == "" then
+            return
+        end
+        local normalized = PotionRuntime.normalizeToken(value)
+        if normalized == "" or definition.aliasSet[normalized] then
+            return
+        end
+        definition.aliasSet[normalized] = true
+        table.insert(definition.aliases, value)
+        RuntimeName.PotionDefinitionByAlias[normalized] = itemId
+        RuntimeName.PotionIdByNormalized[normalized] = itemId
+    end
+    if existing then
+        addAlias(existing, itemId)
+        addAlias(existing, name)
+        addAlias(existing, fallbackName)
+        if type(aliases) == "table" then
+            for _, alias in ipairs(aliases) do
+                addAlias(existing, alias)
+            end
+        end
+        if type(info) == "table" then
+            existing.info = existing.info or info
+            existing.duration = PotionRuntime.extractDuration(info, 0) or existing.duration
+            for _, field in ipairs({"effect", "Effect", "effectKey", "EffectKey", "boost", "Boost", "boostKey", "BoostKey", "effectName", "EffectName", "itemEffect", "ItemEffect"}) do
+                addAlias(existing, info[field])
+            end
+        end
+        PotionRuntime.updateDefinitionLabel(itemId, name)
+        RuntimeName.PotionDefinitionSources[itemId] = RuntimeName.PotionDefinitionSources[itemId] or {}
+        RuntimeName.PotionDefinitionSources[itemId][source or "runtime"] = true
+        return false
+    end
+    local label = name
+    if RuntimeName.PotionIdByLabel[label] then
+        label = string.format("%s [%s]", name, itemId)
     end
     local definition = {
         id = itemId,
         name = name,
         label = label,
-        order = order,
-        aliases = aliasList,
-        aliasSet = aliasSet,
-        duration = PotionRuntime.extractDuration(infoSuccess and info or nil, 0) or 300,
-        info = infoSuccess and type(info) == "table" and info or nil,
+        order = order or (#RuntimeName.PotionIds + 1),
+        aliases = {},
+        aliasSet = {},
+        duration = PotionRuntime.extractDuration(info, 0) or 300,
+        info = info,
     }
     RuntimeName.PotionDefinitions[itemId] = definition
     RuntimeName.PotionIdSet[itemId] = true
@@ -3027,15 +3284,235 @@ function PotionRuntime.registerDefinition(itemId, aliases, fallbackName, order)
     RuntimeName.PotionIdByNormalized[PotionRuntime.normalizeToken(itemId)] = itemId
     RuntimeName.PotionIdByNormalized[PotionRuntime.normalizeToken(name)] = itemId
     RuntimeName.PotionIdByNormalized[PotionRuntime.normalizeToken(label)] = itemId
-    for normalized in pairs(aliasSet) do
-        RuntimeName.PotionDefinitionByAlias[normalized] = itemId
+    addAlias(definition, itemId)
+    addAlias(definition, name)
+    addAlias(definition, fallbackName)
+    if type(aliases) == "table" then
+        for _, alias in ipairs(aliases) do
+            addAlias(definition, alias)
+        end
     end
+    if type(info) == "table" then
+        for _, field in ipairs({"effect", "Effect", "effectKey", "EffectKey", "boost", "Boost", "boostKey", "BoostKey", "effectName", "EffectName", "itemEffect", "ItemEffect"}) do
+            addAlias(definition, info[field])
+        end
+    end
+    RuntimeName.PotionDefinitionSources[itemId] = {[source or "runtime"] = true}
     table.insert(RuntimeName.PotionIds, itemId)
     table.insert(RuntimeName.PotionLabels, label)
+    return true
+end
+
+function PotionRuntime.sortRegistry()
+    table.sort(RuntimeName.PotionIds, function(a, b)
+        local aLabel = string.lower(RuntimeName.PotionLabelById[a] or a)
+        local bLabel = string.lower(RuntimeName.PotionLabelById[b] or b)
+        if aLabel == bLabel then
+            return a < b
+        end
+        return aLabel < bLabel
+    end)
+    table.clear(RuntimeName.PotionLabels)
+    for _, itemId in ipairs(RuntimeName.PotionIds) do
+        table.insert(RuntimeName.PotionLabels, RuntimeName.PotionLabelById[itemId] or itemId)
+    end
+end
+
+function PotionRuntime.findEquivalentDefinition(itemId, info, fallbackName)
+    local values = {itemId, fallbackName}
+    if type(info) == "table" then
+        for _, field in ipairs({
+            "What",
+            "what",
+            "ItemID",
+            "ItemId",
+            "itemId",
+            "itemID",
+            "Id",
+            "ID",
+            "id",
+            "PotionName",
+            "DisplayName",
+            "displayName",
+            "Name",
+            "name",
+        }) do
+            table.insert(values, info[field])
+        end
+    end
+    for _, value in ipairs(values) do
+        if type(value) == "string" and value ~= "" then
+            local normalized = PotionRuntime.normalizeToken(value)
+            local existingId = RuntimeName.PotionIdByNormalized[normalized] or RuntimeName.PotionDefinitionByAlias[normalized]
+            if existingId and RuntimeName.PotionDefinitions[existingId] then
+                return existingId
+            end
+        end
+    end
+    return nil
+end
+
+function PotionRuntime.ensureDefinition(itemId, info, fallbackName, source, authoritative)
+    if type(itemId) ~= "string" or itemId == "" then
+        return nil, false
+    end
+    local resolvedInfo = type(info) == "table" and info or PotionRuntime.getItemInfo(itemId)
+    local equivalentId = PotionRuntime.findEquivalentDefinition(itemId, resolvedInfo, fallbackName)
+    if equivalentId and equivalentId ~= itemId then
+        local aliases = {itemId}
+        if type(fallbackName) == "string" and fallbackName ~= "" then
+            table.insert(aliases, fallbackName)
+        end
+        PotionRuntime.registerDefinition(equivalentId, aliases, fallbackName, nil, resolvedInfo, source)
+        local normalizedItemId = PotionRuntime.normalizeToken(itemId)
+        if normalizedItemId ~= "" then
+            RuntimeName.PotionIdByNormalized[normalizedItemId] = equivalentId
+            RuntimeName.PotionDefinitionByAlias[normalizedItemId] = equivalentId
+        end
+        return equivalentId, false
+    end
+    if not RuntimeName.PotionIdSet[itemId] and not PotionRuntime.isPotionCandidate(itemId, resolvedInfo, fallbackName, authoritative) then
+        return nil, false
+    end
+    local added = PotionRuntime.registerDefinition(itemId, nil, fallbackName, nil, resolvedInfo, source)
+    return itemId, added
+end
+
+function PotionRuntime.discoverFromTable(root, source, authoritative)
+    if type(root) ~= "table" then
+        return 0
+    end
+    local added = 0
+    local visited = {}
+    local scanned = 0
+    local function inspectCandidate(candidateId, info, fallbackName, candidateSource, trusted)
+        if type(candidateId) ~= "string" or candidateId == "" then
+            return
+        end
+        local _, wasAdded = PotionRuntime.ensureDefinition(candidateId, info, fallbackName, candidateSource, trusted)
+        if wasAdded then
+            added = added + 1
+        end
+    end
+    local function scan(value, path, depth)
+        if type(value) ~= "table" or visited[value] or depth > 7 or scanned > 6000 then
+            return
+        end
+        visited[value] = true
+        scanned = scanned + 1
+        local directId = PotionRuntime.getRawItemId(value)
+        if directId then
+            inspectCandidate(directId, value, value.PotionName or value.DisplayName or value.Name or value.name, path, authoritative)
+        end
+        for key, child in pairs(value) do
+            local childPath = path .. "." .. tostring(key)
+            if type(key) == "string" then
+                if type(child) == "table" then
+                    inspectCandidate(PotionRuntime.getRawItemId(child) or key, child, child.PotionName or child.DisplayName or child.Name or child.name, childPath, authoritative)
+                elseif type(child) == "string" then
+                    local info = PotionRuntime.getItemInfo(child)
+                    inspectCandidate(child, info, child, childPath, authoritative)
+                    local keyInfo = PotionRuntime.getItemInfo(key)
+                    inspectCandidate(key, keyInfo, key, childPath, authoritative)
+                elseif type(child) == "number" or type(child) == "boolean" then
+                    local info = PotionRuntime.getItemInfo(key)
+                    inspectCandidate(key, info, key, childPath, authoritative)
+                end
+            elseif type(child) == "string" then
+                inspectCandidate(child, PotionRuntime.getItemInfo(child), child, childPath, authoritative)
+            end
+            if type(child) == "table" then
+                scan(child, childPath, depth + 1)
+            end
+        end
+    end
+    scan(root, source or "table", 0)
+    return added
+end
+
+function PotionRuntime.discoverFromItemTable()
+    local added = PotionRuntime.discoverFromTable(Modules.ItemTable, "ItemTable", false)
+    local itemTable = Modules.ItemTable
+    if type(itemTable) == "table" then
+        for _, methodName in ipairs({"GetAll", "GetItems", "GetAllItems", "GetDefinitions", "GetData"}) do
+            local method = itemTable[methodName]
+            if type(method) == "function" then
+                local success, result = pcall(method)
+                if (not success or type(result) ~= "table") then
+                    success, result = pcall(method, itemTable)
+                end
+                if success and type(result) == "table" then
+                    added = added + PotionRuntime.discoverFromTable(result, "ItemTable." .. methodName, false)
+                end
+            end
+        end
+        for name, method in pairs(itemTable) do
+            if type(method) == "function" then
+                local upvalues = PotionRuntime.getUpvalueValues(method)
+                if type(upvalues) == "table" then
+                    added = added + PotionRuntime.discoverFromTable(upvalues, "ItemTable.upvalues." .. tostring(name), false)
+                end
+            end
+        end
+    end
+    return added
+end
+
+function PotionRuntime.discoverFromInventory(items)
+    local added = 0
+    local success, native = pcall(Modules.InventoryDataUtil.GetItemEntryKeys, items)
+    if success and type(native) == "table" then
+        for key, value in pairs(native) do
+            local candidateId = type(key) == "string" and key or nil
+            if not candidateId and type(value) == "table" then
+                candidateId = PotionRuntime.getRawItemId(value)
+            end
+            if candidateId then
+                local _, wasAdded = PotionRuntime.ensureDefinition(candidateId, type(value) == "table" and value or nil, candidateId, "InventoryDataUtil", false)
+                if wasAdded then
+                    added = added + 1
+                end
+            end
+        end
+    end
+    added = added + PotionRuntime.discoverFromTable(items, "Items", false)
+    return added
+end
+
+function PotionRuntime.syncShopRegistry()
+    if type(PotionShopRuntime.registerItem) ~= "function" then
+        return
+    end
+    for _, itemId in ipairs(RuntimeName.PotionIds or {}) do
+        PotionShopRuntime.registerItem(itemId, RuntimeName.PotionLabelById[itemId] or itemId)
+    end
+end
+
+function PotionRuntime.refreshRegistry()
+    local added = 0
+    added = added + PotionRuntime.discoverFromItemTable()
+    added = added + PotionRuntime.discoverFromInventory(Modules.DataController:Get("Items"))
+    if type(State.potionShopStock) == "table" then
+        for _, entry in ipairs(State.potionShopStock) do
+            local _, wasAdded = PotionRuntime.ensureDefinition(entry.id, nil, entry.label, "PotionShop stock", true)
+            if wasAdded then
+                added = added + 1
+            end
+        end
+    end
+    PotionRuntime.sortRegistry()
+    PotionRuntime.syncShopRegistry()
+    PotionRuntime.refreshWhitelistControl()
+    if type(PotionShopRuntime.refreshWhitelistControl) == "function" then
+        PotionShopRuntime.refreshWhitelistControl()
+    end
+    RuntimeName.PotionEntryCache = nil
+    return added
 end
 
 function PotionRuntime.buildRegistry()
     RuntimeName.PotionDefinitions = {}
+    RuntimeName.PotionDefinitionSources = {}
     RuntimeName.PotionIdSet = {}
     RuntimeName.PotionIdByLabel = {}
     RuntimeName.PotionLabelById = {}
@@ -3061,8 +3538,11 @@ function PotionRuntime.buildRegistry()
         {"CurrencyBoost", {"CoinPotionBoost", "CoinBoost", "CurrencyPotion", "Currency Boost Potion"}, "Currency Boost"},
     }
     for order, definition in ipairs(definitions) do
-        PotionRuntime.registerDefinition(definition[1], definition[2], definition[3], order)
+        PotionRuntime.registerDefinition(definition[1], definition[2], definition[3], order, nil, "built-in")
     end
+    PotionRuntime.discoverFromItemTable()
+    PotionRuntime.discoverFromInventory(Modules.DataController:Get("Items"))
+    PotionRuntime.sortRegistry()
 end
 
 function PotionRuntime.getSelectedLabels()
@@ -3128,6 +3608,7 @@ function PotionRuntime.refreshWhitelistControl()
     local wasSynchronizing = State.synchronizing
     State.synchronizing = true
     pcall(function()
+        control:Refresh(RuntimeName.PotionLabels or {})
         control:Select(PotionRuntime.getSelectedLabels())
     end)
     State.synchronizing = wasSynchronizing
@@ -3181,6 +3662,8 @@ function PotionRuntime.getDirectItemId(value)
         "itemType",
         "ItemName",
         "itemName",
+        "What",
+        "what",
         "Type",
         "type",
         "Name",
@@ -3504,6 +3987,15 @@ function PotionRuntime.activateInventoryButton(button)
 end
 
 function PotionRuntime.getInventoryEntries(forceRefresh)
+    local discovered = PotionRuntime.discoverFromInventory(Modules.DataController:Get("Items"))
+    if discovered > 0 then
+        PotionRuntime.sortRegistry()
+        PotionRuntime.syncShopRegistry()
+        PotionRuntime.refreshWhitelistControl()
+        if type(PotionShopRuntime.refreshWhitelistControl) == "function" then
+            PotionShopRuntime.refreshWhitelistControl()
+        end
+    end
     local now = os.clock()
     if forceRefresh ~= true and type(RuntimeName.PotionEntryCache) == "table" and now - (RuntimeName.PotionEntryCacheAt or 0) < 0.5 then
         return RuntimeName.PotionEntryCache
@@ -4062,14 +4554,25 @@ function PotionRuntime.getState()
         discoverySources = discoverySources,
         uiScanStatus = RuntimeName.PotionUiScanStatus,
         itemsRevision = RuntimeName.PotionItemsRevision,
+        registryCount = #(RuntimeName.PotionIds or {}),
+        definitionSources = RuntimeName.PotionDefinitionSources,
     }
 end
 
 function PotionRuntime.connectDataListeners()
-    State.itemsChangedConnection = Modules.DataController:OnChanged("Items", function()
+    State.itemsChangedConnection = Modules.DataController:OnChanged("Items", function(items)
         RuntimeName.PotionItemsRevision = (RuntimeName.PotionItemsRevision or 0) + 1
         RuntimeName.PotionEntryCache = nil
         RuntimeName.PotionEntryCacheAt = 0
+        local added = PotionRuntime.discoverFromInventory(items or Modules.DataController:Get("Items"))
+        if added > 0 then
+            PotionRuntime.sortRegistry()
+            PotionRuntime.syncShopRegistry()
+            PotionRuntime.refreshWhitelistControl()
+            if type(PotionShopRuntime.refreshWhitelistControl) == "function" then
+                PotionShopRuntime.refreshWhitelistControl()
+            end
+        end
         if State.potionPending and PotionRuntime.confirmFromState() then
             return
         end
@@ -4085,6 +4588,489 @@ function PotionRuntime.connectDataListeners()
             State.potionNextAt = 0
         end
     end)
+end
+
+
+function PotionShopRuntime.formatNumber(value)
+    value = tonumber(value) or 0
+    local absolute = math.abs(value)
+    local suffixes = {
+        {1e12, "T"},
+        {1e9, "B"},
+        {1e6, "M"},
+        {1e3, "K"},
+    }
+    for _, suffix in ipairs(suffixes) do
+        if absolute >= suffix[1] then
+            local scaled = value / suffix[1]
+            local text
+            if math.abs(scaled) >= 100 then
+                text = string.format("%.0f", scaled)
+            elseif math.abs(scaled) >= 10 then
+                text = string.format("%.1f", scaled)
+            else
+                text = string.format("%.2f", scaled)
+            end
+            if string.find(text, ".", 1, true) then
+                text = text:gsub("0+$", ""):gsub("%.$", "")
+            end
+            return text .. suffix[2]
+        end
+    end
+    return tostring(math.floor(value + 0.5))
+end
+
+function PotionShopRuntime.formatTime(seconds)
+    seconds = math.max(0, math.floor(tonumber(seconds) or 0))
+    local minutes = math.floor(seconds / 60)
+    return string.format("%02d:%02d", minutes, seconds % 60)
+end
+
+function PotionShopRuntime.registerItem(itemId, label)
+    itemId = tostring(itemId or "")
+    label = tostring(label or itemId)
+    if itemId == "" then
+        return nil
+    end
+    RuntimeName.PotionShopIdSet = RuntimeName.PotionShopIdSet or {}
+    RuntimeName.PotionShopIdByLabel = RuntimeName.PotionShopIdByLabel or {}
+    RuntimeName.PotionShopLabelById = RuntimeName.PotionShopLabelById or {}
+    RuntimeName.PotionShopIds = RuntimeName.PotionShopIds or {}
+    RuntimeName.PotionShopLabels = RuntimeName.PotionShopLabels or {}
+    if not RuntimeName.PotionShopIdSet[itemId] then
+        RuntimeName.PotionShopIdSet[itemId] = true
+        table.insert(RuntimeName.PotionShopIds, itemId)
+        table.insert(RuntimeName.PotionShopLabels, label)
+    else
+        local oldLabel = RuntimeName.PotionShopLabelById[itemId]
+        if oldLabel and oldLabel ~= label then
+            for index, value in ipairs(RuntimeName.PotionShopLabels) do
+                if value == oldLabel then
+                    RuntimeName.PotionShopLabels[index] = label
+                    break
+                end
+            end
+            RuntimeName.PotionShopIdByLabel[oldLabel] = nil
+        end
+    end
+    RuntimeName.PotionShopLabelById[itemId] = label
+    RuntimeName.PotionShopIdByLabel[label] = itemId
+    return itemId
+end
+
+function PotionShopRuntime.buildRegistry()
+    RuntimeName.PotionShopIdSet = {}
+    RuntimeName.PotionShopIdByLabel = {}
+    RuntimeName.PotionShopLabelById = {}
+    RuntimeName.PotionShopIds = {}
+    RuntimeName.PotionShopLabels = {}
+    for _, itemId in ipairs(RuntimeName.PotionIds or {}) do
+        PotionShopRuntime.registerItem(itemId, RuntimeName.PotionLabelById[itemId] or itemId)
+    end
+end
+
+function PotionShopRuntime.resolveItemId(value)
+    if type(value) ~= "string" then
+        return nil
+    end
+    if RuntimeName.PotionShopIdSet and RuntimeName.PotionShopIdSet[value] then
+        return value
+    end
+    if RuntimeName.PotionShopIdByLabel and RuntimeName.PotionShopIdByLabel[value] then
+        return RuntimeName.PotionShopIdByLabel[value]
+    end
+    return PotionRuntime.resolveItemId(value)
+end
+
+function PotionShopRuntime.getSelectedLabels()
+    local labels = {}
+    for _, itemId in ipairs(RuntimeName.PotionShopIds or {}) do
+        if State.potionBuyWhitelist[itemId] == true then
+            table.insert(labels, RuntimeName.PotionShopLabelById[itemId] or itemId)
+        end
+    end
+    return labels
+end
+
+function PotionShopRuntime.setWhitelist(values)
+    local selected = PotionRuntime.normalizeSelection(values)
+    table.clear(State.potionBuyWhitelist)
+    for value in pairs(selected) do
+        local itemId = PotionShopRuntime.resolveItemId(value)
+        if itemId then
+            State.potionBuyWhitelist[itemId] = true
+        end
+    end
+    State.potionShopNextAt = 0
+    PotionShopRuntime.refreshStockParagraph(true)
+    if not State.synchronizing and not ConfigRuntime.loading then
+        ConfigRuntime.scheduleSave(false)
+    end
+end
+
+function PotionShopRuntime.setAll(selected)
+    table.clear(State.potionBuyWhitelist)
+    if selected == true then
+        for _, itemId in ipairs(RuntimeName.PotionShopIds or {}) do
+            State.potionBuyWhitelist[itemId] = true
+        end
+    end
+    State.potionShopNextAt = 0
+    PotionShopRuntime.refreshWhitelistControl()
+    PotionShopRuntime.refreshStockParagraph(true)
+    if not State.synchronizing and not ConfigRuntime.loading then
+        ConfigRuntime.scheduleSave(false)
+    end
+end
+
+function PotionShopRuntime.refreshWhitelistControl()
+    local control = State.potionBuyWhitelistDropdown
+    if not control then
+        return
+    end
+    local wasSynchronizing = State.synchronizing
+    State.synchronizing = true
+    pcall(function()
+        control:Refresh(RuntimeName.PotionShopLabels or {})
+        control:Select(PotionShopRuntime.getSelectedLabels())
+    end)
+    State.synchronizing = wasSynchronizing
+end
+
+function PotionShopRuntime.getCurrency()
+    return tonumber(Modules.DataController:Get("EnemyCurrency")) or 0
+end
+
+function PotionShopRuntime.normalizeStock(payload)
+    if type(payload) ~= "table" or type(payload.Items) ~= "table" then
+        return nil
+    end
+    local entries = {}
+    for index, item in ipairs(payload.Items) do
+        if type(item) == "table" then
+            local rawId = item.Id or item.ItemId
+            local label = item.PotionName
+            local candidateId = type(rawId) == "string" and rawId or tostring(label or "")
+            local ensuredId, added = PotionRuntime.ensureDefinition(candidateId, item, label, "PotionShop stock", true)
+            local resolvedId = ensuredId or PotionRuntime.resolveItemId(candidateId)
+            local itemId = resolvedId or tostring(rawId or index)
+            label = tostring(label or RuntimeName.PotionLabelById[itemId] or itemId)
+            PotionShopRuntime.registerItem(itemId, label)
+            if added then
+                PotionRuntime.sortRegistry()
+            end
+            table.insert(entries, {
+                index = index,
+                id = itemId,
+                label = label,
+                description = tostring(item.Description or ""),
+                rarity = tostring(item.Rarity or ""),
+                cost = math.max(0, tonumber(item.Cost) or 0),
+                stock = math.max(0, math.floor(tonumber(item.Stock) or 0)),
+            })
+        end
+    end
+    return {
+        resetAt = tonumber(payload.ResetAt) or 0,
+        items = entries,
+    }
+end
+
+function PotionShopRuntime.buildStockText()
+    local rows = {
+        "Brains: " .. PotionShopRuntime.formatNumber(PotionShopRuntime.getCurrency()),
+    }
+    if State.potionShopResetAt > 0 then
+        table.insert(rows, "Restock: " .. PotionShopRuntime.formatTime(State.potionShopResetAt - os.time()))
+    else
+        table.insert(rows, "Restock: --:--")
+    end
+    table.insert(rows, "Status: " .. tostring(State.potionShopLastStatus or "Idle"))
+    local stock = State.potionShopStock
+    if type(stock) ~= "table" or #stock == 0 then
+        table.insert(rows, "Stock data has not been received.")
+        return table.concat(rows, "\n")
+    end
+    for _, entry in ipairs(stock) do
+        local selected = State.potionBuyWhitelist[entry.id] == true and "✓" or " "
+        table.insert(rows, string.format(
+            "[%s] %s | Stock x%d | %s Brains",
+            selected,
+            entry.label,
+            entry.stock,
+            PotionShopRuntime.formatNumber(entry.cost)
+        ))
+    end
+    return table.concat(rows, "\n")
+end
+
+function PotionShopRuntime.refreshStockParagraph(force)
+    local now = os.clock()
+    if not force and now - State.potionShopLastDisplayAt < 1 then
+        return
+    end
+    State.potionShopLastDisplayAt = now
+    if State.potionShopStockParagraph then
+        pcall(function()
+            State.potionShopStockParagraph:SetDesc(PotionShopRuntime.buildStockText())
+        end)
+    end
+end
+
+function PotionShopRuntime.clearPending(status)
+    State.potionShopPending = false
+    State.potionShopPendingSince = 0
+    State.potionShopPendingIndex = nil
+    State.potionShopPendingId = nil
+    State.potionShopPendingStockBefore = nil
+    if status then
+        State.potionShopLastStatus = status
+    end
+    PotionShopRuntime.refreshStockParagraph(true)
+end
+
+function PotionShopRuntime.confirmPurchase(status)
+    if not State.potionShopPending then
+        return false
+    end
+    local itemId = State.potionShopPendingId
+    local label = RuntimeName.PotionShopLabelById[itemId] or tostring(itemId or "Potion")
+    PotionShopRuntime.clearPending(status or ("Purchased " .. label))
+    State.potionShopLastPurchasedId = itemId
+    State.potionShopTotalPurchased = State.potionShopTotalPurchased + 1
+    State.potionShopFailures = 0
+    State.potionShopNextAt = os.clock() + State.potionShopPurchaseCooldown
+    LogRuntime.add("Potion purchased: " .. label, true)
+    return true
+end
+
+function PotionShopRuntime.handleStock(payload)
+    local normalized = PotionShopRuntime.normalizeStock(payload)
+    if not normalized then
+        State.potionShopLastStatus = "Invalid stock payload"
+        State.potionShopFailures = State.potionShopFailures + 1
+        PotionShopRuntime.refreshStockParagraph(true)
+        return
+    end
+    State.potionShopStock = normalized.items
+    State.potionShopResetAt = normalized.resetAt
+    State.potionShopStockReceivedAt = os.clock()
+    State.potionShopRevision = State.potionShopRevision + 1
+    State.potionShopRequestNextAt = os.clock() + State.potionShopRequestCooldown
+    if State.potionShopPending then
+        for _, entry in ipairs(normalized.items) do
+            if entry.index == State.potionShopPendingIndex or entry.id == State.potionShopPendingId then
+                if type(State.potionShopPendingStockBefore) == "number" and entry.stock < State.potionShopPendingStockBefore then
+                    PotionShopRuntime.confirmPurchase("Purchased " .. entry.label)
+                end
+                break
+            end
+        end
+    elseif State.potionShopLastStatus == "Requesting stock" or State.potionShopLastStatus == "Waiting for stock" then
+        State.potionShopLastStatus = "Stock updated"
+    end
+    PotionRuntime.refreshWhitelistControl()
+    PotionShopRuntime.refreshWhitelistControl()
+    PotionShopRuntime.refreshStockParagraph(true)
+    if State.autoBuyPotions then
+        State.potionShopNextAt = 0
+    end
+end
+
+function PotionShopRuntime.handlePurchaseResult(payload)
+    if type(payload) ~= "table" then
+        return
+    end
+    if payload.success == true then
+        if State.potionShopPending then
+            PotionShopRuntime.confirmPurchase(tostring(payload.message or "Purchased"))
+        end
+        PotionShopRuntime.requestStock(true)
+        return
+    end
+    local message = tostring(payload.message or "Purchase failed")
+    if State.potionShopPending then
+        State.potionShopFailures = State.potionShopFailures + 1
+        PotionShopRuntime.clearPending(message)
+        State.potionShopNextAt = os.clock() + State.potionShopRetryCooldown
+    else
+        State.potionShopLastStatus = message
+        PotionShopRuntime.refreshStockParagraph(true)
+    end
+end
+
+function PotionShopRuntime.requestStock(force)
+    local now = os.clock()
+    if not force and now < State.potionShopRequestNextAt then
+        return false
+    end
+    State.potionShopRequestNextAt = now + State.potionShopRequestCooldown
+    State.potionShopLastStatus = "Requesting stock"
+    local success, errorMessage = pcall(Remotes.RequestPotionStock.FireServer, Remotes.RequestPotionStock)
+    if not success then
+        State.potionShopFailures = State.potionShopFailures + 1
+        State.potionShopLastStatus = "Stock request failed"
+        LogRuntime.add("Potion stock request failed: " .. tostring(errorMessage), true)
+        PotionShopRuntime.refreshStockParagraph(true)
+        return false
+    end
+    PotionShopRuntime.refreshStockParagraph(true)
+    return true
+end
+
+function PotionShopRuntime.getCandidate()
+    local stock = State.potionShopStock
+    if type(stock) ~= "table" or #stock == 0 then
+        return nil, "Waiting for stock"
+    end
+    local currency = PotionShopRuntime.getCurrency()
+    local selectedInStock = 0
+    local availableSelected = 0
+    for _, entry in ipairs(stock) do
+        if State.potionBuyWhitelist[entry.id] == true then
+            selectedInStock = selectedInStock + 1
+            if entry.stock > 0 then
+                availableSelected = availableSelected + 1
+                if currency >= entry.cost then
+                    return entry
+                end
+            end
+        end
+    end
+    if selectedInStock == 0 then
+        return nil, "No whitelisted shop potions"
+    end
+    if availableSelected == 0 then
+        return nil, "Whitelisted potions are out of stock"
+    end
+    return nil, "Not enough Brains"
+end
+
+function PotionShopRuntime.process(force)
+    if not force and not State.autoBuyPotions then
+        return false
+    end
+    local now = os.clock()
+    if State.potionShopPending then
+        if now - State.potionShopPendingSince < State.potionShopPendingTimeout then
+            return false
+        end
+        State.potionShopFailures = State.potionShopFailures + 1
+        PotionShopRuntime.clearPending("Purchase confirmation timeout")
+        State.potionShopNextAt = now + State.potionShopRetryCooldown
+        PotionShopRuntime.requestStock(true)
+        return false
+    end
+    if not force and now < State.potionShopNextAt then
+        return false
+    end
+    if not State.potionShopStock or (State.potionShopResetAt > 0 and os.time() >= State.potionShopResetAt) then
+        PotionShopRuntime.requestStock(false)
+        State.potionShopNextAt = now + 1
+        return false
+    end
+    local candidate, reason = PotionShopRuntime.getCandidate()
+    if not candidate then
+        State.potionShopLastStatus = reason or "No potion available"
+        State.potionShopNextAt = now + State.potionShopRetryCooldown
+        PotionShopRuntime.refreshStockParagraph(true)
+        return false
+    end
+    State.potionShopPending = true
+    State.potionShopPendingSince = now
+    State.potionShopPendingIndex = candidate.index
+    State.potionShopPendingId = candidate.id
+    State.potionShopPendingStockBefore = candidate.stock
+    State.potionShopLastStatus = "Buying " .. candidate.label
+    PotionShopRuntime.refreshStockParagraph(true)
+    local success, errorMessage = pcall(Remotes.PurchasePotion.FireServer, Remotes.PurchasePotion, candidate.index)
+    if not success then
+        State.potionShopFailures = State.potionShopFailures + 1
+        PotionShopRuntime.clearPending("Purchase request failed")
+        State.potionShopNextAt = now + State.potionShopRetryCooldown
+        LogRuntime.add("Potion purchase request failed: " .. tostring(errorMessage), true)
+        return false
+    end
+    return true
+end
+
+function PotionShopRuntime.tick()
+    PotionShopRuntime.refreshStockParagraph(false)
+    if State.potionShopResetAt > 0 and os.time() >= State.potionShopResetAt then
+        PotionShopRuntime.requestStock(false)
+    elseif not State.potionShopStock and os.clock() >= State.potionShopRequestNextAt then
+        PotionShopRuntime.requestStock(false)
+    end
+    if State.autoBuyPotions then
+        PotionShopRuntime.process(false)
+    end
+end
+
+function PotionShopRuntime.setAuto(enabled)
+    enabled = enabled == true
+    State.autoBuyPotions = enabled
+    PotionShopRuntime.clearPending(enabled and "Ready" or "Disabled")
+    State.potionShopNextAt = 0
+    if enabled then
+        PotionShopRuntime.requestStock(false)
+        task.defer(function()
+            if State.running and State.autoBuyPotions then
+                PotionShopRuntime.process(true)
+            end
+        end)
+    end
+    if not State.synchronizing and not ConfigRuntime.loading then
+        ConfigRuntime.scheduleSave(false)
+    end
+end
+
+function PotionShopRuntime.getStock()
+    local result = {}
+    for _, entry in ipairs(State.potionShopStock or {}) do
+        table.insert(result, {
+            index = entry.index,
+            id = entry.id,
+            label = entry.label,
+            cost = entry.cost,
+            stock = entry.stock,
+            rarity = entry.rarity,
+            selected = State.potionBuyWhitelist[entry.id] == true,
+            affordable = PotionShopRuntime.getCurrency() >= entry.cost,
+        })
+    end
+    return result
+end
+
+function PotionShopRuntime.getState()
+    return {
+        enabled = State.autoBuyPotions,
+        pending = State.potionShopPending,
+        pendingSince = State.potionShopPendingSince,
+        pendingIndex = State.potionShopPendingIndex,
+        pendingId = State.potionShopPendingId,
+        failures = State.potionShopFailures,
+        lastStatus = State.potionShopLastStatus,
+        lastPurchasedId = State.potionShopLastPurchasedId,
+        totalPurchased = State.potionShopTotalPurchased,
+        currency = PotionShopRuntime.getCurrency(),
+        resetAt = State.potionShopResetAt,
+        restockRemaining = math.max(0, State.potionShopResetAt - os.time()),
+        revision = State.potionShopRevision,
+        selected = PotionShopRuntime.getSelectedLabels(),
+        stock = PotionShopRuntime.getStock(),
+    }
+end
+
+function PotionShopRuntime.connectListeners()
+    State.potionShopStockChangedConnection = Remotes.PotionStockChanged.OnClientEvent:Connect(PotionShopRuntime.handleStock)
+    State.potionShopPurchaseResultConnection = Remotes.PotionPurchaseResult.OnClientEvent:Connect(PotionShopRuntime.handlePurchaseResult)
+    State.potionShopCurrencyChangedConnection = Modules.DataController:OnChanged("EnemyCurrency", function()
+        PotionShopRuntime.refreshStockParagraph(true)
+        if State.autoBuyPotions then
+            State.potionShopNextAt = 0
+        end
+    end)
+    PotionShopRuntime.requestStock(true)
 end
 
 function AntiAfkRuntime.tryMouseMoveRelative()
@@ -4198,6 +5184,167 @@ function AntiAfkRuntime.setEnabled(enabled)
     end
 end
 
+function ShooterRuntime.getUpgradeNumber(name, fallback)
+    local value = Modules.DataController:GetUpgradeValue(name, fallback)
+    if type(value) ~= "number" or value <= 0 then
+        return fallback
+    end
+    return value
+end
+
+function ShooterRuntime.isUnlocked()
+    local levels = Modules.DataController:Get("UpgradeLevels")
+    return type(levels) == "table" and type(levels.SharpShooter) == "number" and levels.SharpShooter > 0
+end
+
+function ShooterRuntime.getRoot()
+    local character = Services.LocalPlayer.Character
+    if not character or not character.Parent then
+        return nil
+    end
+    local root = character:FindFirstChild("HumanoidRootPart")
+    if root and root:IsA("BasePart") then
+        return root
+    end
+    return nil
+end
+
+function ShooterRuntime.getEnemyPosition(enemy)
+    if not enemy or not enemy.Parent then
+        return nil
+    end
+    local avatar = enemy:FindFirstChild("avatar")
+    if avatar and avatar:IsA("BasePart") then
+        return avatar.Position
+    end
+    if enemy:IsA("Model") then
+        return enemy:GetPivot().Position
+    end
+    if enemy:IsA("BasePart") then
+        return enemy.Position
+    end
+    return nil
+end
+
+function ShooterRuntime.isShootable(enemy, origin, range)
+    if not enemy or not enemy.Parent then
+        return false, nil, nil
+    end
+    local health = enemy:GetAttribute("Health")
+    if type(health) == "number" and health <= 0 then
+        return false, nil, nil
+    end
+    if enemy:GetAttribute("zombieOwnership") ~= Services.LocalPlayer.Name then
+        return false, nil, nil
+    end
+    if enemy:GetAttribute("EnemyLocallyHidden") == true then
+        return false, nil, nil
+    end
+    local position = ShooterRuntime.getEnemyPosition(enemy)
+    if not position then
+        return false, nil, nil
+    end
+    local distance = (position - origin).Magnitude
+    if distance > range then
+        return false, position, distance
+    end
+    return true, position, distance
+end
+
+function ShooterRuntime.acquireTarget(origin, range)
+    local bestTarget = nil
+    local bestDistance = math.huge
+    for _, enemy in ipairs(Services.CollectionService:GetTagged("Enemy")) do
+        local shootable, _, distance = ShooterRuntime.isShootable(enemy, origin, range)
+        if shootable and distance < bestDistance then
+            bestTarget = enemy
+            bestDistance = distance
+        end
+    end
+    return bestTarget, bestDistance
+end
+
+function ShooterRuntime.process(force)
+    if not force and not State.autoShoot then
+        return false
+    end
+    local now = os.clock()
+    if not force and now < State.shootNextAt then
+        return false
+    end
+    if not ShooterRuntime.isUnlocked() then
+        State.shootLastStatus = "Sharp Shooter is locked"
+        State.shootNextAt = now + 1
+        return false
+    end
+    local root = ShooterRuntime.getRoot()
+    if not root then
+        State.shootLastStatus = "Waiting for character"
+        State.shootNextAt = now + 0.5
+        return false
+    end
+    local range = ShooterRuntime.getUpgradeNumber("gunrange", 50)
+    local target, distance = ShooterRuntime.acquireTarget(root.Position, range)
+    if not target then
+        State.shootLastStatus = "No shootable enemy in range"
+        State.shootLastTarget = nil
+        State.shootLastDistance = nil
+        State.shootNextAt = now + 0.1
+        return false
+    end
+    local fireRate = ShooterRuntime.getUpgradeNumber("triggerhappy", 2)
+    local success, errorMessage = pcall(Remotes.FireShot.FireServer, Remotes.FireShot, target)
+    State.shootNextAt = now + math.max(0.02, 1 / fireRate)
+    if not success then
+        State.shootFailures = State.shootFailures + 1
+        State.shootLastStatus = "Shot request failed"
+        LogRuntime.add("Auto Shoot request failed: " .. tostring(errorMessage), true)
+        return false
+    end
+    State.shootFailures = 0
+    State.shootTotalShots = State.shootTotalShots + 1
+    State.shootLastTarget = target.Name
+    State.shootLastDistance = distance
+    State.shootLastStatus = "Shot " .. target.Name
+    return true
+end
+
+function ShooterRuntime.tick()
+    if State.autoShoot then
+        ShooterRuntime.process(false)
+    end
+end
+
+function ShooterRuntime.setAuto(enabled)
+    State.autoShoot = enabled == true
+    State.shootNextAt = 0
+    State.shootLastStatus = State.autoShoot and "Ready" or "Disabled"
+    if State.autoShoot then
+        task.defer(function()
+            if State.running and State.autoShoot then
+                ShooterRuntime.process(true)
+            end
+        end)
+    end
+    if not State.synchronizing and not ConfigRuntime.loading then
+        ConfigRuntime.scheduleSave(false)
+    end
+end
+
+function ShooterRuntime.getState()
+    return {
+        enabled = State.autoShoot,
+        unlocked = ShooterRuntime.isUnlocked(),
+        range = ShooterRuntime.getUpgradeNumber("gunrange", 50),
+        fireRate = ShooterRuntime.getUpgradeNumber("triggerhappy", 2),
+        lastStatus = State.shootLastStatus,
+        lastTarget = State.shootLastTarget,
+        lastDistance = State.shootLastDistance,
+        totalShots = State.shootTotalShots,
+        failures = State.shootFailures,
+    }
+end
+
 function LootRuntime.getHumanoidRootPart()
     local character = Services.LocalPlayer.Character
     if not character then
@@ -4264,6 +5411,56 @@ function LootRuntime.collectItems(rootPart, limit)
     return collected
 end
 
+function LootRuntime.collectPowerUps(rootPart, limit)
+    local collected = 0
+    local now = os.clock()
+    RuntimeName.LootPowerUpAttempts = RuntimeName.LootPowerUpAttempts or setmetatable({}, {__mode = "k"})
+    RuntimeName.LootPowerUpPending = RuntimeName.LootPowerUpPending or setmetatable({}, {__mode = "k"})
+    for _, model in ipairs(Services.Workspace:GetChildren()) do
+        if collected >= limit then
+            break
+        end
+        if model:IsA("Model") and model.Name == "PowerUpDrop" and model.Parent and not RuntimeName.LootPowerUpPending[model] then
+            local guid = model:GetAttribute("GUID")
+            local primary = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
+            local lastAttempt = RuntimeName.LootPowerUpAttempts[model] or 0
+            if type(guid) == "string" and primary and now - lastAttempt >= 2 then
+                local flatOffset = Vector3.new(primary.Position.X - rootPart.Position.X, 0, primary.Position.Z - rootPart.Position.Z)
+                if flatOffset.Magnitude > 18 then
+                    local powerUpModel = model
+                    local powerUpGuid = guid
+                    local targetPosition = rootPart.Position + Vector3.new(0, 1.5, 0)
+                    RuntimeName.LootPowerUpPending[powerUpModel] = true
+                    RuntimeName.LootPowerUpAttempts[powerUpModel] = now
+                    collected = collected + 1
+                    task.spawn(function()
+                        local requestSuccess, requestError = pcall(function()
+                            powerUpModel:PivotTo(CFrame.new(targetPosition))
+                            Remotes.SpawnPowerUp:FireServer(powerUpGuid)
+                        end)
+                        if not requestSuccess then
+                            State.lootCollectFailures = State.lootCollectFailures + 1
+                            RuntimeName.LootPowerUpPending[powerUpModel] = nil
+                            RuntimeName.LootPowerUpAttempts[powerUpModel] = os.clock()
+                            LogRuntime.add("Power-up collect failed: " .. tostring(requestError), true)
+                            return
+                        end
+                        task.delay(0.22, function()
+                            RuntimeName.LootPowerUpPending[powerUpModel] = nil
+                            if powerUpModel and powerUpModel.Parent then
+                                pcall(function()
+                                    powerUpModel:Destroy()
+                                end)
+                            end
+                        end)
+                    end)
+                end
+            end
+        end
+    end
+    return collected
+end
+
 function LootRuntime.process(force)
     if not force and not State.autoCollectLoot then
         return false
@@ -4280,12 +5477,15 @@ function LootRuntime.process(force)
     end
     local coinCount = LootRuntime.scheduleCoins(State.lootCollectMaxCoinsPerCycle)
     local itemCount = LootRuntime.collectItems(rootPart, State.lootCollectMaxItemsPerCycle)
+    local powerUpCount = LootRuntime.collectPowerUps(rootPart, State.lootCollectMaxPowerUpsPerCycle)
     State.lootCollectLastCoinCount = coinCount
     State.lootCollectLastItemCount = itemCount
+    State.lootCollectLastPowerUpCount = powerUpCount
     State.lootCollectTotalCoins = State.lootCollectTotalCoins + coinCount
     State.lootCollectTotalItems = State.lootCollectTotalItems + itemCount
-    if coinCount > 0 or itemCount > 0 then
-        State.lootCollectLastStatus = string.format("Queued %d coins and %d items", coinCount, itemCount)
+    State.lootCollectTotalPowerUps = State.lootCollectTotalPowerUps + powerUpCount
+    if coinCount > 0 or itemCount > 0 or powerUpCount > 0 then
+        State.lootCollectLastStatus = string.format("Queued %d coins, %d items, and %d power-ups", coinCount, itemCount, powerUpCount)
         return true
     end
     State.lootCollectLastStatus = "No drops available"
@@ -4305,6 +5505,8 @@ function LootRuntime.setAuto(enabled)
     State.lootCollectLastStatus = enabled and "Ready" or "Disabled"
     if not enabled then
         RuntimeName.LootItemAttempts = setmetatable({}, {__mode = "k"})
+        RuntimeName.LootPowerUpAttempts = setmetatable({}, {__mode = "k"})
+        RuntimeName.LootPowerUpPending = setmetatable({}, {__mode = "k"})
     else
         task.defer(function()
             if State.running and State.autoCollectLoot then
@@ -4323,8 +5525,10 @@ function LootRuntime.getState()
         lastStatus = State.lootCollectLastStatus,
         lastCoins = State.lootCollectLastCoinCount,
         lastItems = State.lootCollectLastItemCount,
+        lastPowerUps = State.lootCollectLastPowerUpCount,
         totalCoinsQueued = State.lootCollectTotalCoins,
         totalItemsMoved = State.lootCollectTotalItems,
+        totalPowerUpsCollected = State.lootCollectTotalPowerUps,
         failures = State.lootCollectFailures,
         nextAt = State.lootCollectNextAt,
     }
@@ -4456,8 +5660,28 @@ function UIRuntime.build(WindUI)
         SideBarWidth = 160,
         HideSearchBar = true,
         ScrollBarEnabled = false,
+        OpenButton = {
+            Title = GAME_NAME,
+            Icon = "shield",
+            IconOnly = true,
+            Enabled = true,
+            Draggable = true,
+            OnlyMobile = false,
+        },
     })
     State.window = window
+    pcall(function()
+        if type(window.EditOpenButton) == "function" then
+            window:EditOpenButton({
+                Title = GAME_NAME,
+                Icon = "shield",
+                IconOnly = true,
+                Enabled = true,
+                Draggable = true,
+                OnlyMobile = false,
+            })
+        end
+    end)
     window:Tag({
         Title = "v" .. Hub.Version,
         Icon = "badge-info",
@@ -4492,20 +5716,74 @@ function UIRuntime.build(WindUI)
     local rewardsSection = UIRuntime.createSection(automationTab, "Daily & Rewards", false)
     State.autoClaimIndexToggle = UIRuntime.createToggle(rewardsSection, "autoClaimIndex", {
         Title = "Auto Claim Index",
-        Desc = "Claims every currently available Index reward, one confirmed reward at a time.",
+        Desc = "Claims every available Unit, Mutation, and PowerUp Index reward, one confirmed reward at a time.",
         Type = "Checkbox",
         Value = State.autoClaimIndex,
         Callback = IndexRuntime.setAuto,
     })
+    local combatSection = UIRuntime.createSection(automationTab, "Combat", false)
+    State.autoShootToggle = UIRuntime.createToggle(combatSection, "autoShoot", {
+        Title = "Auto Shoot",
+        Desc = "Automatically fires the Sharp Shooter at the nearest owned enemy within the official gun range and fire-rate limits.",
+        Type = "Checkbox",
+        Value = State.autoShoot,
+        Callback = ShooterRuntime.setAuto,
+    })
     local lootSection = UIRuntime.createSection(automationTab, "Loot", false)
     State.autoCollectLootToggle = UIRuntime.createToggle(lootSection, "autoCollectLoot", {
         Title = "Auto Collect Drop Loot",
-        Desc = "Uses native coin scheduling and moves unlocked item drops into the game pickup radius.",
+        Desc = "Collects coin drops, unlocked item drops, and PowerUp drops through their native game remotes.",
         Type = "Checkbox",
         Value = State.autoCollectLoot,
         Callback = LootRuntime.setAuto,
     })
     local consumablesSection = UIRuntime.createSection(automationTab, "Consumables", false)
+    State.autoBuyPotionsToggle = UIRuntime.createToggle(consumablesSection, "autoBuyPotions", {
+        Title = "Auto Buy Potions",
+        Desc = "Purchases available whitelisted potion stock using Brains, one confirmed purchase at a time.",
+        Type = "Checkbox",
+        Value = State.autoBuyPotions,
+        Callback = PotionShopRuntime.setAuto,
+    })
+    State.potionBuyWhitelistDropdown = UIRuntime.createDropdown(consumablesSection, "potionBuyWhitelist", {
+        Title = "Potion Buy Whitelist",
+        Desc = "Only selected potion types may be purchased automatically.",
+        Values = RuntimeName.PotionShopLabels,
+        Value = PotionShopRuntime.getSelectedLabels(),
+        Multi = true,
+        AllowNone = true,
+        SearchBarEnabled = true,
+        MenuWidth = 320,
+        Callback = PotionShopRuntime.setWhitelist,
+    })
+    UIRuntime.createButton(consumablesSection, {
+        Title = "Select All Buy Potions",
+        Desc = "Select every potion type for automatic shop purchases.",
+        Icon = "list-checks",
+        Callback = function()
+            PotionShopRuntime.setAll(true)
+        end,
+    })
+    UIRuntime.createButton(consumablesSection, {
+        Title = "Unselect All Buy Potions",
+        Desc = "Clear the automatic potion purchase whitelist.",
+        Icon = "list-x",
+        Callback = function()
+            PotionShopRuntime.setAll(false)
+        end,
+    })
+    State.potionShopStockParagraph = consumablesSection:Paragraph({
+        Title = "Potion Shop Stock",
+        Desc = PotionShopRuntime.buildStockText(),
+    })
+    UIRuntime.createButton(consumablesSection, {
+        Title = "Refresh Potion Stock",
+        Desc = "Requests the latest potion stock and restock timer from the server.",
+        Icon = "refresh-cw",
+        Callback = function()
+            PotionShopRuntime.requestStock(true)
+        end,
+    })
     State.autoUsePotionsToggle = UIRuntime.createToggle(consumablesSection, "autoUsePotions", {
         Title = "Auto Use Potions",
         Desc = "Uses one available whitelisted potion whenever its matching effect is inactive.",
@@ -4515,7 +5793,7 @@ function UIRuntime.build(WindUI)
     })
     State.potionWhitelistDropdown = UIRuntime.createDropdown(consumablesSection, "potionWhitelist", {
         Title = "Potion Whitelist",
-        Desc = "Only selected potion types may be used automatically.",
+        Desc = "Only selected potion types may be used automatically. The list is discovered dynamically from ItemTable, inventory, and potion shop stock.",
         Values = RuntimeName.PotionLabels,
         Value = PotionRuntime.getSelectedLabels(),
         Multi = true,
@@ -4525,8 +5803,17 @@ function UIRuntime.build(WindUI)
         Callback = PotionRuntime.setWhitelist,
     })
     UIRuntime.createButton(consumablesSection, {
+        Title = "Refresh Potion List",
+        Desc = "Rescans ItemTable, current inventory, and potion shop stock for newly added potion types.",
+        Icon = "refresh-cw",
+        Callback = function()
+            local added = PotionRuntime.refreshRegistry()
+            LogRuntime.add("Potion registry refreshed: " .. tostring(added) .. " new, " .. tostring(#(RuntimeName.PotionIds or {})) .. " total", true)
+        end,
+    })
+    UIRuntime.createButton(consumablesSection, {
         Title = "Select All Potions",
-        Desc = "Select every supported potion type.",
+        Desc = "Select every dynamically detected potion type.",
         Icon = "list-checks",
         Callback = function()
             PotionRuntime.setAll(true)
@@ -4899,7 +6186,49 @@ Hub.Potions = {
         PotionRuntime.setAll(false)
     end,
     GetPotions = PotionRuntime.getPotions,
+    RefreshRegistry = PotionRuntime.refreshRegistry,
     GetState = PotionRuntime.getState,
+}
+
+Hub.PotionShop = {
+    SetAuto = PotionShopRuntime.setAuto,
+    ToggleAuto = function()
+        PotionShopRuntime.setAuto(not State.autoBuyPotions)
+        if State.autoBuyPotionsToggle then
+            pcall(function()
+                State.autoBuyPotionsToggle:Set(State.autoBuyPotions, false)
+            end)
+        end
+        return State.autoBuyPotions
+    end,
+    Process = PotionShopRuntime.process,
+    RequestStock = function()
+        return PotionShopRuntime.requestStock(true)
+    end,
+    SetWhitelist = PotionShopRuntime.setWhitelist,
+    SelectAll = function()
+        PotionShopRuntime.setAll(true)
+    end,
+    UnselectAll = function()
+        PotionShopRuntime.setAll(false)
+    end,
+    GetStock = PotionShopRuntime.getStock,
+    GetState = PotionShopRuntime.getState,
+}
+
+Hub.Shooter = {
+    SetAuto = ShooterRuntime.setAuto,
+    ToggleAuto = function()
+        ShooterRuntime.setAuto(not State.autoShoot)
+        if State.autoShootToggle then
+            pcall(function()
+                State.autoShootToggle:Set(State.autoShoot, false)
+            end)
+        end
+        return State.autoShoot
+    end,
+    Process = ShooterRuntime.process,
+    GetState = ShooterRuntime.getState,
 }
 
 Hub.Loot = {
@@ -4938,6 +6267,8 @@ Hub.Config = {
             IndexRuntime.setAuto(State.autoClaimIndex)
             RollRuntime.setAuto(State.autoRoll)
             PotionRuntime.setAuto(State.autoUsePotions)
+            PotionShopRuntime.setAuto(State.autoBuyPotions)
+            ShooterRuntime.setAuto(State.autoShoot)
             LootRuntime.setAuto(State.autoCollectLoot)
             AntiAfkRuntime.setEnabled(State.antiAfk)
         end
@@ -4977,6 +6308,8 @@ function Hub.GetState()
         index = IndexRuntime.getState(),
         roll = RollRuntime.getState(),
         potions = PotionRuntime.getState(),
+        potionShop = PotionShopRuntime.getState(),
+        shooter = ShooterRuntime.getState(),
         loot = LootRuntime.getState(),
         antiAfk = AntiAfkRuntime.getState(),
         configPath = ConfigRuntime.path,
@@ -4999,6 +6332,8 @@ function Hub.Stop()
     State.autoRoll = false
     State.rollRuntimeActive = false
     State.autoUsePotions = false
+    State.autoBuyPotions = false
+    State.autoShoot = false
     State.autoCollectLoot = false
     State.antiAfk = false
     TeamRuntime.clearPending("Stopped")
@@ -5008,6 +6343,7 @@ function Hub.Stop()
     IndexRuntime.clearPending("Stopped")
     RollRuntime.clearPending("Stopped")
     PotionRuntime.clearPending("Stopped")
+    PotionShopRuntime.clearPending("Stopped")
     RollRuntime.setNativeVisualConnectionsEnabled(true)
     RollRuntime.setCutsceneSuppressed(false)
     RollRuntime.setNativeGuiHidden(false)
@@ -5043,6 +6379,13 @@ end
 local potionRegistrySuccess, potionRegistryError = pcall(PotionRuntime.buildRegistry)
 if not potionRegistrySuccess or #RuntimeName.PotionIds == 0 then
     warn("[xSansHUB] Potion registry startup failed: " .. tostring(potionRegistryError or "no potion definitions"))
+    Hub.Stop()
+    return
+end
+
+local potionShopRegistrySuccess, potionShopRegistryError = pcall(PotionShopRuntime.buildRegistry)
+if not potionShopRegistrySuccess or #RuntimeName.PotionShopIds == 0 then
+    warn("[xSansHUB] Potion shop registry startup failed: " .. tostring(potionShopRegistryError or "no potion shop definitions"))
     Hub.Stop()
     return
 end
@@ -5113,6 +6456,11 @@ if not potionListenersSuccess then
     LogRuntime.add("Potion listener startup failed: " .. tostring(potionListenersError), true)
 end
 
+local potionShopListenersSuccess, potionShopListenersError = pcall(PotionShopRuntime.connectListeners)
+if not potionShopListenersSuccess then
+    LogRuntime.add("Potion shop listener startup failed: " .. tostring(potionShopListenersError), true)
+end
+
 if State.antiAfk then
     AntiAfkRuntime.setEnabled(true)
 end
@@ -5143,6 +6491,14 @@ end
 
 if State.autoUsePotions then
     PotionRuntime.setAuto(true)
+end
+
+if State.autoBuyPotions then
+    PotionShopRuntime.setAuto(true)
+end
+
+if State.autoShoot then
+    ShooterRuntime.setAuto(true)
 end
 
 if State.autoCollectLoot then
@@ -5195,6 +6551,18 @@ SchedulerRuntime.start({
             return State.potionPollInterval
         end,
         callback = PotionRuntime.tick,
+    },
+    {
+        interval = function()
+            return State.potionShopPollInterval
+        end,
+        callback = PotionShopRuntime.tick,
+    },
+    {
+        interval = function()
+            return State.shootPollInterval
+        end,
+        callback = ShooterRuntime.tick,
     },
     {
         interval = function()
