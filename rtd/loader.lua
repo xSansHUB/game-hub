@@ -26,7 +26,7 @@ local GAME_NAME = "Roll To Defend"
 local CONFIG_ROOT = "xSansHUB"
 local CONFIG_FOLDER = CONFIG_ROOT .. "/RollToDefend"
 local WINDUI_URL = "https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"
-local BUILD_NUMBER = 20
+local BUILD_NUMBER = 22
 local LOG_LIMIT = 150
 local DISPLAY_LOG_LIMIT = 40
 local LOG_ROUTINE_PATTERNS = {
@@ -2596,21 +2596,53 @@ end
 
 function RollRuntime.findNativeGuiRoots()
     local roots = {}
+    local seen = setmetatable({}, {__mode = "k"})
     local playerGui = Services.LocalPlayer:FindFirstChildOfClass("PlayerGui")
     local main = playerGui and playerGui:FindFirstChild("Main") or nil
     if not main then
         return roots
     end
+    local function add(instance)
+        if not instance or seen[instance] or not instance:IsA("GuiObject") then
+            return
+        end
+        if instance == main or instance:IsA("ScreenGui") then
+            return
+        end
+        seen[instance] = true
+        table.insert(roots, instance)
+    end
+    local maximizedViews = {}
     for _, instance in ipairs(main:GetDescendants()) do
-        if instance:IsA("GuiObject") and instance:FindFirstChild("Maximsed") and instance:FindFirstChild("Minimised") then
-            table.insert(roots, instance)
-            break
+        if instance:IsA("GuiObject") and instance.Name == "Maximsed" then
+            local rollFrame = instance:FindFirstChild("RollFrame")
+            local autoRoll = instance:FindFirstChild("AutoRoll", true)
+            if rollFrame or autoRoll then
+                table.insert(maximizedViews, instance)
+                add(instance)
+            end
+        end
+    end
+    for _, maximized in ipairs(maximizedViews) do
+        local parent = maximized.Parent
+        local minimized = parent and parent:FindFirstChild("Minimised") or nil
+        if minimized and minimized:IsA("GuiObject") then
+            add(minimized)
+        end
+    end
+    for _, instance in ipairs(main:GetDescendants()) do
+        if instance:IsA("GuiObject") and instance.Name == "Minimised" then
+            local rollFrame = instance:FindFirstChild("RollFrame")
+            local scrollFrame = instance:FindFirstChild("ScrollFrame", true)
+            if rollFrame or scrollFrame then
+                add(instance)
+            end
         end
     end
     local bottom = main:FindFirstChild("Bottom")
     local rarityRoll = bottom and bottom:FindFirstChild("RarityRoll") or nil
     if rarityRoll and rarityRoll:IsA("GuiObject") then
-        table.insert(roots, rarityRoll)
+        add(rarityRoll)
     end
     return roots
 end
@@ -3531,6 +3563,7 @@ function PotionRuntime.buildRegistry()
     RuntimeName.PotionLastUiScanAt = 0
     RuntimeName.PotionUiScanStatus = "Idle"
     RuntimeName.PotionDiscoverySources = {}
+    RuntimeName.PotionRejectedTokens = {}
     local definitions = {
         {"LuckBoostPotion", {"LuckPotionBoost", "LuckBoost", "LuckPotion", "Luck Boost Potion"}, "Luck Boost Potion"},
         {"LuckBoostPotionUltra", {"UltraLuckPotion", "UltraLuck", "Ultra Luck Potion", "Ultra Luck Boost"}, "Ultra Luck Boost Potion"},
@@ -3829,13 +3862,14 @@ function PotionRuntime.getNativeInventoryInfo(items)
             local amount = tonumber(value)
             if not amount and type(value) == "table" then
                 amount = tonumber(value.amount or value.Amount or value.count or value.Count or value.quantity or value.Quantity)
+            elseif type(value) == "boolean" then
+                amount = value and 1 or 0
             end
             if not amount then
                 amount = 1
             end
             counts[itemId] = (counts[itemId] or 0) + math.max(0, amount)
             tokens[itemId] = tokens[itemId] or {}
-            table.insert(tokens[itemId], keyString)
         end
     end
     RuntimeName.PotionInventoryKeys = rawKeys
@@ -3859,8 +3893,20 @@ end
 function PotionRuntime.findItemsPage()
     local player = Services.Players.LocalPlayer
     local playerGui = player and player:FindFirstChildOfClass("PlayerGui") or nil
-    if not playerGui or type(Modules.InventoryGuiUtil.GetItemsPage) ~= "function" then
+    if not playerGui then
         return nil
+    end
+    local fallback = nil
+    for _, descendant in ipairs(playerGui:GetDescendants()) do
+        if descendant:IsA("GuiObject") and descendant.Name == "Items" then
+            fallback = fallback or descendant
+            if descendant:FindFirstChild("DetailPage") or descendant:FindFirstChild("DetailPage", true) then
+                return descendant
+            end
+        end
+    end
+    if type(Modules.InventoryGuiUtil.GetItemsPage) ~= "function" then
+        return fallback
     end
     local candidates = {}
     local seen = {}
@@ -3877,7 +3923,7 @@ function PotionRuntime.findItemsPage()
         elseif descendant:FindFirstChild("ButtonsLeft") and descendant:FindFirstChild("Main") then
             addCandidate(descendant)
         end
-        if #candidates >= 80 then
+        if #candidates >= 100 then
             break
         end
     end
@@ -3887,7 +3933,7 @@ function PotionRuntime.findItemsPage()
             return result
         end
     end
-    return nil
+    return fallback
 end
 
 function PotionRuntime.resolveItemIdFromInstance(instance, stopAt)
@@ -3986,6 +4032,105 @@ function PotionRuntime.activateInventoryButton(button)
     return activated
 end
 
+function PotionRuntime.getSelectedCandidate(expectedItemId, source)
+    local info = PotionRuntime.getSelectedEntryInfo()
+    if type(info) ~= "table" then
+        return nil
+    end
+    local itemId = PotionRuntime.resolveItemIdDeep(info, 0, {}) or expectedItemId
+    if expectedItemId and itemId and itemId ~= expectedItemId then
+        return nil
+    end
+    itemId = itemId or expectedItemId
+    if not itemId then
+        return nil
+    end
+    local token = PotionRuntime.getExplicitRequestToken(info)
+    if not token then
+        for _, field in ipairs({"guids", "Guids", "GUIDs", "uids", "Uids", "UIDs", "uuids", "Uuids", "UUIDs"}) do
+            local values = info[field]
+            if type(values) == "table" then
+                for key, value in pairs(values) do
+                    if type(value) == "string" and value ~= "" then
+                        token = value
+                        break
+                    end
+                    if type(key) == "string" and key ~= "" and value ~= false then
+                        token = key
+                        break
+                    end
+                end
+            elseif type(values) == "string" and values ~= "" then
+                token = values
+            end
+            if token then
+                break
+            end
+        end
+    end
+    if type(token) ~= "string" or token == "" then
+        return nil
+    end
+    return {
+        token = token,
+        guid = token,
+        itemId = itemId,
+        definition = RuntimeName.PotionDefinitions[itemId],
+        source = source or "InventoryItemsView.GetSelectedEntryInfo",
+        priority = 1,
+    }
+end
+
+function PotionRuntime.getPotionButtons(itemId)
+    local itemsPage = PotionRuntime.findItemsPage()
+    if not itemsPage then
+        return {}, nil
+    end
+    local buttons = {}
+    for _, descendant in ipairs(itemsPage:GetDescendants()) do
+        if descendant:IsA("GuiButton") and not descendant:FindFirstAncestor("DetailPage") then
+            local resolved = PotionRuntime.resolveItemIdFromInstance(descendant, itemsPage)
+            if resolved == itemId then
+                table.insert(buttons, descendant)
+            end
+        end
+    end
+    table.sort(buttons, function(left, right)
+        if left.LayoutOrder ~= right.LayoutOrder then
+            return left.LayoutOrder < right.LayoutOrder
+        end
+        return left:GetFullName() < right:GetFullName()
+    end)
+    return buttons, itemsPage
+end
+
+function PotionRuntime.captureCandidateFromUI(itemId)
+    local selected = PotionRuntime.getSelectedCandidate(itemId, "InventoryItemsView.Selected")
+    if selected then
+        RuntimeName.PotionUiScanStatus = "Using current native selection"
+        return selected
+    end
+    local buttons = PotionRuntime.getPotionButtons(itemId)
+    if #buttons == 0 then
+        RuntimeName.PotionUiScanStatus = "No native inventory button for " .. tostring(itemId)
+        return nil
+    end
+    for _, button in ipairs(buttons) do
+        PotionRuntime.activateInventoryButton(button)
+        local deadline = os.clock() + 0.35
+        repeat
+            task.wait()
+            selected = PotionRuntime.getSelectedCandidate(itemId, "InventoryItemsView.UI." .. button:GetFullName())
+            if selected then
+                RuntimeName.PotionUiScanStatus = "Captured native GUID for " .. tostring(itemId)
+                return selected
+            end
+        until os.clock() >= deadline
+    end
+    RuntimeName.PotionUiScanStatus = "Native selection did not expose guids[1]"
+    return nil
+end
+
 function PotionRuntime.getInventoryEntries(forceRefresh)
     local discovered = PotionRuntime.discoverFromInventory(Modules.DataController:Get("Items"))
     if discovered > 0 then
@@ -4004,13 +4149,20 @@ function PotionRuntime.getInventoryEntries(forceRefresh)
     local entries = {}
     local seenEntries = {}
     local discoverySources = {}
-    local _, nativeCounts, nativeTokens = PotionRuntime.getNativeInventoryInfo(items)
+    PotionRuntime.getNativeInventoryInfo(items)
     local function add(token, itemId, source, authoritative, priority)
         itemId = PotionRuntime.resolveItemId(itemId)
         if not itemId or not PotionRuntime.looksLikeRequestToken(token, authoritative) then
             return
         end
         token = tostring(token)
+        local rejectedUntil = RuntimeName.PotionRejectedTokens and RuntimeName.PotionRejectedTokens[token] or nil
+        if type(rejectedUntil) == "number" then
+            if os.clock() < rejectedUntil then
+                return
+            end
+            RuntimeName.PotionRejectedTokens[token] = nil
+        end
         local signature = itemId .. "\0" .. token
         local existing = seenEntries[signature]
         if existing then
@@ -4057,13 +4209,13 @@ function PotionRuntime.getInventoryEntries(forceRefresh)
             local valueItemId = PotionRuntime.resolveItemId(value)
             if valueItemId and type(key) == "string" then
                 add(key, valueItemId, source, false, priority)
-            elseif inheritedId and (authoritative or type(key) == "number") then
-                add(value, inheritedId, source, authoritative or type(key) == "number", priority)
+            elseif inheritedId and authoritative then
+                add(value, inheritedId, source, true, priority)
             end
             return
         end
         if type(value) ~= "table" then
-            if inheritedId and type(key) == "string" and PotionRuntime.looksLikeRequestToken(key, authoritative) then
+            if inheritedId and type(key) == "string" then
                 add(key, inheritedId, source, authoritative, priority)
             end
             return
@@ -4077,7 +4229,7 @@ function PotionRuntime.getInventoryEntries(forceRefresh)
         local explicitToken = PotionRuntime.getExplicitRequestToken(value)
         if itemId and explicitToken then
             add(explicitToken, itemId, source, true, priority)
-        elseif directItemId and type(key) == "string" and PotionRuntime.looksLikeRequestToken(key, false) then
+        elseif directItemId and type(key) == "string" then
             add(key, directItemId, source, false, priority)
         end
         for field, container in pairs(value) do
@@ -4090,7 +4242,7 @@ function PotionRuntime.getInventoryEntries(forceRefresh)
                     for tokenKey, tokenValue in pairs(container) do
                         if type(tokenValue) == "string" and containerItemId then
                             add(tokenValue, containerItemId, source .. "." .. tostring(field), true, priority)
-                        elseif type(tokenKey) == "string" and containerItemId and type(tokenValue) ~= "table" then
+                        elseif type(tokenKey) == "string" and containerItemId and type(tokenValue) ~= "table" and tokenValue ~= false then
                             add(tokenKey, containerItemId, source .. "." .. tostring(field), true, priority)
                         elseif type(tokenValue) == "table" then
                             scan(tokenKey, tokenValue, containerItemId, source .. "." .. tostring(field), true, depth + 1, priority)
@@ -4102,84 +4254,18 @@ function PotionRuntime.getInventoryEntries(forceRefresh)
         for childKey, childValue in pairs(value) do
             local normalizedKey = PotionRuntime.normalizeToken(tostring(childKey))
             if not tokenFields[normalizedKey] then
-                local childAuthoritative = authoritative or (type(childKey) == "number" and itemId ~= nil)
-                scan(childKey, childValue, itemId, source .. "." .. tostring(childKey), childAuthoritative, depth + 1, priority)
+                scan(childKey, childValue, itemId, source .. "." .. tostring(childKey), authoritative, depth + 1, priority)
             end
         end
     end
     if type(items) == "table" then
         for key, value in pairs(items) do
-            scan(key, value, nil, "Items." .. tostring(key), false, 0, 30)
+            scan(key, value, nil, "Items." .. tostring(key), false, 0, 20)
         end
     end
-    local selectedInfo = PotionRuntime.getSelectedEntryInfo()
-    if selectedInfo then
-        scan("Selected", selectedInfo, PotionRuntime.resolveItemIdDeep(selectedInfo, 0, {}), "InventoryItemsView.GetSelectedEntryInfo", true, 0, 5)
-    end
-    local view = Modules.InventoryItemsView
-    if type(view) == "table" then
-        local inspectedFunctions = 0
-        for name, callback in pairs(view) do
-            local lowered = string.lower(tostring(name))
-            if type(callback) == "function" and (string.find(lowered, "selected", 1, true) or string.find(lowered, "entry", 1, true) or string.find(lowered, "item", 1, true) or lowered == "render") then
-                if string.sub(lowered, 1, 3) == "get" and name ~= "GetSelectedEntryInfo" then
-                    local success, result = pcall(callback)
-                    if success and type(result) == "table" then
-                        scan(name, result, PotionRuntime.resolveItemIdDeep(result, 0, {}), "InventoryItemsView." .. tostring(name), true, 0, 8)
-                    end
-                end
-                for upvalueName, upvalue in pairs(PotionRuntime.getUpvalueValues(callback)) do
-                    if type(upvalue) == "table" then
-                        scan(upvalueName, upvalue, nil, "InventoryItemsView.Upvalue." .. tostring(name) .. "." .. tostring(upvalueName), false, 0, 12)
-                    end
-                end
-                inspectedFunctions = inspectedFunctions + 1
-                if inspectedFunctions >= 12 then
-                    break
-                end
-            end
-        end
-    end
-    local hasSelectedAvailable = false
-    for _, entry in ipairs(entries) do
-        if State.potionWhitelist[entry.itemId] == true then
-            hasSelectedAvailable = true
-            break
-        end
-    end
-    if not hasSelectedAvailable and now - (RuntimeName.PotionLastUiScanAt or 0) >= 2 then
-        RuntimeName.PotionLastUiScanAt = now
-        local itemsPage = PotionRuntime.findItemsPage()
-        if itemsPage then
-            local scannedButtons = 0
-            for _, descendant in ipairs(itemsPage:GetDescendants()) do
-                if descendant:IsA("GuiButton") then
-                    local insideDetail = descendant:FindFirstAncestor("DetailPage") ~= nil
-                    local itemId = not insideDetail and PotionRuntime.resolveItemIdFromInstance(descendant, itemsPage) or nil
-                    if itemId and State.potionWhitelist[itemId] == true then
-                        PotionRuntime.activateInventoryButton(descendant)
-                        local info = PotionRuntime.getSelectedEntryInfo()
-                        if info then
-                            scan(descendant.Name, info, itemId, "InventoryItemsView.UI." .. descendant:GetFullName(), true, 0, 1)
-                        end
-                        scannedButtons = scannedButtons + 1
-                        if scannedButtons >= 24 then
-                            break
-                        end
-                    end
-                end
-            end
-            RuntimeName.PotionUiScanStatus = scannedButtons > 0 and ("Scanned " .. tostring(scannedButtons) .. " potion entries") or "No potion entry buttons found"
-        else
-            RuntimeName.PotionUiScanStatus = "Items page not found"
-        end
-    end
-    for itemId, tokenList in pairs(nativeTokens or {}) do
-        if (nativeCounts[itemId] or 0) > 0 then
-            for _, token in ipairs(tokenList) do
-                add(token, itemId, "InventoryDataUtil.GetItemEntryKeys", true, 90)
-            end
-        end
+    local selected = PotionRuntime.getSelectedCandidate(nil, "InventoryItemsView.GetSelectedEntryInfo")
+    if selected then
+        add(selected.token, selected.itemId, selected.source, true, 1)
     end
     table.sort(entries, function(left, right)
         local leftDefinition = left.definition
@@ -4386,6 +4472,7 @@ function PotionRuntime.getCandidate()
     local entries = PotionRuntime.getInventoryEntries(true)
     local ownedSelectedCount = 0
     local activeSelectedCount = 0
+    local missingTokenCount = 0
     for _, itemId in ipairs(RuntimeName.PotionIds or {}) do
         if State.potionWhitelist[itemId] == true then
             local count = PotionRuntime.getAvailableCount(itemId, entries)
@@ -4400,9 +4487,18 @@ function PotionRuntime.getCandidate()
                 ownedSelectedCount = ownedSelectedCount + 1
                 if PotionRuntime.isActive(itemId) then
                     activeSelectedCount = activeSelectedCount + 1
-                elseif candidate then
-                    candidate.countBefore = count
-                    return candidate, nil
+                else
+                    if not candidate and count > 0 then
+                        candidate = PotionRuntime.captureCandidateFromUI(itemId)
+                        if candidate then
+                            table.insert(entries, candidate)
+                        end
+                    end
+                    if candidate then
+                        candidate.countBefore = count
+                        return candidate, nil
+                    end
+                    missingTokenCount = missingTokenCount + 1
                 end
             end
         end
@@ -4412,6 +4508,9 @@ function PotionRuntime.getCandidate()
     end
     if activeSelectedCount == ownedSelectedCount then
         return nil, "Whitelisted potion effects are active"
+    end
+    if missingTokenCount > 0 then
+        return nil, "Potion exists, but native guids[1] was not available"
     end
     return nil, "Potion request token was not found"
 end
@@ -4429,7 +4528,13 @@ function PotionRuntime.process(force)
             return false
         end
         State.potionFailures = State.potionFailures + 1
-        PotionRuntime.clearPending("Use confirmation timeout")
+        local rejectedToken = State.potionPendingGuid
+        local rejectedSource = State.potionPendingSource
+        if type(rejectedToken) == "string" and rejectedToken ~= "" then
+            RuntimeName.PotionRejectedTokens[rejectedToken] = now + 30
+        end
+        PotionRuntime.clearPending("Use confirmation timeout via " .. tostring(rejectedSource or "unknown source"))
+        RuntimeName.PotionEntryCache = nil
         State.potionNextAt = now + State.potionRetryCooldown
         return false
     end
@@ -4550,6 +4655,7 @@ function PotionRuntime.getState()
         inventoryKeys = RuntimeName.PotionInventoryKeys,
         nativeCounts = RuntimeName.PotionNativeCounts,
         nativeTokens = RuntimeName.PotionNativeTokens,
+        rejectedTokens = RuntimeName.PotionRejectedTokens,
         activeSources = activeSources,
         discoverySources = discoverySources,
         uiScanStatus = RuntimeName.PotionUiScanStatus,
