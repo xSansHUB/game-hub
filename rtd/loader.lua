@@ -26,7 +26,7 @@ local GAME_NAME = "Roll To Defend"
 local CONFIG_ROOT = "xSansHUB"
 local CONFIG_FOLDER = CONFIG_ROOT .. "/RollToDefend"
 local WINDUI_URL = "https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"
-local BUILD_NUMBER = 23
+local BUILD_NUMBER = 25
 local LOG_LIMIT = 150
 local DISPLAY_LOG_LIMIT = 40
 local LOG_ROUTINE_PATTERNS = {
@@ -220,7 +220,7 @@ State.rollRetryCooldown = 1
 State.rollNextAt = 0
 State.rollPending = false
 State.rollPendingSince = 0
-State.rollPendingTimeout = 25
+State.rollPendingTimeout = 8
 State.rollFailures = 0
 State.rollLastStatus = "Idle"
 State.rollLastResultCount = 0
@@ -548,27 +548,38 @@ function LogRuntime.refresh()
     end
 end
 
-function LogRuntime.add(message, force)
-    local text = LogRuntime.normalizeMessage(message)
-    if text == "" then
-        return
+function LogRuntime.addBatch(messages, force)
+    if type(messages) ~= "table" then
+        return 0
     end
-    if not force and LogRuntime.isRoutineMessage(text) then
-        return
+    local added = 0
+    local timestamp = os.date("%H:%M:%S")
+    local clock = os.clock()
+    for _, message in ipairs(messages) do
+        local text = LogRuntime.normalizeMessage(message)
+        if text ~= "" and (force or not LogRuntime.isRoutineMessage(text)) then
+            local last = State.logs[#State.logs]
+            if not last or last.text ~= text or clock - last.clock >= 3 then
+                table.insert(State.logs, {
+                    time = timestamp,
+                    clock = clock,
+                    text = text,
+                })
+                added = added + 1
+            end
+        end
     end
-    local last = State.logs[#State.logs]
-    if last and last.text == text and os.clock() - last.clock < 3 then
-        return
-    end
-    table.insert(State.logs, {
-        time = os.date("%H:%M:%S"),
-        clock = os.clock(),
-        text = text,
-    })
     while #State.logs > LOG_LIMIT do
         table.remove(State.logs, 1)
     end
-    LogRuntime.refresh()
+    if added > 0 then
+        LogRuntime.refresh()
+    end
+    return added
+end
+
+function LogRuntime.add(message, force)
+    LogRuntime.addBatch({message}, force)
 end
 
 function LogRuntime.clear()
@@ -2652,17 +2663,114 @@ function RollRuntime.findNativeGuiRoots()
     return targets
 end
 
-function RollRuntime.releaseNativeHiddenUI()
-    for root in pairs(RuntimeName.RollPrimaryGuiRoots or {}) do
-        if root.Parent then
-            pcall(Modules.FrameController.SetHideUIEnabled, false, root)
+function RollRuntime.isNativeRollRoot(instance)
+    if typeof(instance) ~= "Instance" or not instance:IsA("GuiObject") then
+        return false
+    end
+    local playerGui = Services.LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    local main = playerGui and playerGui:FindFirstChild("Main") or nil
+    if not main or instance == main or not instance:IsDescendantOf(main) then
+        return false
+    end
+    local maximized = instance:FindFirstChild("Maximsed")
+    if not maximized or not maximized:IsA("GuiObject") then
+        return false
+    end
+    return maximized:FindFirstChild("RollFrame") ~= nil or maximized:FindFirstChild("AutoRoll", true) ~= nil
+end
+
+function RollRuntime.installFrameIsolation()
+    if RuntimeName.RollFrameIsolationInstalled then
+        return true
+    end
+    local controller = Modules.FrameController
+    if type(controller) ~= "table" then
+        return false
+    end
+    local originalOpen = controller.Open
+    local originalSetHideUIEnabled = controller.SetHideUIEnabled
+    if type(originalOpen) ~= "function" or type(originalSetHideUIEnabled) ~= "function" then
+        return false
+    end
+    RuntimeName.RollOriginalFrameOpen = originalOpen
+    RuntimeName.RollOriginalSetHideUIEnabled = originalSetHideUIEnabled
+    local openWrapper
+    local hideWrapper
+    openWrapper = function(first, ...)
+        local frame = first
+        if first == controller then
+            frame = select(1, ...)
+        end
+        if State.running and State.autoRoll and RollRuntime.isNativeRollRoot(frame) then
+            pcall(function()
+                frame.Visible = false
+            end)
+            return frame
+        end
+        return originalOpen(first, ...)
+    end
+    hideWrapper = function(first, second, ...)
+        local enabled = first
+        local frame = second
+        if first == controller then
+            enabled = second
+            frame = select(1, ...)
+        end
+        if State.running and State.autoRoll and RollRuntime.isNativeRollRoot(frame) then
+            if enabled == true then
+                pcall(function()
+                    frame.Visible = false
+                end)
+            end
+            return false
+        end
+        return originalSetHideUIEnabled(first, second, ...)
+    end
+    RuntimeName.RollFrameOpenWrapper = openWrapper
+    RuntimeName.RollSetHideUIWrapper = hideWrapper
+    controller.Open = openWrapper
+    controller.SetHideUIEnabled = hideWrapper
+    RuntimeName.RollFrameIsolationInstalled = true
+    return true
+end
+
+function RollRuntime.restoreFrameIsolation()
+    if not RuntimeName.RollFrameIsolationInstalled then
+        return
+    end
+    local controller = Modules.FrameController
+    if type(controller) == "table" then
+        if controller.Open == RuntimeName.RollFrameOpenWrapper and type(RuntimeName.RollOriginalFrameOpen) == "function" then
+            controller.Open = RuntimeName.RollOriginalFrameOpen
+        end
+        if controller.SetHideUIEnabled == RuntimeName.RollSetHideUIWrapper and type(RuntimeName.RollOriginalSetHideUIEnabled) == "function" then
+            controller.SetHideUIEnabled = RuntimeName.RollOriginalSetHideUIEnabled
         end
     end
+    RuntimeName.RollFrameIsolationInstalled = false
+    RuntimeName.RollFrameOpenWrapper = nil
+    RuntimeName.RollSetHideUIWrapper = nil
+    RuntimeName.RollOriginalFrameOpen = nil
+    RuntimeName.RollOriginalSetHideUIEnabled = nil
 end
 
 function RollRuntime.setNativeGuiHidden(hidden)
     RuntimeName.RollHiddenGuiStates = RuntimeName.RollHiddenGuiStates or setmetatable({}, {__mode = "k"})
     if hidden then
+        local now = os.clock()
+        local hasCachedTarget = false
+        for target in pairs(RuntimeName.RollHiddenGuiStates) do
+            if target.Parent then
+                hasCachedTarget = true
+                pcall(function()
+                    target.Visible = false
+                end)
+            end
+        end
+        if hasCachedTarget and now - (RuntimeName.RollLastFullGuiScanAt or 0) < 1.5 then
+            return
+        end
+        RuntimeName.RollLastFullGuiScanAt = now
         local targets = RollRuntime.findNativeGuiRoots()
         for _, target in ipairs(targets) do
             if RuntimeName.RollHiddenGuiStates[target] == nil then
@@ -2672,10 +2780,8 @@ function RollRuntime.setNativeGuiHidden(hidden)
                 target.Visible = false
             end)
         end
-        RollRuntime.releaseNativeHiddenUI()
         return
     end
-    RollRuntime.releaseNativeHiddenUI()
     for target, visible in pairs(RuntimeName.RollHiddenGuiStates) do
         if target.Parent then
             pcall(function()
@@ -2685,6 +2791,7 @@ function RollRuntime.setNativeGuiHidden(hidden)
     end
     RuntimeName.RollHiddenGuiStates = setmetatable({}, {__mode = "k"})
     RuntimeName.RollPrimaryGuiRoots = setmetatable({}, {__mode = "k"})
+    RuntimeName.RollLastFullGuiScanAt = 0
 end
 
 function RollRuntime.canRequestTutorialRoll()
@@ -2746,13 +2853,78 @@ end
 function RollRuntime.getResultSources(payload)
     local sources = {}
     if type(payload) == "table" and type(payload.results) == "table" then
-        for _, result in ipairs(payload.results) do
-            table.insert(sources, result)
+        local numericKeys = {}
+        for key in pairs(payload.results) do
+            if type(key) == "number" then
+                table.insert(numericKeys, key)
+            end
+        end
+        table.sort(numericKeys)
+        for _, key in ipairs(numericKeys) do
+            table.insert(sources, payload.results[key])
+        end
+        if #sources == 0 then
+            for _, result in pairs(payload.results) do
+                table.insert(sources, result)
+            end
         end
     else
         table.insert(sources, payload)
     end
     return sources
+end
+
+function RollRuntime.collectWinners(source)
+    local winners = {}
+    local seenTables = setmetatable({}, {__mode = "k"})
+    local function addWinner(winner)
+        if winner == nil then
+            return
+        end
+        if type(winner) == "table" then
+            if seenTables[winner] then
+                return
+            end
+            seenTables[winner] = true
+        end
+        table.insert(winners, winner)
+    end
+    local success, stages = pcall(Modules.RollResultUtil.NormalizeRollStages, source)
+    if success and type(stages) == "table" then
+        for _, stage in pairs(stages) do
+            if type(stage) == "table" and stage.winner ~= nil then
+                addWinner(stage.winner)
+            end
+        end
+    end
+    if #winners > 0 then
+        return winners
+    end
+    local visited = setmetatable({}, {__mode = "k"})
+    local function scan(value, depth)
+        if depth > 5 or type(value) ~= "table" or visited[value] then
+            return
+        end
+        visited[value] = true
+        if value.winner ~= nil then
+            addWinner(value.winner)
+        end
+        local directResult = value.result
+        if type(directResult) == "table" then
+            scan(directResult, depth + 1)
+        end
+        local nestedStages = value.stages
+        if type(nestedStages) == "table" then
+            for _, stage in pairs(nestedStages) do
+                scan(stage, depth + 1)
+            end
+        end
+        if #winners == 0 and (type(value.unitId) == "string" or type(value.id) == "string" or type(value.kind) == "string" or type(value._rollItemType) == "string") then
+            addWinner(value)
+        end
+    end
+    scan(source, 0)
+    return winners
 end
 
 function RollRuntime.getWinnerRarity(winner)
@@ -2862,26 +3034,22 @@ end
 
 function RollRuntime.logResults(payload)
     local resultCount = 0
+    local messages = {}
     for _, source in ipairs(RollRuntime.getResultSources(payload)) do
-        local success, stages = pcall(Modules.RollResultUtil.NormalizeRollStages, source)
-        if success and type(stages) == "table" then
-            for _, stage in ipairs(stages) do
-                local winner = type(stage) == "table" and stage.winner or nil
-                if winner ~= nil then
-                    resultCount = resultCount + 1
-                    State.rollTotalResults = State.rollTotalResults + 1
-                    local rarity = RollRuntime.getWinnerRarity(winner)
-                    if State.rollLogRarityWhitelist[rarity] == true then
-                        local name = RollRuntime.getWinnerName(winner)
-                        local odds = RollRuntime.getWinnerOdds(winner)
-                        local detail = odds and (" | 1 in " .. RollRuntime.formatNumber(odds)) or ""
-                        LogRuntime.add(string.format("Roll #%d: %s | %s%s", State.rollTotalResults, name, rarity, detail), true)
-                    end
-                end
+        for _, winner in ipairs(RollRuntime.collectWinners(source)) do
+            resultCount = resultCount + 1
+            State.rollTotalResults = State.rollTotalResults + 1
+            local rarity = RollRuntime.getWinnerRarity(winner)
+            if State.rollLogRarityWhitelist[rarity] == true then
+                local name = RollRuntime.getWinnerName(winner)
+                local odds = RollRuntime.getWinnerOdds(winner)
+                local detail = odds and (" | 1 in " .. RollRuntime.formatNumber(odds)) or ""
+                table.insert(messages, string.format("Roll #%d: %s | %s%s", State.rollTotalResults, name, rarity, detail))
             end
         end
     end
     State.rollLastResultCount = resultCount
+    LogRuntime.addBatch(messages, true)
     return resultCount
 end
 
@@ -2895,7 +3063,8 @@ end
 
 function RollRuntime.handleResult(payload)
     local ownedRequest = State.rollPending or State.autoRoll
-    RollRuntime.setNativeGuiHidden(State.autoRoll)
+    RuntimeName.RollResultEventCount = (RuntimeName.RollResultEventCount or 0) + 1
+    RuntimeName.RollLastResultEventAt = os.clock()
     if type(payload) == "table" and payload.status == "Cooldown" then
         if ownedRequest then
             RollRuntime.clearPending("Server cooldown")
@@ -2933,6 +3102,11 @@ function RollRuntime.handleResult(payload)
     if ownedRequest then
         RollRuntime.clearPending(resultCount > 0 and ("Received " .. tostring(resultCount) .. " result stages") or "Result received")
         State.rollNextAt = os.clock() + State.rollRequestCooldown
+    end
+    if State.autoRoll then
+        task.defer(function()
+            pcall(RollRuntime.setNativeGuiHidden, true)
+        end)
     end
 end
 
@@ -2977,7 +3151,11 @@ end
 
 function RollRuntime.tick()
     if State.autoRoll then
-        RollRuntime.setNativeGuiHidden(true)
+        local now = os.clock()
+        if now - (RuntimeName.RollLastGuiMaintenanceAt or 0) >= 0.75 then
+            RuntimeName.RollLastGuiMaintenanceAt = now
+            pcall(RollRuntime.setNativeGuiHidden, true)
+        end
         RollRuntime.process(false)
     end
 end
@@ -2998,8 +3176,9 @@ function RollRuntime.setAuto(enabled)
         end
         RollRuntime.setNativeVisualConnectionsEnabled(true)
         RollRuntime.setCutsceneSuppressed(true)
+        RollRuntime.installFrameIsolation()
         RollRuntime.setNativeGuiHidden(true)
-        State.rollLastStatus = "Ready with safe roll UI suppression"
+        State.rollLastStatus = "Ready with isolated roll UI suppression"
         task.defer(function()
             if State.running and State.autoRoll then
                 RollRuntime.process(true)
@@ -3008,6 +3187,7 @@ function RollRuntime.setAuto(enabled)
     else
         RollRuntime.setNativeVisualConnectionsEnabled(true)
         RollRuntime.setCutsceneSuppressed(false)
+        RollRuntime.restoreFrameIsolation()
         RollRuntime.setNativeGuiHidden(false)
         RollRuntime.clearSpecialRollDisplay()
         if State.rollNativeAutoWasEnabled then
@@ -3033,7 +3213,9 @@ function RollRuntime.getState()
         nativeConnectionsCaptured = 0,
         nativeConnectionsDisabled = false,
         connectionApi = nil,
-        uiSuppressionMode = "Roll root close and hide-state release",
+        uiSuppressionMode = "FrameController roll isolation",
+        resultEventCount = RuntimeName.RollResultEventCount or 0,
+        lastResultEventAt = RuntimeName.RollLastResultEventAt or 0,
         selectedRarities = RollRuntime.getSelectedRarities(),
     }
 end
@@ -3041,9 +3223,29 @@ end
 function RollRuntime.connectResultListener()
     RuntimeName.RollNativeConnections = {}
     RuntimeName.RollNativeConnectionsCaptured = false
+    RuntimeName.RollResultEventCount = 0
+    RuntimeName.RollLastResultEventAt = 0
+    RuntimeName.RollLastGuiMaintenanceAt = 0
     State.rollNativeConnectionsDisabled = false
     State.rollConnectionApi = nil
-    State.rollResultConnection = Remotes.RollResult.OnClientEvent:Connect(RollRuntime.handleResult)
+    State.rollResultConnection = Remotes.RollResult.OnClientEvent:Connect(function(payload)
+        local success, errorMessage = xpcall(function()
+            RollRuntime.handleResult(payload)
+        end, function(message)
+            local debugLibrary = rawget(_G, "debug")
+            if type(debugLibrary) == "table" and type(debugLibrary.traceback) == "function" then
+                return debugLibrary.traceback(tostring(message), 2)
+            end
+            return tostring(message)
+        end)
+        if success then
+            return
+        end
+        State.rollFailures = State.rollFailures + 1
+        RollRuntime.clearPending("Result handler recovered")
+        State.rollNextAt = os.clock() + State.rollRetryCooldown
+        LogRuntime.add("Roll result handler recovered: " .. tostring(errorMessage), true)
+    end)
 end
 
 
@@ -6473,6 +6675,7 @@ function Hub.Stop()
     PotionShopRuntime.clearPending("Stopped")
     RollRuntime.setNativeVisualConnectionsEnabled(true)
     RollRuntime.setCutsceneSuppressed(false)
+    RollRuntime.restoreFrameIsolation()
     RollRuntime.setNativeGuiHidden(false)
     RollRuntime.clearSpecialRollDisplay()
     if State.rollNativeAutoWasEnabled then
