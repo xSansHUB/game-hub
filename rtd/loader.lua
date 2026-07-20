@@ -26,7 +26,7 @@ local GAME_NAME = "Roll To Defend"
 local CONFIG_ROOT = "xSansHUB"
 local CONFIG_FOLDER = CONFIG_ROOT .. "/RollToDefend"
 local WINDUI_URL = "https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"
-local BUILD_NUMBER = 22
+local BUILD_NUMBER = 23
 local LOG_LIMIT = 150
 local DISPLAY_LOG_LIMIT = 40
 local LOG_ROUTINE_PATTERNS = {
@@ -2595,77 +2595,96 @@ function RollRuntime.setCutsceneSuppressed(suppressed)
 end
 
 function RollRuntime.findNativeGuiRoots()
-    local roots = {}
+    local targets = {}
+    local primaryRoots = setmetatable({}, {__mode = "k"})
     local seen = setmetatable({}, {__mode = "k"})
     local playerGui = Services.LocalPlayer:FindFirstChildOfClass("PlayerGui")
     local main = playerGui and playerGui:FindFirstChild("Main") or nil
     if not main then
-        return roots
+        RuntimeName.RollPrimaryGuiRoots = primaryRoots
+        return targets
     end
-    local function add(instance)
+    local function add(instance, primary)
         if not instance or seen[instance] or not instance:IsA("GuiObject") then
             return
         end
-        if instance == main or instance:IsA("ScreenGui") then
+        if instance == main or not instance:IsDescendantOf(main) then
             return
         end
         seen[instance] = true
-        table.insert(roots, instance)
-    end
-    local maximizedViews = {}
-    for _, instance in ipairs(main:GetDescendants()) do
-        if instance:IsA("GuiObject") and instance.Name == "Maximsed" then
-            local rollFrame = instance:FindFirstChild("RollFrame")
-            local autoRoll = instance:FindFirstChild("AutoRoll", true)
-            if rollFrame or autoRoll then
-                table.insert(maximizedViews, instance)
-                add(instance)
-            end
+        table.insert(targets, instance)
+        if primary then
+            primaryRoots[instance] = true
         end
     end
-    for _, maximized in ipairs(maximizedViews) do
-        local parent = maximized.Parent
-        local minimized = parent and parent:FindFirstChild("Minimised") or nil
-        if minimized and minimized:IsA("GuiObject") then
-            add(minimized)
+    for _, maximized in ipairs(main:GetDescendants()) do
+        if maximized:IsA("GuiObject") and maximized.Name == "Maximsed" then
+            local rollFrame = maximized:FindFirstChild("RollFrame")
+            local autoRoll = maximized:FindFirstChild("AutoRoll", true)
+            local root = maximized.Parent
+            if (rollFrame or autoRoll) and root and root:IsA("GuiObject") and root ~= main and root:FindFirstChild("Maximsed") == maximized then
+                add(root, true)
+            end
         end
     end
     for _, instance in ipairs(main:GetDescendants()) do
         if instance:IsA("GuiObject") and instance.Name == "Minimised" then
             local rollFrame = instance:FindFirstChild("RollFrame")
             local scrollFrame = instance:FindFirstChild("ScrollFrame", true)
-            if rollFrame or scrollFrame then
-                add(instance)
+            local covered = false
+            for root in pairs(primaryRoots) do
+                if instance:IsDescendantOf(root) then
+                    covered = true
+                    break
+                end
+            end
+            if not covered and (rollFrame or scrollFrame) then
+                add(instance, false)
             end
         end
     end
     local bottom = main:FindFirstChild("Bottom")
     local rarityRoll = bottom and bottom:FindFirstChild("RarityRoll") or nil
     if rarityRoll and rarityRoll:IsA("GuiObject") then
-        add(rarityRoll)
+        add(rarityRoll, false)
     end
-    return roots
+    RuntimeName.RollPrimaryGuiRoots = primaryRoots
+    return targets
+end
+
+function RollRuntime.releaseNativeHiddenUI()
+    for root in pairs(RuntimeName.RollPrimaryGuiRoots or {}) do
+        if root.Parent then
+            pcall(Modules.FrameController.SetHideUIEnabled, false, root)
+        end
+    end
 end
 
 function RollRuntime.setNativeGuiHidden(hidden)
     RuntimeName.RollHiddenGuiStates = RuntimeName.RollHiddenGuiStates or setmetatable({}, {__mode = "k"})
     if hidden then
-        for _, root in ipairs(RollRuntime.findNativeGuiRoots()) do
-            if RuntimeName.RollHiddenGuiStates[root] == nil then
-                RuntimeName.RollHiddenGuiStates[root] = root.Visible
+        local targets = RollRuntime.findNativeGuiRoots()
+        for _, target in ipairs(targets) do
+            if RuntimeName.RollHiddenGuiStates[target] == nil then
+                RuntimeName.RollHiddenGuiStates[target] = target.Visible
             end
-            root.Visible = false
+            pcall(function()
+                target.Visible = false
+            end)
         end
+        RollRuntime.releaseNativeHiddenUI()
         return
     end
-    for root, visible in pairs(RuntimeName.RollHiddenGuiStates) do
-        if root.Parent then
+    RollRuntime.releaseNativeHiddenUI()
+    for target, visible in pairs(RuntimeName.RollHiddenGuiStates) do
+        if target.Parent then
             pcall(function()
-                root.Visible = visible
+                target.Visible = visible
             end)
         end
     end
     RuntimeName.RollHiddenGuiStates = setmetatable({}, {__mode = "k"})
+    RuntimeName.RollPrimaryGuiRoots = setmetatable({}, {__mode = "k"})
 end
 
 function RollRuntime.canRequestTutorialRoll()
@@ -2977,12 +2996,10 @@ function RollRuntime.setAuto(enabled)
         if State.rollNativeAutoWasEnabled then
             pcall(Remotes.AutoRollState.FireServer, Remotes.AutoRollState, false)
         end
-        local disabledCount = RollRuntime.setNativeVisualConnectionsEnabled(false)
+        RollRuntime.setNativeVisualConnectionsEnabled(true)
         RollRuntime.setCutsceneSuppressed(true)
         RollRuntime.setNativeGuiHidden(true)
-        if disabledCount <= 0 then
-            State.rollLastStatus = "Ready with UI hiding fallback"
-        end
+        State.rollLastStatus = "Ready with safe roll UI suppression"
         task.defer(function()
             if State.running and State.autoRoll then
                 RollRuntime.process(true)
@@ -3013,15 +3030,19 @@ function RollRuntime.getState()
         lastResultCount = State.rollLastResultCount,
         totalResults = State.rollTotalResults,
         nextAt = State.rollNextAt,
-        nativeConnectionsCaptured = #(RuntimeName.RollNativeConnections or {}),
-        nativeConnectionsDisabled = State.rollNativeConnectionsDisabled,
-        connectionApi = State.rollConnectionApi,
+        nativeConnectionsCaptured = 0,
+        nativeConnectionsDisabled = false,
+        connectionApi = nil,
+        uiSuppressionMode = "Roll root close and hide-state release",
         selectedRarities = RollRuntime.getSelectedRarities(),
     }
 end
 
 function RollRuntime.connectResultListener()
-    RollRuntime.captureNativeConnections()
+    RuntimeName.RollNativeConnections = {}
+    RuntimeName.RollNativeConnectionsCaptured = false
+    State.rollNativeConnectionsDisabled = false
+    State.rollConnectionApi = nil
     State.rollResultConnection = Remotes.RollResult.OnClientEvent:Connect(RollRuntime.handleResult)
 end
 
